@@ -126,19 +126,24 @@ class TestPreprocessor(unittest.TestCase):
         # Mock relpath to raise ValueError (e.g. drive mismatch on Windows)
         mock_relpath.side_effect = ValueError("path is on another drive")
 
+        # Use absolute paths native to the running OS
+        abs_ref = os.path.abspath("other_drive/main.cpp")
+        abs_target = os.path.abspath("other_drive/main.h")
+        abs_dir = os.path.abspath("project")
+
         db = [
             {
-                "directory": "C:\\project",
-                "command": "clang++ -c D:\\other_drive\\main.cpp",
-                "file": "D:\\other_drive\\main.cpp"
+                "directory": abs_dir,
+                "command": f"clang++ -c {abs_ref}",
+                "file": abs_ref
             }
         ]
         with open("compile_commands.json", "w") as f:
             json.dump(db, f)
 
-        # Target file is D:/other_drive/main.h. Since relpath raises ValueError,
-        # it should fall back to absolute path.
+        # Since relpath raises ValueError, it should fall back to the absolute path.
         with patch("os.path.exists", return_value=True):
-            callers = analyze_compile_commands("D:\\other_drive\\main.h")
+            callers = analyze_compile_commands(abs_target)
             # Should fall back to the absolute path formatted with forward slashes
-            self.assertIn("D:/other_drive/main.cpp", callers)
+            expected_key = abs_ref.replace("\\", "/")
+            self.assertIn(expected_key, callers)
