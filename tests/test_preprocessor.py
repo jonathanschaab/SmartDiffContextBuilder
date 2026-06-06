@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from unittest.mock import patch, MagicMock
 import json
 from context_builder.cache import LRUFileCache
 from context_builder.preprocessor import (
@@ -119,3 +120,25 @@ class TestPreprocessor(unittest.TestCase):
         ffi_callers = trace_ffi_callers("export_rust_func", [file_path, cpp_path], source_ext=".rs", file_cache=cache)
         self.assertIn(cpp_path, ffi_callers)
         self.assertEqual(ffi_callers[cpp_path][0]["line"], 1)
+
+    @patch("os.path.relpath")
+    def test_analyze_compile_commands_drive_mismatch(self, mock_relpath):
+        # Mock relpath to raise ValueError (e.g. drive mismatch on Windows)
+        mock_relpath.side_effect = ValueError("path is on another drive")
+
+        db = [
+            {
+                "directory": "C:\\project",
+                "command": "clang++ -c D:\\other_drive\\main.cpp",
+                "file": "D:\\other_drive\\main.cpp"
+            }
+        ]
+        with open("compile_commands.json", "w") as f:
+            json.dump(db, f)
+
+        # Target file is D:/other_drive/main.h. Since relpath raises ValueError,
+        # it should fall back to absolute path.
+        with patch("os.path.exists", return_value=True):
+            callers = analyze_compile_commands("D:\\other_drive\\main.h")
+            # Should fall back to the absolute path formatted with forward slashes
+            self.assertIn("D:/other_drive/main.cpp", callers)

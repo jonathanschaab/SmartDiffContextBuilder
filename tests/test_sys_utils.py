@@ -79,3 +79,15 @@ class TestSysUtils(unittest.TestCase):
                 except Exception:
                     pass
 
+    @patch("subprocess.run")
+    def test_ripgrep_filter_windows_separator(self, mock_run):
+        mock_res = MagicMock()
+        mock_res.returncode = 0
+        # Simulating Windows backslash output from rg
+        mock_res.stdout = "src\\a.py\nsrc\\b.py\n"
+        mock_run.return_value = mock_res
+
+        files = ["src/a.py", "src/b.py", "src/c.py"]
+        filtered = ripgrep_filter(files, "query")
+        
+        self.assertEqual(filtered, ["src/a.py", "src/b.py"])

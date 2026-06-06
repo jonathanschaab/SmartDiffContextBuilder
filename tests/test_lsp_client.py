@@ -70,3 +70,29 @@ class TestLspClient(unittest.TestCase):
             self.assertIsNotNone(res)
             self.assertIn("foo.py", res)
 
+    @patch("subprocess.Popen")
+    def test_lsp_client_memory_leak_prevention(self, mock_popen):
+        mock_proc = MagicMock()
+        mock_proc.poll.return_value = None
+        mock_popen.return_value = mock_proc
+        
+        init_response = b"Content-Length: 45\r\n\r\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true}}"
+        notification = b"Content-Length: 60\r\n\r\n{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\"}"
+        response = b"Content-Length: 45\r\n\r\n{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"ok\":true}}"
+        mock_proc.stdout = BytesIO(init_response + notification + response)
+
+        client = MinimalLSPClient(["some_lsp_binary"])
+        client.proc = mock_proc
+        
+        # We manually trigger start to spin up the Popen and background loop
+        client.start()
+        
+        import time
+        start = time.time()
+        while client.msg_queue.empty() and time.time() - start < 1:
+            time.sleep(0.01)
+            
+        self.assertEqual(client.msg_queue.qsize(), 1)
+        queued_msg = client.msg_queue.get()
+        self.assertEqual(queued_msg.get("id"), 2)
+

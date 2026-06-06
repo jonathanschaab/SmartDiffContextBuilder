@@ -119,8 +119,13 @@ def analyze_compile_commands(target_file, file_cache=None):
                     is_linked = True
                     
             if is_linked:
-                # Store relative to current working directory for consistency, using forward slashes
-                rel_ref_file = os.path.relpath(abs_ref_file, os.getcwd()).replace("\\", "/")
+                # Store relative to current working directory for consistency, using forward slashes.
+                # Wrap in try/except ValueError to catch drive mismatches on Windows.
+                try:
+                    rel_ref_file = os.path.relpath(abs_ref_file, os.getcwd()).replace("\\", "/")
+                except ValueError:
+                    # Fallback to absolute path using forward slashes if drives differ
+                    rel_ref_file = abs_ref_file.replace("\\", "/")
                 if rel_ref_file not in callers: callers[rel_ref_file] = []
                 callers[rel_ref_file].append({"line": 0, "code": f"// [Compilation Link via compile_commands.json]"})
     except Exception as exc:

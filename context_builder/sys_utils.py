@@ -41,8 +41,9 @@ def ripgrep_filter(files, token):
         res = subprocess.run(["rg", "-l", "-F", token], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10)
         # rg exits with 0 if matches are found, 1 if no matches are found, and 2 if an error occurs.
         if res.returncode == 0:
-            rg_files = set(res.stdout.splitlines())
-            return [f for f in files if f in rg_files]
+            # Normalize path separators to forward slashes to prevent mismatches on Windows
+            rg_files = {f.replace("\\", "/") for f in res.stdout.splitlines()}
+            return [f for f in files if f.replace("\\", "/") in rg_files]
         elif res.returncode == 1:
             return []
     except Exception:

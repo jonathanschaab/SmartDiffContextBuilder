@@ -174,3 +174,39 @@ class TestAstEngine(unittest.TestCase):
             extract_callees_ast("dummy.py", 1, 3, ".py", mock_cache)
             
         self.assertIn("Node object lacks '.text' attribute", str(ctx.exception))
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_split_massive_block_ast_multiline_signature(self, mock_ast_engine):
+        source = (
+            "@decorator\n"
+            "def my_func(\n"
+            "    x,\n"
+            "    y\n"
+            "):\n"
+            "    # body starts here\n"
+            "    pass\n"
+        )
+        
+        mock_parser = MagicMock()
+        mock_tree = MagicMock()
+        mock_child = MagicMock()
+        
+        mock_tree.root_node.children = [mock_child]
+        mock_child.type = "function_definition"
+        mock_child.start_point = (0, 0)
+        mock_child.end_point = (6, 0)
+        
+        mock_parser.parse.return_value = mock_tree
+        mock_ast_engine.parsers = {".py": mock_parser}
+        mock_ast_engine.is_supported.return_value = True
+        
+        # We truncate with max_lines=4. The body is larger (7 lines), so it should be semantically truncated.
+        res = split_massive_block_ast(source, "test.py", max_lines=4)
+        
+        self.assertEqual(len(res), 1)
+        truncated_text = res[0]["text"]
+        self.assertIn("@decorator", truncated_text)
+        self.assertIn("def my_func(", truncated_text)
+        self.assertIn("):", truncated_text)
+        self.assertIn("# ... [Inner Body Omitted for Context Preservation] ...", truncated_text)
+        self.assertIn("pass", truncated_text)

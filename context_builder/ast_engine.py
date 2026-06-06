@@ -226,15 +226,24 @@ def split_massive_block_ast(source_text, file_path, max_lines):
         else:
             # Semantic Truncation
             if child.type in ['function_definition', 'class_definition', 'function_item', 'impl_item']:
-                signature = lines[child.start_point[0]]
-                output_lines.append(signature)
+                # Extract the full multi-line signature by scanning until colon (Python) or opening brace (others)
+                sig_lines = []
+                for idx in range(child.start_point[0], child.end_point[0] + 1):
+                    line = lines[idx]
+                    sig_lines.append(line)
+                    # Strip comments and strings to ensure we don't match colons/braces inside them
+                    clean_line = strip_strings_and_comments(line, is_python=is_python)
+                    if (is_python and ":" in clean_line) or (not is_python and "{" in clean_line):
+                        break
+                output_lines.extend(sig_lines)
+                indent = len(sig_lines[0]) - len(sig_lines[0].lstrip())
                 if is_python:
                     # Provide indentation and pass to keep Python syntax valid
-                    output_lines.append("    # ... [Inner Body Omitted for Context Preservation] ...")
-                    output_lines.append("    pass")
+                    output_lines.append(" " * (indent + 4) + "# ... [Inner Body Omitted for Context Preservation] ...")
+                    output_lines.append(" " * (indent + 4) + "pass")
                 else:
-                    output_lines.append("    /* ... [Inner Body Omitted for Context Preservation] ... */")
-                    output_lines.append("}") # Generic close
+                    output_lines.append(" " * (indent + 4) + "/* ... [Inner Body Omitted for Context Preservation] ... */")
+                    output_lines.append(" " * indent + "}") # Generic close
             else:
                 output_lines.extend(child_lines[:5])
                 if is_python:

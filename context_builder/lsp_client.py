@@ -60,7 +60,10 @@ class MinimalLSPClient:
             while self.proc and self.proc.poll() is None:
                 msg = self._recv_blocking()
                 if msg is not None:
-                    self.msg_queue.put(msg)
+                    # Memory Leak Prevention: Only queue responses (which contain an "id").
+                    # Notifications (e.g. diagnostics, progress) do not have an "id" and can be discarded safely.
+                    if "id" in msg:
+                        self.msg_queue.put(msg)
                 else:
                     break
         except Exception:

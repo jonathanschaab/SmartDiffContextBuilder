@@ -149,8 +149,12 @@ def run_scan(args, start_ref=None, end_ref=None, output_dir="."):
             func_chunk = "".join(file_lines[start:end])
             
             # If a function starts with a decorator or spans multiple lines, searching file_lines[start] might fail.
-            # We search in func_chunk instead, using the walrus operator to simplify the assignment and condition.
-            func_name = name_match.group(1) if (name_match := re.search(r'\b(?:fn|def|function|sub|func|class|macro)\s+([A-Za-z0-9_]+)', func_chunk)) else f"block_lines_{start}_{end}"
+            # We strip comments and strings to ensure we don't match dummy keywords inside them, then search in func_chunk
+            # using the walrus operator to simplify the assignment and condition.
+            from .ast_engine import strip_strings_and_comments
+            is_py = file_path.endswith('.py')
+            cleaned_func_chunk = "\n".join(strip_strings_and_comments(line, is_python=is_py) for line in func_chunk.splitlines())
+            func_name = name_match.group(1) if (name_match := re.search(r'\b(?:fn|def|function|sub|func|class|macro)\s+([A-Za-z0-9_]+)', cleaned_func_chunk)) else f"block_lines_{start}_{end}"
 
             # Deduplication
             span_signature = f"{file_path}::line_{start}_to_{end}"
@@ -222,10 +226,12 @@ def run_scan(args, start_ref=None, end_ref=None, output_dir="."):
                     if not ref_lines or start >= len(ref_lines): continue
                     
                     # If a function starts with a decorator or spans multiple lines, searching ref_lines[start] might fail.
-                    # We join ref_lines[start:end] to get the full function chunk and search in ref_chunk,
-                    # using the walrus operator to simplify the regex matching expression.
+                    # We join ref_lines[start:end] to get the full function chunk, strip comments and strings line-by-line,
+                    # and search in ref_chunk using the walrus operator to simplify the regex matching expression.
                     ref_chunk = "".join(ref_lines[start:end])
-                    occ_func = name_match.group(1) if (name_match := re.search(r'\b(?:fn|def|function|sub|func|class|macro)\s+([A-Za-z0-9_]+)', ref_chunk)) else f"block_lines_{start}_{end}"
+                    is_py_ref = ref_path.endswith('.py')
+                    cleaned_ref_chunk = "\n".join(strip_strings_and_comments(line, is_python=is_py_ref) for line in ref_chunk.splitlines())
+                    occ_func = name_match.group(1) if (name_match := re.search(r'\b(?:fn|def|function|sub|func|class|macro)\s+([A-Za-z0-9_]+)', cleaned_ref_chunk)) else f"block_lines_{start}_{end}"
                     
                     span_sig = f"{ref_path}::line_{start}_to_{end}"
                     if span_sig not in processed_spans:
@@ -314,7 +320,10 @@ def main():
         )
         if add_res.returncode != 0:
             print(f"\n[ContextLens Error] Failed to create git worktree: {add_res.stderr.strip()}")
-            shutil.rmtree(temp_worktree_dir, ignore_errors=True)
+            try:
+                shutil.rmtree(temp_worktree_dir, ignore_errors=True)
+            except Exception:
+                pass
             sys.exit(1)
 
         # Copy compile_commands.json if it exists in the original repo root
@@ -329,17 +338,28 @@ def main():
         finally:
             os.chdir(original_cwd)
             print(f"\n[ContextLens] Cleaning up temporary worktree...")
-            subprocess.run(
-                ["git", "worktree", "remove", "--force", temp_worktree_dir],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
-            subprocess.run(
-                ["git", "worktree", "prune"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
-            shutil.rmtree(temp_worktree_dir, ignore_errors=True)
+            # Wrap each cleanup step in an individual try...except block to ensure robust cleanup
+            # and prevent any cleanup failures (like locked files on Windows) from masking the original exception.
+            try:
+                subprocess.run(
+                    ["git", "worktree", "remove", "--force", temp_worktree_dir],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+            except Exception:
+                pass
+            try:
+                subprocess.run(
+                    ["git", "worktree", "prune"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+            except Exception:
+                pass
+            try:
+                shutil.rmtree(temp_worktree_dir, ignore_errors=True)
+            except Exception:
+                pass
     else:
         # Run scan directly in current workspace
         run_scan(args)

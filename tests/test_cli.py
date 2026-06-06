@@ -329,3 +329,83 @@ class TestCLI(unittest.TestCase):
             calls = mock_vm.add_callers.call_args_list
             self.assertTrue(len(calls) >= 1)
 
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    @patch("context_builder.cli.get_git_diff_files")
+    @patch("context_builder.cli.get_git_tracked_files")
+    @patch("context_builder.cli.run_command")
+    @patch("context_builder.cli.extract_function_bounds")
+    @patch("context_builder.cli.VolumeManager")
+    def test_cli_function_name_extraction_comments_and_strings(
+        self, mock_vm_cls, mock_bounds, mock_run, mock_git_tracked, mock_git_diff, mock_parse_args
+    ):
+        mock_args = MagicMock()
+        mock_args.format = "md"
+        mock_args.max_lines = 1000
+        mock_args.max_mb = 1.0
+        mock_args.base_name = "ContextLens"
+        mock_args.max_cache_size = 100
+        mock_args.max_interface_depth = 15
+        mock_args.disable_pruning = False
+        mock_args.lsp_timeout = 5
+        mock_args.no_language_server = True
+        mock_args.skip_ffi = True
+        mock_args.skip_macro_expansion = True
+        mock_args.caller_depth = 0
+        mock_args.callee_depth = 0
+        mock_args.commit_range = None
+        mock_parse_args.return_value = mock_args
+
+        mock_git_diff.return_value = ["root.py"]
+        mock_git_tracked.return_value = ["root.py"]
+        mock_run.side_effect = lambda cmd, **kwargs: "@@ -1,1 +1,1 @@\n" if "diff" in cmd else ""
+
+        mock_bounds.return_value = (0, 5)
+
+        # Mock cache lines where the chunk starts with comments and string literals containing keywords
+        mock_cache = MagicMock()
+        mock_cache.get_lines.return_value = [
+            "# This is a def of dummy function\n",
+            "\"\"\"def another_dummy_string:\"\"\"\n",
+            "@my_decorator\n",
+            "def real_func():\n",
+            "    pass\n"
+        ]
+
+        mock_vm = MagicMock()
+        mock_vm_cls.return_value = mock_vm
+
+        with patch("context_builder.cli.get_global_cache", return_value=mock_cache), \
+             patch("context_builder.cli.is_in_repo", return_value=True), \
+             patch("os.path.exists", return_value=True):
+            main()
+
+        # The function name should be correctly extracted as "real_func" despite the keywords in comments and strings
+        mock_vm.add_modified_object.assert_called_with("root.py", "real_func", ANY)
+
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    @patch("context_builder.cli.parse_and_resolve_range")
+    @patch("context_builder.cli.run_scan")
+    @patch("subprocess.run")
+    @patch("shutil.rmtree")
+    def test_cli_robust_worktree_cleanup(
+        self, mock_rmtree, mock_sub_run, mock_run_scan, mock_resolve_range, mock_parse_args
+    ):
+        mock_args = MagicMock()
+        mock_args.commit_range = "-3"
+        mock_parse_args.return_value = mock_args
+        
+        mock_resolve_range.return_value = ("start_sha", "end_sha")
+        
+        # Simulating run_scan raising an exception (original error)
+        mock_run_scan.side_effect = RuntimeError("Original scan error")
+        
+        # Simulating git worktree remove failing in the finally block
+        mock_sub_run.side_effect = lambda *args, **kwargs: MagicMock(returncode=1) if "remove" in args[0] else MagicMock(returncode=0)
+        mock_rmtree.side_effect = PermissionError("Permission denied on Windows cleanup")
+
+        with self.assertRaises(RuntimeError) as ctx:
+            main()
+            
+        # Verify the original exception is preserved, not masked by cleanup failures
+        self.assertEqual(str(ctx.exception), "Original scan error")
+
