@@ -78,3 +78,55 @@ class TestIntegration(unittest.TestCase):
         # Since greet() is called by run_app() at distance 1, run_app()'s call site should show up as a caller
         self.assertIn("run_app()", payload)
         self.assertIn("- `app.py` (L5, Distance 1)", payload)
+
+    def test_end_to_end_caller_depth_zero(self):
+        # 2. Create sample source file
+        app_code = (
+            "def greet():\n"
+            "    print('hello')\n"
+            "\n"
+            "def run_app():\n"
+            "    greet()\n"
+        )
+        with open("app.py", "w", encoding="utf-8") as f:
+            f.write(app_code)
+
+        # 3. Commit it to git
+        subprocess.run(["git", "add", "app.py"], check=True, stdout=subprocess.DEVNULL)
+        subprocess.run(["git", "commit", "-m", "Initial commit"], check=True, stdout=subprocess.DEVNULL)
+
+        # 4. Modify the file to create a diff
+        modified_code = (
+            "def greet():\n"
+            "    print('hello world')\n" # Modified line
+            "\n"
+            "def run_app():\n"
+            "    greet()\n"
+        )
+        with open("app.py", "w", encoding="utf-8") as f:
+            f.write(modified_code)
+
+        # 5. Invoke ContextLens with --caller-depth 0
+        script_path = os.path.join(self.old_cwd, "smart_diff_context_builder.py")
+        res = subprocess.run(
+            ["python", script_path, "--base-name", "LensDepthZero", "--no-language-server", "--caller-depth", "0"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        self.assertEqual(res.returncode, 0)
+
+        # 6. Validate the output file
+        output_file = "LensDepthZero_final.md"
+        self.assertTrue(os.path.exists(output_file))
+        
+        with open(output_file, "r", encoding="utf-8") as f:
+            payload = f.read()
+
+        # Core changes are still included
+        self.assertIn("greet()", payload)
+        self.assertIn("print('hello world')", payload)
+
+        # Callers are omitted because caller-depth = 0
+        self.assertNotIn("- `app.py` (L5, Distance 1)", payload)
+
