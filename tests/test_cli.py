@@ -1,6 +1,6 @@
 import os
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, ANY
 import sys
 from context_builder.cli import main
 
@@ -322,7 +322,7 @@ class TestCLI(unittest.TestCase):
 
             # The function name for root.py should be correctly parsed as "foo"
             # (which we can verify because vm.add_modified_object is called with "foo")
-            mock_vm.add_modified_object.assert_called_with("root.py", "foo", unittest.mock.ANY)
+            mock_vm.add_modified_object.assert_called_with("root.py", "foo", ANY)
 
             # The function name for caller.py should be correctly parsed as "caller_func"
             # (which we can verify because the BFS queue will append "caller_func" and call add_callers)

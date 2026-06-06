@@ -1,5 +1,6 @@
 import os
 import unittest
+from unittest.mock import patch, MagicMock
 import tempfile
 from context_builder.cache import LRUFileCache
 from context_builder.ast_engine import (
@@ -141,11 +142,11 @@ class TestAstEngine(unittest.TestCase):
         self.assertEqual(path, def_path)
         self.assertEqual(line, 1)
 
-    @unittest.mock.patch("context_builder.ast_engine.AST_ENGINE")
+    @patch("context_builder.ast_engine.AST_ENGINE")
     def test_extract_callees_node_text_missing(self, mock_ast_engine):
-        mock_parser = unittest.mock.MagicMock()
-        mock_tree = unittest.mock.MagicMock()
-        mock_node = unittest.mock.MagicMock()
+        mock_parser = MagicMock()
+        mock_tree = MagicMock()
+        mock_node = MagicMock()
         
         # Delete text attribute from mock node to simulate older py-tree-sitter versions
         del mock_node.text
@@ -158,15 +159,15 @@ class TestAstEngine(unittest.TestCase):
         mock_ast_engine.parsers = {".py": mock_parser}
         mock_ast_engine.is_supported.return_value = True
         
-        mock_lang = unittest.mock.MagicMock()
-        mock_query = unittest.mock.MagicMock()
+        mock_lang = MagicMock()
+        mock_query = MagicMock()
         mock_query.captures.return_value = [(mock_node, "id")]
         mock_lang.query.return_value = mock_query
         mock_ast_engine.languages = {".py": mock_lang}
         
         from context_builder.ast_engine import extract_callees_ast
         
-        mock_cache = unittest.mock.MagicMock()
+        mock_cache = MagicMock()
         mock_cache.get_bytes.return_value = b"def foo():\n    bar()\n"
         
         with self.assertRaises(AttributeError) as ctx:
