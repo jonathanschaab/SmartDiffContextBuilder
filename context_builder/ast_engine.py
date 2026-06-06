@@ -278,7 +278,13 @@ def extract_callees_ast(file_path, start_line, end_line, ext, file_cache):
         captures = query.captures(func_node)
         for node, _ in captures:
             if start_line <= node.start_point[0] < end_line:
+                if not hasattr(node, 'text'):
+                    # In py-tree-sitter v0.20.x and below, Node objects do not have a .text attribute.
+                    # We raise AttributeError to inform the user to upgrade to version >= 0.21.0.
+                    raise AttributeError("Node object lacks '.text' attribute. Please upgrade py-tree-sitter to version 0.21.0 or newer.")
                 callees.add(node.text.decode('utf-8', errors='ignore'))
+    except AttributeError as ae:
+        raise ae
     except Exception:
         pass
     return callees

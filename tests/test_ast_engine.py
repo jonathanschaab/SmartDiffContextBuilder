@@ -140,3 +140,36 @@ class TestAstEngine(unittest.TestCase):
         path, line = find_callee_definition("bar", [file_path, def_path], file_cache=self.cache)
         self.assertEqual(path, def_path)
         self.assertEqual(line, 1)
+
+    @unittest.mock.patch("context_builder.ast_engine.AST_ENGINE")
+    def test_extract_callees_node_text_missing(self, mock_ast_engine):
+        mock_parser = unittest.mock.MagicMock()
+        mock_tree = unittest.mock.MagicMock()
+        mock_node = unittest.mock.MagicMock()
+        
+        # Delete text attribute from mock node to simulate older py-tree-sitter versions
+        del mock_node.text
+        
+        mock_tree.root_node.children = [mock_node]
+        mock_node.start_point = (1, 0)
+        mock_node.end_point = (2, 0)
+        
+        mock_parser.parse.return_value = mock_tree
+        mock_ast_engine.parsers = {".py": mock_parser}
+        mock_ast_engine.is_supported.return_value = True
+        
+        mock_lang = unittest.mock.MagicMock()
+        mock_query = unittest.mock.MagicMock()
+        mock_query.captures.return_value = [(mock_node, "id")]
+        mock_lang.query.return_value = mock_query
+        mock_ast_engine.languages = {".py": mock_lang}
+        
+        from context_builder.ast_engine import extract_callees_ast
+        
+        mock_cache = unittest.mock.MagicMock()
+        mock_cache.get_bytes.return_value = b"def foo():\n    bar()\n"
+        
+        with self.assertRaises(AttributeError) as ctx:
+            extract_callees_ast("dummy.py", 1, 3, ".py", mock_cache)
+            
+        self.assertIn("Node object lacks '.text' attribute", str(ctx.exception))

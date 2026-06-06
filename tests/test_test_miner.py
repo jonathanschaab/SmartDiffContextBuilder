@@ -59,3 +59,22 @@ class TestTestMiner(unittest.TestCase):
         self.assertEqual(len(tests), 1)
         self.assertEqual(tests[0]["file"], file_path)
         self.assertEqual(tests[0]["line"], 1)
+
+    def test_mine_relevant_unit_tests_regex_substring_avoidance(self):
+        # Create a test file containing "test_runner" but we are looking for "run"
+        test_code = (
+            "def test_runner():\n"
+            "    # test body\n"
+            "    runner()\n"
+        )
+        file_path = "test_a.py"
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(test_code)
+
+        cache = LRUFileCache(capacity=5)
+        # Seed cache
+        cache.get_content(file_path)
+
+        # We look for "run". It should NOT match "test_runner" or "runner()" because of the word boundaries
+        tests = mine_relevant_unit_tests("run", [file_path], file_cache=cache)
+        self.assertEqual(len(tests), 0)

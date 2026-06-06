@@ -148,8 +148,9 @@ def run_scan(args, start_ref=None, end_ref=None, output_dir="."):
             if start is None: continue
             func_chunk = "".join(file_lines[start:end])
             
-            name_match = re.search(r'\b(?:fn|def|function|sub|func|class|macro)\s+([A-Za-z0-9_]+)', file_lines[start])
-            func_name = name_match.group(1) if name_match else f"block_lines_{start}_{end}"
+            # If a function starts with a decorator or spans multiple lines, searching file_lines[start] might fail.
+            # We search in func_chunk instead, using the walrus operator to simplify the assignment and condition.
+            func_name = name_match.group(1) if (name_match := re.search(r'\b(?:fn|def|function|sub|func|class|macro)\s+([A-Za-z0-9_]+)', func_chunk)) else f"block_lines_{start}_{end}"
 
             # Deduplication
             span_signature = f"{file_path}::line_{start}_to_{end}"
@@ -220,8 +221,11 @@ def run_scan(args, start_ref=None, end_ref=None, output_dir="."):
                     ref_lines = file_cache.get_lines(ref_path)
                     if not ref_lines or start >= len(ref_lines): continue
                     
-                    name_match = re.search(r'\b(?:fn|def|function|sub|func|class|macro)\s+([A-Za-z0-9_]+)', ref_lines[start])
-                    occ_func = name_match.group(1) if name_match else f"block_lines_{start}_{end}"
+                    # If a function starts with a decorator or spans multiple lines, searching ref_lines[start] might fail.
+                    # We join ref_lines[start:end] to get the full function chunk and search in ref_chunk,
+                    # using the walrus operator to simplify the regex matching expression.
+                    ref_chunk = "".join(ref_lines[start:end])
+                    occ_func = name_match.group(1) if (name_match := re.search(r'\b(?:fn|def|function|sub|func|class|macro)\s+([A-Za-z0-9_]+)', ref_chunk)) else f"block_lines_{start}_{end}"
                     
                     span_sig = f"{ref_path}::line_{start}_to_{end}"
                     if span_sig not in processed_spans:

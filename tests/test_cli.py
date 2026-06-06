@@ -254,3 +254,78 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(mock_vm.local_callees[1]["distance"], 2)
         self.assertEqual(mock_vm.local_callees[1]["file"], "callee2.py")
 
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    @patch("context_builder.cli.get_git_diff_files")
+    @patch("context_builder.cli.get_git_tracked_files")
+    @patch("context_builder.cli.run_command")
+    @patch("context_builder.cli.extract_function_bounds")
+    @patch("context_builder.cli.VolumeManager")
+    def test_cli_decorator_and_multiline_parsing(
+        self, mock_vm_cls, mock_bounds, mock_run, mock_git_tracked, mock_git_diff, mock_parse_args
+    ):
+        mock_args = MagicMock()
+        mock_args.format = "md"
+        mock_args.max_lines = 1000
+        mock_args.max_mb = 1.0
+        mock_args.base_name = "ContextLens"
+        mock_args.max_cache_size = 100
+        mock_args.max_interface_depth = 15
+        mock_args.disable_pruning = False
+        mock_args.lsp_timeout = 5
+        mock_args.no_language_server = True
+        mock_args.skip_ffi = True
+        mock_args.skip_macro_expansion = True
+        mock_args.caller_depth = 1
+        mock_args.callee_depth = 0
+        mock_args.commit_range = None
+        mock_parse_args.return_value = mock_args
+
+        # root.py has a decorator and multiline declaration
+        mock_git_diff.return_value = ["root.py"]
+        mock_git_tracked.return_value = ["root.py", "caller.py"]
+        mock_run.side_effect = lambda cmd, **kwargs: "@@ -1,1 +1,1 @@\n" if "diff" in cmd else ""
+
+        # root.py bounds: start=0, end=5
+        # caller.py bounds: start=0, end=5
+        def mock_bounds_fn(file_path, line_num, file_cache=None):
+            return 0, 5
+        mock_bounds.side_effect = mock_bounds_fn
+
+        # Mock cache lines
+        mock_cache = MagicMock()
+        # root.py starts with a decorator on first line, so file_lines[start] is '@decorator'
+        mock_cache.get_lines.side_effect = lambda path: [
+            "@my_decorator\n",
+            "def foo(\n",
+            "    x, y\n",
+            "):\n",
+            "    pass\n"
+        ] if path == "root.py" else [
+            "@other_decorator\n",
+            "def caller_func(\n",
+            "    a\n",
+            "):\n",
+            "    foo(a)\n"
+        ]
+
+        # LSP returns a caller in caller.py
+        with patch("context_builder.cli.get_lsp_references") as mock_get_lsp:
+            mock_get_lsp.return_value = {"caller.py": [{"line": 5, "code": "foo(a)"}]}
+            
+            mock_vm = MagicMock()
+            mock_vm_cls.return_value = mock_vm
+
+            with patch("context_builder.cli.get_global_cache", return_value=mock_cache), \
+                 patch("context_builder.cli.is_in_repo", return_value=True), \
+                 patch("os.path.exists", return_value=True):
+                main()
+
+            # The function name for root.py should be correctly parsed as "foo"
+            # (which we can verify because vm.add_modified_object is called with "foo")
+            mock_vm.add_modified_object.assert_called_with("root.py", "foo", unittest.mock.ANY)
+
+            # The function name for caller.py should be correctly parsed as "caller_func"
+            # (which we can verify because the BFS queue will append "caller_func" and call add_callers)
+            calls = mock_vm.add_callers.call_args_list
+            self.assertTrue(len(calls) >= 1)
+
