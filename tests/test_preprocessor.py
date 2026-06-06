@@ -47,6 +47,26 @@ class TestPreprocessor(unittest.TestCase):
         self.assertIn("other.cpp", callers)
         self.assertEqual(callers["main.cpp"][0]["code"], "// [Compilation Link via compile_commands.json]")
 
+    def test_analyze_compile_commands_precise_include(self):
+        # Create compile_commands.json
+        db = [
+            {
+                "directory": ".",
+                "command": "clang++ -c other.cpp",
+                "file": "other.cpp"
+            }
+        ]
+        with open("compile_commands.json", "w") as f:
+            json.dump(db, f)
+
+        # Create other.cpp that includes main_header.h, but we are looking for a.h
+        with open("other.cpp", "w") as f:
+            f.write('#include "main_header.h"\n')
+
+        # Target file is a.h. It should NOT match because "a.h" is a substring of "main_header.h" but not the exact include.
+        callers = analyze_compile_commands("a.h")
+        self.assertNotIn("other.cpp", callers)
+
     def test_analyze_compile_commands_relative_paths(self):
         import shutil
         os.makedirs("build", exist_ok=True)

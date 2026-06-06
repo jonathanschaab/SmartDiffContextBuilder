@@ -160,3 +160,97 @@ class TestCLI(unittest.TestCase):
         # The literal +20 and +40 inside code lines should NOT be parsed.
         self.assertEqual(queried_lines, [10, 11, 12, 30])
 
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    @patch("context_builder.cli.get_git_diff_files")
+    @patch("context_builder.cli.get_git_tracked_files")
+    @patch("context_builder.cli.run_command")
+    @patch("context_builder.cli.extract_function_bounds")
+    @patch("context_builder.cli.extract_callees")
+    @patch("context_builder.cli.find_callee_definition")
+    @patch("context_builder.cli.VolumeManager")
+    def test_cli_callee_depth_bfs_traversal(
+        self, mock_vm_cls, mock_find_def, mock_extract_callees, mock_bounds, mock_run, mock_git_tracked, mock_git_diff, mock_parse_args
+    ):
+        mock_args = MagicMock()
+        mock_args.format = "md"
+        mock_args.max_lines = 1000
+        mock_args.max_mb = 1.0
+        mock_args.base_name = "ContextLens"
+        mock_args.max_cache_size = 100
+        mock_args.max_interface_depth = 15
+        mock_args.disable_pruning = False
+        mock_args.lsp_timeout = 5
+        mock_args.no_language_server = True
+        mock_args.skip_ffi = True
+        mock_args.skip_macro_expansion = True
+        mock_args.caller_depth = 0
+        mock_args.callee_depth = 2
+        mock_args.commit_range = None
+        mock_parse_args.return_value = mock_args
+
+        mock_git_diff.return_value = ["root.py"]
+        mock_git_tracked.return_value = ["root.py", "callee1.py", "callee2.py"]
+        mock_run.side_effect = lambda cmd, **kwargs: "@@ -1,1 +1,1 @@\n" if "diff" in cmd else ""
+
+        # Setup bounds mock:
+        # root.py: line 1 -> start=0, end=4 (def foo)
+        # callee1.py: line 2 -> start=1, end=5 (def bar)
+        # callee2.py: line 3 -> start=2, end=6 (def baz)
+        def mock_bounds_fn(file_path, line_num, file_cache=None):
+            if file_path == "root.py":
+                return 0, 4
+            elif file_path == "callee1.py":
+                return 1, 5
+            elif file_path == "callee2.py":
+                return 2, 6
+            return None, None
+        mock_bounds.side_effect = mock_bounds_fn
+
+        # Setup callees mock:
+        # root.py -> calls "bar"
+        # callee1.py -> calls "baz"
+        # callee2.py -> calls nothing
+        def mock_extract_callees_fn(file_path, start, end, file_cache=None):
+            if file_path == "root.py":
+                return ["bar"]
+            elif file_path == "callee1.py":
+                return ["baz"]
+            return []
+        mock_extract_callees.side_effect = mock_extract_callees_fn
+
+        # Setup find definition mock:
+        # "bar" -> callee1.py, line 2
+        # "baz" -> callee2.py, line 3
+        def mock_find_def_fn(name, files, file_cache=None):
+            if name == "bar":
+                return "callee1.py", 2
+            elif name == "baz":
+                return "callee2.py", 3
+            return None, None
+        mock_find_def.side_effect = mock_find_def_fn
+
+        mock_cache = MagicMock()
+        mock_cache.get_lines.side_effect = lambda path: [
+            "def foo():\n" if path == "root.py" else ("def bar():\n" if path == "callee1.py" else "def baz():\n")
+        ] * 10
+
+        mock_vm = MagicMock()
+        mock_vm.local_callees = []
+        mock_vm_cls.return_value = mock_vm
+
+        with patch("context_builder.cli.get_global_cache", return_value=mock_cache), \
+             patch("context_builder.cli.is_in_repo", return_value=True), \
+             patch("os.path.exists", return_value=True):
+            main()
+
+        # Check local_callees additions
+        self.assertEqual(len(mock_vm.local_callees), 2)
+        # first callee: bar, distance 1
+        self.assertEqual(mock_vm.local_callees[0]["function_name"], "bar")
+        self.assertEqual(mock_vm.local_callees[0]["distance"], 1)
+        self.assertEqual(mock_vm.local_callees[0]["file"], "callee1.py")
+        # second callee: baz, distance 2
+        self.assertEqual(mock_vm.local_callees[1]["function_name"], "baz")
+        self.assertEqual(mock_vm.local_callees[1]["distance"], 2)
+        self.assertEqual(mock_vm.local_callees[1]["file"], "callee2.py")
+

@@ -35,6 +35,7 @@ def mine_relevant_unit_tests(func_name, repo_files, current_source_file=None, fi
         lines = file_cache.get_lines(file_path)
         ext = os.path.splitext(file_path)[1]
 
+        ast_success = False
         if AST_ENGINE.is_supported(ext):
             source_bytes = file_cache.get_bytes(file_path)
             tree = AST_ENGINE.parsers[ext].parse(source_bytes)
@@ -57,17 +58,19 @@ def mine_relevant_unit_tests(func_name, repo_files, current_source_file=None, fi
                             if normalized not in seen_bodies:
                                 seen_bodies.add(normalized)
                                 discovered_tests.append({"file": file_path, "line": start_l + 1, "code": test_body})
+                    ast_success = True
                 except Exception as exc:
                     warn_once("test_query_fail", f"AST test query failed on {file_path}: {exc}")
 
-        for idx, line in enumerate(lines):
-            if func_name in line and any(term in line.lower() for term in ["test", "it(", "describe"]):
-                start, end = extract_function_bounds_regex(file_path, idx + 1, file_cache=file_cache)
-                if start is not None:
-                    test_body = "".join(lines[start:end])
-                    normalized = test_body.strip()
-                    if normalized not in seen_bodies:
-                        seen_bodies.add(normalized)
-                        discovered_tests.append({"file": file_path, "line": start + 1, "code": test_body})
+        if not ast_success:
+            for idx, line in enumerate(lines):
+                if func_name in line and any(term in line.lower() for term in ["test", "it(", "describe"]):
+                    start, end = extract_function_bounds_regex(file_path, idx + 1, file_cache=file_cache)
+                    if start is not None:
+                        test_body = "".join(lines[start:end])
+                        normalized = test_body.strip()
+                        if normalized not in seen_bodies:
+                            seen_bodies.add(normalized)
+                            discovered_tests.append({"file": file_path, "line": start + 1, "code": test_body})
                         
     return discovered_tests

@@ -4,6 +4,7 @@ import json
 import atexit
 import subprocess
 import urllib.parse
+from urllib.request import url2pathname
 import queue
 import threading
 from .sys_utils import warn_once
@@ -131,7 +132,7 @@ atexit.register(cleanup_zombie_lsps)
 
 def get_lsp_references(file_path, line_num, func_name, timeout, max_depth, disable_pruning, file_cache=None):
     global USE_LSP
-    if not USE_LSP: return None
+    if not USE_LSP or line_num <= 0: return None
     if file_cache is None:
         file_cache = get_global_cache()
     
@@ -172,7 +173,7 @@ def get_lsp_references(file_path, line_num, func_name, timeout, max_depth, disab
         warn_once(f"prune_{func_name}", f"Polymorphic explosion detected for {func_name}. Pruning to {max_depth} callers.")
 
     for ref in refs:
-        ref_path = urllib.parse.unquote(ref.get("uri", "").replace("file://", ""))
+        ref_path = url2pathname(urllib.parse.urlparse(ref.get("uri", "")).path)
         try: rel_path = os.path.relpath(ref_path, os.getcwd())
         except ValueError: rel_path = ref_path
             

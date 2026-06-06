@@ -5,8 +5,11 @@ from context_builder.cache import LRUFileCache
 from context_builder.ast_engine import (
     strip_strings_and_comments,
     extract_function_bounds_regex,
+    extract_function_bounds,
     split_massive_block_ast,
-    trace_lexical_dependencies_regex
+    trace_lexical_dependencies_regex,
+    extract_callees,
+    find_callee_definition
 )
 
 class TestAstEngine(unittest.TestCase):
@@ -92,3 +95,48 @@ class TestAstEngine(unittest.TestCase):
         callers = trace_lexical_dependencies_regex("target_func", [file_path], file_cache=cache)
         self.assertIn(file_path, callers)
         self.assertEqual(len(callers[file_path]), 2)
+
+    def test_extract_function_bounds_defensive(self):
+        start, end = extract_function_bounds("some_file.py", 0, file_cache=self.cache)
+        self.assertIsNone(start)
+        self.assertIsNone(end)
+
+        start, end = extract_function_bounds("some_file.py", -10, file_cache=self.cache)
+        self.assertIsNone(start)
+        self.assertIsNone(end)
+
+    def test_extract_callees_and_find_definition(self):
+        # Create a python file calling another function
+        code_py = (
+            "def foo():\n"
+            "    bar()\n"
+            "    baz()\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "test.py")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code_py)
+
+        # Seed cache
+        self.cache.get_content(file_path)
+
+        # Extract callees between lines 0 and 3 (lines: def foo():, bar(), baz())
+        callees = extract_callees(file_path, 0, 3, file_cache=self.cache)
+        self.assertIn("bar", callees)
+        self.assertIn("baz", callees)
+
+        # Create another file defining bar
+        def_py = (
+            "def bar():\n"
+            "    print('hello')\n"
+        )
+        def_path = os.path.join(self.temp_dir.name, "def.py")
+        with open(def_path, "w", encoding="utf-8") as f:
+            f.write(def_py)
+
+        # Seed cache
+        self.cache.get_content(def_path)
+
+        # Try to find definition of bar
+        path, line = find_callee_definition("bar", [file_path, def_path], file_cache=self.cache)
+        self.assertEqual(path, def_path)
+        self.assertEqual(line, 1)

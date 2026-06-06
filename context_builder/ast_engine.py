@@ -119,6 +119,7 @@ def extract_function_bounds_regex(file_path, line_num, file_cache=None):
     return start_idx, end_idx
 
 def extract_function_bounds(file_path, line_num, file_cache=None):
+    if line_num <= 0: return None, None
     ext = os.path.splitext(file_path)[1]
     if AST_ENGINE.is_supported(ext):
         ast_bounds = extract_function_bounds_ast(file_path, line_num, ext, file_cache=file_cache)
@@ -188,8 +189,9 @@ def trace_lexical_dependencies_regex(func_name, repo_files, file_cache=None):
         if os.path.splitext(file_path)[1] not in LANG_MAP or file_path.endswith('.md'): continue
         content = file_cache.get_content(file_path)
         if func_name in content:
+            pattern = r'\b(fn|def|function|sub|func|class|macro)\s+' + re.escape(func_name)
             for idx, line in enumerate(content.splitlines()):
-                if func_name in line and not re.search(r'\b(fn|def|function|sub|func|class|macro)\s+' + func_name, line):
+                if func_name in line and not re.search(pattern, line):
                     if file_path not in callers: callers[file_path] = []
                     callers[file_path].append({"line": idx + 1, "code": line.strip()})
     return callers
@@ -243,4 +245,85 @@ def split_massive_block_ast(source_text, file_path, max_lines):
             if budget <= 0: break
 
     return [{"suffix": " (AST Semantically Pruned)", "text": "\n".join(output_lines)}]
+
+def extract_callees_ast(file_path, start_line, end_line, ext, file_cache):
+    source_bytes = file_cache.get_bytes(file_path)
+    tree = AST_ENGINE.parsers[ext].parse(source_bytes)
+    
+    # Restrict traversal to function node matching start_line
+    def walk(node):
+        for child in node.children:
+            if child.start_point[0] == start_line:
+                return child
+            found = walk(child)
+            if found: return found
+        return None
+    func_node = walk(tree.root_node) or tree.root_node
+        
+    query_strings = {
+        '.py': '(call function: [(identifier) @id (attribute attribute: (identifier) @id)])',
+        '.rs': '(call_expression function: [(identifier) @id (scoped_identifier name: (identifier) @id) (field_expression field: (field_identifier) @id)])',
+        '.js': '(call_expression function: [(identifier) @id (member_expression property: (property_identifier) @id)])',
+        '.ts': '(call_expression function: [(identifier) @id (member_expression property: (property_identifier) @id)])',
+        '.c': '(call_expression function: (identifier) @id)',
+        '.cpp': '(call_expression function: [(identifier) @id (scoped_identifier name: (identifier) @id) (field_expression field: (field_identifier) @id)])'
+    }
+    
+    q_str = query_strings.get(ext)
+    if not q_str: return set()
+    
+    callees = set()
+    try:
+        query = AST_ENGINE.languages[ext].query(q_str)
+        captures = query.captures(func_node)
+        for node, _ in captures:
+            if start_line <= node.start_point[0] < end_line:
+                callees.add(node.text.decode('utf-8', errors='ignore'))
+    except Exception:
+        pass
+    return callees
+
+def extract_callees_regex(file_path, start_line, end_line, file_cache):
+    lines = file_cache.get_lines(file_path)[start_line:end_line]
+    callees = set()
+    is_python = file_path.endswith('.py')
+    for line in lines:
+        line_clean = strip_strings_and_comments(line, is_python)
+        for match in re.finditer(r'\b([A-Za-z_][A-Za-z0-9_]*)\s*\(', line_clean):
+            name = match.group(1)
+            if name not in ['if', 'while', 'for', 'with', 'print', 'len', 'fn', 'def', 'function', 'class']:
+                callees.add(name)
+    return callees
+
+def extract_callees(file_path, start_line, end_line, file_cache=None):
+    if file_cache is None:
+        file_cache = get_global_cache()
+    ext = os.path.splitext(file_path)[1]
+    if AST_ENGINE.is_supported(ext):
+        callees = extract_callees_ast(file_path, start_line, end_line, ext, file_cache)
+        if callees: return list(callees)
+    return list(extract_callees_regex(file_path, start_line, end_line, file_cache))
+
+def find_callee_definition(callee_name, all_repo_files, file_cache=None):
+    if file_cache is None:
+        file_cache = get_global_cache()
+    if not callee_name or len(callee_name) < 3: return None, None
+    
+    candidate_files = ripgrep_filter(all_repo_files, callee_name) if HAS_RG else all_repo_files
+    
+    # Precise patterns for definitions
+    pattern = rf'\b(?:fn|def|function|sub|func|class|macro)\s+{re.escape(callee_name)}\b'
+    cpp_pattern = rf'^\s*[A-Za-z0-9_<>:]+(?:\s+\*?\s*)*{re.escape(callee_name)}\s*\('
+
+    for file_path in candidate_files:
+        ext = os.path.splitext(file_path)[1]
+        if ext not in LANG_MAP: continue
+        
+        lines = file_cache.get_lines(file_path)
+        is_python = (ext == '.py')
+        for idx, line in enumerate(lines):
+            clean_line = strip_strings_and_comments(line, is_python)
+            if re.search(pattern, clean_line) or (ext in ['.c', '.cpp', '.hpp'] and re.search(cpp_pattern, clean_line)):
+                return file_path, idx + 1
+    return None, None
 

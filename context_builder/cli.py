@@ -9,7 +9,7 @@ from collections import deque
 
 from .cache import LRUFileCache, get_global_cache
 from .sys_utils import run_command, get_git_diff_files, get_git_tracked_files, is_in_repo
-from .ast_engine import extract_function_bounds, trace_lexical_dependencies_ast, trace_lexical_dependencies_regex, AST_ENGINE
+from .ast_engine import extract_function_bounds, trace_lexical_dependencies_ast, trace_lexical_dependencies_regex, AST_ENGINE, extract_callees, find_callee_definition, split_massive_block_ast
 from .lsp_client import get_lsp_references, cleanup_zombie_lsps
 from .preprocessor import build_ffi_registry, trace_ffi_callers, analyze_compile_commands, trace_macro_expansion
 from .volume_manager import VolumeManager
@@ -117,6 +117,7 @@ def run_scan(args, start_ref=None, end_ref=None, output_dir="."):
                 cpp_linkages[f] = linkages
 
     queue = deque()
+    callee_queue = deque()
 
     # Step 1: Initialize the queue with root-level modified function blocks
     for file_path in diff_files:
@@ -163,6 +164,7 @@ def run_scan(args, start_ref=None, end_ref=None, output_dir="."):
 
             # Push to queue for BFS caller tracing
             queue.append((file_path, start + 1, func_name, 0))
+            callee_queue.append((file_path, start + 1, func_name, 0))
 
     # Step 2: Queue-based BFS caller traversal
     while queue:
@@ -211,6 +213,7 @@ def run_scan(args, start_ref=None, end_ref=None, output_dir="."):
                     continue
                 for occ in occurrences:
                     occ_line = occ["line"]
+                    if occ_line <= 0: continue
                     start, end = extract_function_bounds(ref_path, occ_line, file_cache=file_cache)
                     if start is None: continue
                     
@@ -224,6 +227,41 @@ def run_scan(args, start_ref=None, end_ref=None, output_dir="."):
                     if span_sig not in processed_spans:
                         processed_spans.add(span_sig)
                         queue.append((ref_path, start + 1, occ_func, depth + 1))
+
+    # Step 2b: Queue-based BFS callee traversal
+    processed_callee_spans = set()
+    for span in processed_spans:
+        processed_callee_spans.add(span)
+
+    while callee_queue:
+        curr_file, curr_line, curr_func, depth = callee_queue.popleft()
+        if depth < args.callee_depth:
+            start, end = extract_function_bounds(curr_file, curr_line, file_cache=file_cache)
+            if start is None: continue
+            callees = extract_callees(curr_file, start, end, file_cache=file_cache)
+            for callee_name in callees:
+                def_file, def_line = find_callee_definition(callee_name, all_repo_files, file_cache=file_cache)
+                if not def_file or not def_line: continue
+                def_start, def_end = extract_function_bounds(def_file, def_line, file_cache=file_cache)
+                if def_start is None: continue
+                span_sig = f"{def_file}::line_{def_start}_to_{def_end}"
+                if span_sig in processed_callee_spans: continue
+                processed_callee_spans.add(span_sig)
+
+                ref_lines = file_cache.get_lines(def_file)
+                if not ref_lines or def_start >= len(ref_lines): continue
+
+                func_chunk = "".join(ref_lines[def_start:def_end])
+                subunits = split_massive_block_ast(func_chunk, def_file, args.max_lines - 100)
+                for sub in subunits:
+                    vm.local_callees.append({
+                        "file": def_file,
+                        "function_name": callee_name + sub["suffix"],
+                        "distance": depth + 1,
+                        "code": sub["text"]
+                    })
+                
+                callee_queue.append((def_file, def_start + 1, callee_name, depth + 1))
 
     # Final Execution: Process Funnel and Splice into Volumes
     vm.flush_all_volumes()

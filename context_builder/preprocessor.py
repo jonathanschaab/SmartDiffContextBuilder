@@ -114,7 +114,8 @@ def analyze_compile_commands(target_file, file_cache=None):
             elif os.path.exists(abs_ref_file):
                 # Check if the translation unit includes target_base
                 content = file_cache.get_content(abs_ref_file)
-                if '#include' in content and target_base in content:
+                pattern = rf'#\s*include\s*["<]{re.escape(target_base)}[">]'
+                if re.search(pattern, content):
                     is_linked = True
                     
             if is_linked:

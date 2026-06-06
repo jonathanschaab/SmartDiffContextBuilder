@@ -42,3 +42,31 @@ class TestLspClient(unittest.TestCase):
         self.assertEqual(refs, [])
         self.assertTrue(duration < 0.5)
 
+    @patch("context_builder.lsp_client.USE_LSP", True)
+    @patch("context_builder.lsp_client.LSP_INSTANCES")
+    def test_uri_parsing_cross_platform(self, mock_instances):
+        mock_client = MagicMock()
+        mock_instances.get.return_value = mock_client
+        mock_instances.__contains__.return_value = True
+
+        # Test Windows URI format
+        import os
+        current_dir = os.getcwd().replace("\\", "/")
+        if not current_dir.startswith("/"):
+            current_dir = "/" + current_dir
+        mock_client.get_references.return_value = [
+            {"uri": f"file://{current_dir}/foo.py", "range": {"start": {"line": 4, "character": 0}}}
+        ]
+        
+        mock_cache = MagicMock()
+        mock_cache.get_lines.return_value = ["def bar():\n"] * 10
+        
+        with patch("os.path.exists", return_value=True), \
+             patch("os.path.splitext", return_value=(".py", ".py")):
+            
+            # Call get_lsp_references
+            res = get_lsp_references("main.py", 5, "foo", timeout=5, max_depth=10, disable_pruning=False, file_cache=mock_cache)
+            
+            self.assertIsNotNone(res)
+            self.assertIn("foo.py", res)
+
