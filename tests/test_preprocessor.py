@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import patch, MagicMock
 import json
 from context_builder.cache import LRUFileCache
+import context_builder.preprocessor as _preprocessor_mod
 from context_builder.preprocessor import (
     analyze_compile_commands,
     build_ffi_registry,
@@ -16,6 +17,11 @@ class TestPreprocessor(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.old_cwd = os.getcwd()
         os.chdir(self.temp_dir.name)
+        # Reset the module-level compile_commands.json cache so each test
+        # starts with a clean state and cannot be contaminated by a previous
+        # test's cached mtime/content.
+        _preprocessor_mod._COMPILE_COMMANDS_CACHE = None
+        _preprocessor_mod._COMPILE_COMMANDS_MTIME = None
 
     def tearDown(self):
         os.chdir(self.old_cwd)
@@ -179,3 +185,69 @@ class TestPreprocessor(unittest.TestCase):
 
         # The result dict may be empty (file doesn't exist), but no exception was raised.
         self.assertIsInstance(result, dict)
+
+    def test_analyze_compile_commands_worktree_repo_root(self):
+        """When --commit-range is used, cwd is a temporary worktree while
+        compile_commands.json entries hold absolute paths inside the *original*
+        repository.  Without repo_root, os.path.relpath(abs_ref_file, cwd)
+        produces a path full of '../../..' that escapes the worktree and is
+        rejected by is_in_repo().  Passing repo_root=original_repo fixes this
+        by computing the relpath relative to the project root instead."""
+        import tempfile
+
+        # Simulate the original repo directory and worktree directory
+        with tempfile.TemporaryDirectory() as original_repo, \
+             tempfile.TemporaryDirectory() as worktree:
+
+            # Create a source file in the original repo
+            src_dir = os.path.join(original_repo, "src")
+            os.makedirs(src_dir, exist_ok=True)
+            ref_cpp = os.path.join(src_dir, "other.cpp")
+            with open(ref_cpp, "w") as f:
+                f.write("// other\n")
+
+            # Create compile_commands.json in the *worktree* (it was copied there
+            # by main() before chdir-ing into the worktree)
+            db = [
+                {
+                    "directory": src_dir,      # absolute path in original repo
+                    "command": f"clang++ -c {ref_cpp}",
+                    "file": ref_cpp             # absolute path in original repo
+                }
+            ]
+            ccj_path = os.path.join(worktree, "compile_commands.json")
+            with open(ccj_path, "w") as f:
+                json.dump(db, f)
+
+            # chdir into the worktree to simulate the --commit-range runtime context
+            old_cwd = os.getcwd()
+            os.chdir(worktree)
+            try:
+                # Without repo_root: relpath is computed relative to worktree.
+                # The result will start with '../' or be an absolute path and
+                # would NOT represent a valid in-project relative path.
+                result_no_root = analyze_compile_commands(
+                    os.path.join(src_dir, "other.h")
+                )
+                for key in result_no_root:
+                    # At minimum the key should not start with the original repo
+                    # absolute path prefix when worktree != original_repo
+                    self.assertFalse(
+                        key.startswith(worktree.replace("\\", "/")),
+                        "Key should not be inside the worktree dir"
+                    )
+
+                # With repo_root: relpath is computed relative to original_repo.
+                # The result should be a clean path like 'src/other.cpp'.
+                result_with_root = analyze_compile_commands(
+                    os.path.join(src_dir, "other.h"),
+                    repo_root=original_repo
+                )
+                expected_key = os.path.relpath(ref_cpp, original_repo).replace("\\", "/")
+                self.assertIn(expected_key, result_with_root,
+                              "With repo_root the key must be a valid project-relative path")
+                # Verify the key does NOT escape the project root
+                self.assertFalse(expected_key.startswith(".."),
+                                 "Path must not start with '..' when repo_root is provided")
+            finally:
+                os.chdir(old_cwd)

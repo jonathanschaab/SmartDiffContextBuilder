@@ -409,6 +409,59 @@ class TestCLI(unittest.TestCase):
         # Verify the original exception is preserved, not masked by cleanup failures
         self.assertEqual(str(ctx.exception), "Original scan error")
 
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    @patch("context_builder.cli.parse_and_resolve_range")
+    @patch("context_builder.cli.run_scan")
+    @patch("context_builder.cli.cleanup_zombie_lsps")
+    @patch("subprocess.run")
+    @patch("shutil.rmtree")
+    def test_cli_worktree_cleanup_calls_lsp_cleanup_before_remove(
+        self, mock_rmtree, mock_sub_run, mock_cleanup_lsps, mock_run_scan, mock_resolve_range, mock_parse_args
+    ):
+        """cleanup_zombie_lsps() must be called BEFORE git worktree remove.
+
+        On Windows, LSP server processes hold open file handles to files inside
+        the temporary worktree directory.  If those processes are still running
+        when shutil.rmtree / git worktree remove execute, the locked files cause
+        the cleanup to fail.  This test records the order of all side-effectful
+        calls and asserts that cleanup_zombie_lsps() precedes worktree removal.
+        """
+        mock_args = MagicMock()
+        mock_args.commit_range = "-1"
+        mock_parse_args.return_value = mock_args
+        mock_resolve_range.return_value = ("sha_start", "sha_end")
+
+        # run_scan completes without error so we reach the normal finally path
+        mock_run_scan.return_value = None
+
+        # Record the global call order across all three mocks
+        call_order = []
+        mock_cleanup_lsps.side_effect = lambda: call_order.append("cleanup_zombie_lsps")
+        mock_rmtree.side_effect = lambda *a, **kw: call_order.append("rmtree")
+
+        def sub_run_side_effect(*args, **kwargs):
+            # Record only the worktree-related subprocess calls
+            cmd = args[0] if args else kwargs.get("args", [])
+            if isinstance(cmd, list) and "worktree" in cmd:
+                call_order.append(f"subprocess.run:{' '.join(cmd)}")
+            return MagicMock(returncode=0)
+        mock_sub_run.side_effect = sub_run_side_effect
+
+        main()
+
+        # cleanup_zombie_lsps must appear in the list before any worktree removal
+        self.assertIn("cleanup_zombie_lsps", call_order,
+                      "cleanup_zombie_lsps() was never called in the finally block")
+        lsp_idx = call_order.index("cleanup_zombie_lsps")
+        worktree_remove_indices = [
+            i for i, s in enumerate(call_order)
+            if "worktree" in s and "remove" in s
+        ]
+        for rm_idx in worktree_remove_indices:
+            self.assertLess(lsp_idx, rm_idx,
+                            f"cleanup_zombie_lsps (pos {lsp_idx}) must precede "
+                            f"worktree remove (pos {rm_idx}) in call order")
+
     def test_extract_function_name_c_style(self):
         from context_builder.cli import _extract_function_name
         

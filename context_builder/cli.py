@@ -106,7 +106,16 @@ def _extract_function_name(cleaned_chunk, start, end):
             
     return f"block_lines_{start}_{end}"
 
-def run_scan(args, start_ref=None, end_ref=None, output_dir="."):
+def run_scan(args, start_ref=None, end_ref=None, output_dir=".", repo_root=None):
+    """Execute the context scan.
+
+    Args:
+        repo_root: Absolute path to the original project root.  Must be
+                   supplied when cwd is a temporary git worktree so that
+                   compile_commands.json linkages are resolved relative to
+                   the *project* rather than the worktree, ensuring the
+                   resulting paths pass is_in_repo() checks.
+    """
     # Initialize global cache
     file_cache = get_global_cache(args.max_cache_size)
     lsp_client.USE_LSP = not args.no_language_server
@@ -137,7 +146,11 @@ def run_scan(args, start_ref=None, end_ref=None, output_dir="."):
     cpp_linkages = {}
     for f in diff_files:
         if f.endswith(('.cpp', '.c', '.hpp', '.h')):
-            linkages = analyze_compile_commands(f)
+            # Pass repo_root so that paths are resolved relative to the project root
+            # rather than the cwd (which may be a temporary worktree when using
+            # --commit-range).  Without this, relpath produces ../../../../... paths
+            # that escape the worktree and are rejected by is_in_repo().
+            linkages = analyze_compile_commands(f, repo_root=repo_root)
             if linkages:
                 cpp_linkages[f] = linkages
 
@@ -356,11 +369,21 @@ def main():
 
         try:
             os.chdir(temp_worktree_dir)
-            # Run scan inside the worktree checking out end_ref and diffing against start_ref
-            run_scan(args, start_ref=start_sha, end_ref=end_sha, output_dir=original_cwd)
+            # Run scan inside the worktree checking out end_ref and diffing against start_ref.
+            # Pass original_cwd as repo_root so that compile_commands.json paths are resolved
+            # relative to the *project* root, not the temp worktree directory.
+            run_scan(args, start_ref=start_sha, end_ref=end_sha, output_dir=original_cwd, repo_root=original_cwd)
         finally:
             os.chdir(original_cwd)
             print(f"\n[ContextLens] Cleaning up temporary worktree...")
+            # Stop all background LSP server processes BEFORE removing the worktree directory.
+            # LSP servers hold open file handles to files inside temp_worktree_dir.  On Windows,
+            # those open handles prevent git worktree remove and shutil.rmtree from succeeding.
+            # Calling cleanup_zombie_lsps() here ensures all handles are released first.
+            try:
+                cleanup_zombie_lsps()
+            except Exception:
+                pass
             # Wrap each cleanup step in an individual try...except block to ensure robust cleanup
             # and prevent any cleanup failures (like locked files on Windows) from masking the original exception.
             try:

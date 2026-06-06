@@ -87,12 +87,32 @@ def trace_ffi_callers(func_name, repo_files, source_ext, file_cache=None):
 _COMPILE_COMMANDS_CACHE = None
 _COMPILE_COMMANDS_MTIME = None
 
-def analyze_compile_commands(target_file, file_cache=None):
+def analyze_compile_commands(target_file, file_cache=None, repo_root=None):
+    """Identify translation units in compile_commands.json that are linked to target_file.
+
+    Args:
+        target_file: The header/source file to find linkages for.
+        file_cache:  Optional shared LRU cache.
+        repo_root:   The root directory of the original repository.  This must
+                     be supplied when running inside a temporary git worktree
+                     (e.g. with --commit-range), because compile_commands.json
+                     entries will reference absolute paths under the *original*
+                     repo, not the worktree.  When repo_root is provided it is
+                     used as the base for os.path.relpath so that the returned
+                     keys are valid relative paths within the project tree and
+                     will pass is_in_repo() checks.
+    """
     global _COMPILE_COMMANDS_CACHE, _COMPILE_COMMANDS_MTIME
     if file_cache is None:
         file_cache = get_global_cache()
     callers = {}
     if not os.path.exists("compile_commands.json"): return callers
+    # Choose the base for relpath computation.  os.getcwd() is correct for
+    # normal runs, but inside a temp worktree it points to the worktree
+    # directory while compile_commands.json references the original repo.
+    # Using repo_root (the original project root) keeps returned paths inside
+    # the project tree so that is_in_repo() accepts them.
+    relpath_base = repo_root if repo_root else os.getcwd()
     try:
         # Cache the parsed database to avoid repeatedly reading/parsing it in a loop for every file.
         mtime = os.path.getmtime("compile_commands.json")
@@ -134,10 +154,11 @@ def analyze_compile_commands(target_file, file_cache=None):
                     is_linked = True
                     
             if is_linked:
-                # Store relative to current working directory for consistency, using forward slashes.
+                # Compute a path relative to the project root (relpath_base) so
+                # that the key is a valid in-repo path even when cwd is a worktree.
                 # Wrap in try/except ValueError to catch drive mismatches on Windows.
                 try:
-                    rel_ref_file = os.path.relpath(abs_ref_file, os.getcwd()).replace("\\", "/")
+                    rel_ref_file = os.path.relpath(abs_ref_file, relpath_base).replace("\\", "/")
                 except ValueError:
                     # Fallback to absolute path using forward slashes if drives differ
                     rel_ref_file = abs_ref_file.replace("\\", "/")
