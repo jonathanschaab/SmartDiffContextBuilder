@@ -210,3 +210,65 @@ class TestAstEngine(unittest.TestCase):
         self.assertIn("):", truncated_text)
         self.assertIn("# ... [Inner Body Omitted for Context Preservation] ...", truncated_text)
         self.assertIn("pass", truncated_text)
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_split_massive_block_ast_python_type_hints(self, mock_ast_engine):
+        source = (
+            "def my_func(\n"
+            "    x: int,\n"
+            "    y: str = 'hello'\n"
+            ") -> bool:\n"
+            "    # body starts here\n"
+            "    pass\n"
+        )
+        
+        mock_parser = MagicMock()
+        mock_tree = MagicMock()
+        mock_child = MagicMock()
+        
+        mock_tree.root_node.children = [mock_child]
+        mock_child.type = "function_definition"
+        mock_child.start_point = (0, 0)
+        mock_child.end_point = (5, 0)
+        
+        mock_parser.parse.return_value = mock_tree
+        mock_ast_engine.parsers = {".py": mock_parser}
+        mock_ast_engine.is_supported.return_value = True
+        
+        res = split_massive_block_ast(source, "test.py", max_lines=3)
+        
+        self.assertEqual(len(res), 1)
+        truncated_text = res[0]["text"]
+        # It should contain the full signature:
+        self.assertIn("def my_func(", truncated_text)
+        self.assertIn("x: int", truncated_text)
+        self.assertIn("y: str = 'hello'", truncated_text)
+        self.assertIn(") -> bool:", truncated_text)
+        self.assertIn("# ... [Inner Body Omitted for Context Preservation] ...", truncated_text)
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_split_massive_block_ast_js_method_definition(self, mock_ast_engine):
+        source = (
+            "    myMethod(x) {\n"
+            "        console.log(x);\n"
+            "    }\n"
+        )
+        
+        mock_parser = MagicMock()
+        mock_tree = MagicMock()
+        mock_child = MagicMock()
+        
+        mock_tree.root_node.children = [mock_child]
+        mock_child.type = "method_definition"
+        mock_child.start_point = (0, 0)
+        mock_child.end_point = (2, 0)
+        
+        mock_parser.parse.return_value = mock_tree
+        mock_ast_engine.parsers = {".js": mock_parser}
+        mock_ast_engine.is_supported.return_value = True
+        
+        res = split_massive_block_ast(source, "test.js", max_lines=2)
+        self.assertEqual(len(res), 1)
+        truncated_text = res[0]["text"]
+        self.assertIn("myMethod(x) {", truncated_text)
+        self.assertIn("/* ... [Inner Body Omitted for Context Preservation] ... */", truncated_text)

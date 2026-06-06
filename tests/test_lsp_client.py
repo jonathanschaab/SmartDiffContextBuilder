@@ -96,3 +96,21 @@ class TestLspClient(unittest.TestCase):
         queued_msg = client.msg_queue.get()
         self.assertEqual(queued_msg.get("id"), 2)
 
+    @patch("subprocess.Popen")
+    def test_lsp_client_case_insensitive_header(self, mock_popen):
+        mock_proc = MagicMock()
+        mock_proc.poll.return_value = None
+        mock_popen.return_value = mock_proc
+        
+        # Test with a lowercase header name: 'content-length' instead of 'Content-Length'
+        init_response = b"content-length: 45\r\n\r\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true}}"
+        mock_proc.stdout = BytesIO(init_response)
+
+        client = MinimalLSPClient(["some_lsp_binary"])
+        
+        # Start the client. If it correctly parses 'content-length:', it will read
+        # the init_response, match id 1, and return True.
+        success = client.start()
+        self.assertTrue(success)
+
+

@@ -9,7 +9,16 @@ from collections import deque
 
 from .cache import LRUFileCache, get_global_cache
 from .sys_utils import run_command, get_git_diff_files, get_git_tracked_files, is_in_repo
-from .ast_engine import extract_function_bounds, trace_lexical_dependencies_ast, trace_lexical_dependencies_regex, AST_ENGINE, extract_callees, find_callee_definition, split_massive_block_ast
+from .ast_engine import (
+    extract_function_bounds,
+    trace_lexical_dependencies_ast,
+    trace_lexical_dependencies_regex,
+    AST_ENGINE,
+    extract_callees,
+    find_callee_definition,
+    split_massive_block_ast,
+    strip_strings_and_comments,
+)
 from .lsp_client import get_lsp_references, cleanup_zombie_lsps
 from .preprocessor import build_ffi_registry, trace_ffi_callers, analyze_compile_commands, trace_macro_expansion
 from .volume_manager import VolumeManager
@@ -107,7 +116,7 @@ def run_scan(args, start_ref=None, end_ref=None, output_dir="."):
     vm = VolumeManager(args.format, args.max_lines, args.max_mb, args.base_name, output_dir=output_dir)
     vm.set_raw_diff(raw_diff)
     processed_spans = set() # Upgraded to track exact structural spans to prevent duplicate macro traces
-	
+
     # Initialize linkage map for C++ files if compile_commands exists
     cpp_linkages = {}
     for f in diff_files:
@@ -151,7 +160,6 @@ def run_scan(args, start_ref=None, end_ref=None, output_dir="."):
             # If a function starts with a decorator or spans multiple lines, searching file_lines[start] might fail.
             # We strip comments and strings to ensure we don't match dummy keywords inside them, then search in func_chunk
             # using the walrus operator to simplify the assignment and condition.
-            from .ast_engine import strip_strings_and_comments
             is_py = file_path.endswith('.py')
             cleaned_func_chunk = "\n".join(strip_strings_and_comments(line, is_python=is_py) for line in func_chunk.splitlines())
             func_name = name_match.group(1) if (name_match := re.search(r'\b(?:fn|def|function|sub|func|class|macro)\s+([A-Za-z0-9_]+)', cleaned_func_chunk)) else f"block_lines_{start}_{end}"

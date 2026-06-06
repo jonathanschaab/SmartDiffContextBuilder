@@ -79,13 +79,23 @@ def trace_ffi_callers(func_name, repo_files, source_ext, file_cache=None):
                 callers[f].append({"line": idx + 1, "code": f"// [FFI Bridge] {line.strip()}"})
     return callers
 
+_COMPILE_COMMANDS_CACHE = None
+_COMPILE_COMMANDS_MTIME = None
+
 def analyze_compile_commands(target_file, file_cache=None):
+    global _COMPILE_COMMANDS_CACHE, _COMPILE_COMMANDS_MTIME
     if file_cache is None:
         file_cache = get_global_cache()
     callers = {}
     if not os.path.exists("compile_commands.json"): return callers
     try:
-        with open("compile_commands.json", "r") as f: db = json.load(f)
+        # Cache the parsed database to avoid repeatedly reading/parsing it in a loop for every file.
+        mtime = os.path.getmtime("compile_commands.json")
+        if _COMPILE_COMMANDS_CACHE is None or _COMPILE_COMMANDS_MTIME != mtime:
+            with open("compile_commands.json", "r") as f:
+                _COMPILE_COMMANDS_CACHE = json.load(f)
+            _COMPILE_COMMANDS_MTIME = mtime
+        db = _COMPILE_COMMANDS_CACHE
         target_base = os.path.basename(target_file)
         target_name = os.path.splitext(target_base)[0]
         abs_target_file = os.path.abspath(target_file)

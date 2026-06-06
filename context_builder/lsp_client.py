@@ -79,7 +79,8 @@ class MinimalLSPClient:
             line_str = line.decode('utf-8')
             if line_str == "\r\n":
                 break
-            if line_str.startswith("Content-Length:"):
+            # The LSP/JSON-RPC specification states that header names are case-insensitive.
+            if line_str.lower().startswith("content-length:"):
                 content_length = int(line_str.split(":")[1].strip())
         
         if content_length == 0:
