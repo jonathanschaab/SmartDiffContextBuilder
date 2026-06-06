@@ -22,9 +22,12 @@ def run_command(cmd, exit_on_fail=False, timeout=None):
     except FileNotFoundError:
         return ""
 
-def get_git_diff_files():
-    # Gets all files modified in the current diff
-    out = run_command(["git", "diff", "--name-only", "HEAD"])
+def get_git_diff_files(start_ref=None, end_ref=None):
+    # Gets all files modified in the specified commit range, or current diff
+    if start_ref and end_ref:
+        out = run_command(["git", "diff", "--name-only", start_ref, end_ref])
+    else:
+        out = run_command(["git", "diff", "--name-only", "HEAD"])
     return [f for f in out.splitlines() if f.strip() and os.path.exists(f)]
 
 def get_git_tracked_files():

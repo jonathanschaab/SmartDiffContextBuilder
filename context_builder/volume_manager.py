@@ -2,11 +2,12 @@ import os
 from .ast_engine import split_massive_block_ast, LANG_MAP
 
 class VolumeManager:
-    def __init__(self, fmt, max_lines, max_mb, base_name="ContextLens"):
+    def __init__(self, fmt, max_lines, max_mb, base_name="ContextLens", output_dir="."):
         self.fmt = fmt.lower()
         self.max_lines = max_lines
         self.max_bytes = max_mb * 1024 * 1024
         self.base_name = base_name
+        self.output_dir = output_dir
         self.raw_diff_text = ""
         
         # Categorical Storage for Funnel Sorting
@@ -110,5 +111,6 @@ class VolumeManager:
             payload += notice
             print(f"\n[Warning] Payload exceeded size limit. Truncated to fit within {self.max_bytes / (1024 * 1024):.2f} MB.")
 
-        with open(f"{self.base_name}_final.md", "w", encoding="utf-8") as f: f.write(payload)
-        print(f"\n[ContextLens] Successfully generated {self.base_name}_final.md")
+        out_path = os.path.join(self.output_dir, f"{self.base_name}_final.md")
+        with open(out_path, "w", encoding="utf-8") as f: f.write(payload)
+        print(f"\n[ContextLens] Successfully generated {out_path}")

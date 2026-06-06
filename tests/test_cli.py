@@ -30,6 +30,7 @@ class TestCLI(unittest.TestCase):
         mock_args.skip_macro_expansion = True
         mock_args.caller_depth = 2
         mock_args.callee_depth = 1
+        mock_args.commit_range = None
         mock_parse_args.return_value = mock_args
 
         # 2. Setup mock files & bounds
@@ -117,6 +118,7 @@ class TestCLI(unittest.TestCase):
         mock_args.skip_macro_expansion = True
         mock_args.caller_depth = 1
         mock_args.callee_depth = 1
+        mock_args.commit_range = None
         mock_parse_args.return_value = mock_args
 
         # A diff output that has:

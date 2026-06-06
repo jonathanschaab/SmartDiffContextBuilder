@@ -1,6 +1,10 @@
 import os
 import re
 import argparse
+import subprocess
+import shutil
+import sys
+import tempfile
 from collections import deque
 
 from .cache import LRUFileCache, get_global_cache
@@ -12,36 +16,86 @@ from .volume_manager import VolumeManager
 from .test_miner import get_coverage_data, mine_relevant_unit_tests
 from . import lsp_client
 
-def main():
-    parser = argparse.ArgumentParser(description="Compile context-aware git diff tokens optimized for LLMs.")
-    parser.add_argument("--format", choices=["md", "json"], default="md")
-    parser.add_argument("--max-lines", type=int, default=1500)
-    parser.add_argument("--max-mb", type=float, default=2.0)
-    parser.add_argument("--base-name", type=str, default="ContextLens")
-    parser.add_argument("--max-cache-size", type=int, default=100)
+def resolve_commit_ref(ref):
+    """Resolves a git ref (like HEAD~2, my_tag) to a full commit SHA."""
+    out = run_command(["git", "rev-parse", "--verify", ref])
+    if not out.strip():
+        out = run_command(["git", "rev-parse", ref])
+    return out.strip()
+
+def parse_and_resolve_range(range_str):
+    """Parses range string into (start_sha, end_sha) commit hashes."""
+    range_str = range_str.strip()
     
-    # Configurable Flags
-    parser.add_argument("--max-interface-depth", type=int, default=15)
-    parser.add_argument("--disable-pruning", action="store_true")
-    parser.add_argument("--lsp-timeout", type=int, default=45)
-    parser.add_argument("--no-language-server", action="store_true")
-    parser.add_argument("--skip-ffi", action="store_true")
-    parser.add_argument("--skip-macro-expansion", action="store_true")
-    parser.add_argument("--caller-depth", type=int, default=1)
-    parser.add_argument("--callee-depth", type=int, default=1)
+    # Format 4: -N (implied HEAD as end)
+    m = re.match(r'^-(\d+)$', range_str)
+    if m:
+        end_ref = "HEAD"
+        count = int(m.group(1))
+        start_ref = f"HEAD~{count}"
     
-    args = parser.parse_args()
+    # Format 3: END-N
+    elif re.match(r'^(.+)-(\d+)$', range_str):
+        m = re.match(r'^(.+)-(\d+)$', range_str)
+        end_ref = m.group(1)
+        count = int(m.group(2))
+        start_ref = f"{end_ref}~{count}"
+
+    # Format 2: START+N
+    elif re.match(r'^(.+)\+(\d+)$', range_str):
+        m = re.match(r'^(.+)\+(\d+)$', range_str)
+        start_ref = m.group(1)
+        count = int(m.group(2))
+        
+        start_sha = resolve_commit_ref(start_ref)
+        if not start_sha:
+            raise ValueError(f"Could not resolve start commit: {start_ref}")
+            
+        # Get chronological list of commits from start_sha to HEAD
+        commits_out = run_command(["git", "log", "--reverse", "--format=%H", f"{start_sha}..HEAD"])
+        commits = [c.strip() for c in commits_out.splitlines() if c.strip()]
+        if len(commits) < count:
+            commits_out = run_command(["git", "log", "--reverse", "--format=%H", f"{start_sha}..main"])
+            commits = [c.strip() for c in commits_out.splitlines() if c.strip()]
+            
+        if len(commits) < count:
+            raise ValueError(f"Not enough commits after {start_ref} (requested +{count}, found {len(commits)})")
+            
+        end_ref = commits[count - 1]
+
+    # Format 1: START..END
+    elif ".." in range_str:
+        start_ref, end_ref = range_str.split("..", 1)
+        start_ref = start_ref.strip()
+        end_ref = end_ref.strip()
     
+    else:
+        raise ValueError(f"Invalid commit range format: '{range_str}'")
+
+    start_sha = resolve_commit_ref(start_ref)
+    end_sha = resolve_commit_ref(end_ref)
+    if not start_sha:
+        raise ValueError(f"Could not resolve start commit: {start_ref}")
+    if not end_sha:
+        raise ValueError(f"Could not resolve end commit: {end_ref}")
+        
+    return start_sha, end_sha
+
+def run_scan(args, start_ref=None, end_ref=None, output_dir="."):
     # Initialize global cache
     file_cache = get_global_cache(args.max_cache_size)
     lsp_client.USE_LSP = not args.no_language_server
 
     print(f"\n[ContextLens] Scanning Git Diff Workspace [Format: {args.format.upper()}]")
     
-    diff_files = [f for f in get_git_diff_files() if is_in_repo(f)]
+    diff_files = [f for f in get_git_diff_files(start_ref, end_ref) if is_in_repo(f)]
     if not diff_files: print("Workspace is clean."); return
 
-    raw_diff = run_command(["git", "diff", "HEAD"])
+    if start_ref and end_ref:
+        raw_diff = run_command(["git", "diff", start_ref, end_ref])
+    else:
+        raw_diff = run_command(["git", "diff", "HEAD"])
+        
     all_repo_files = [f for f in get_git_tracked_files() if is_in_repo(f)] 
     coverage_data = get_coverage_data()
     
@@ -50,7 +104,7 @@ def main():
     if not args.skip_ffi:
         ffi_exports = build_ffi_registry(all_repo_files, file_cache=file_cache)
 
-    vm = VolumeManager(args.format, args.max_lines, args.max_mb, args.base_name)
+    vm = VolumeManager(args.format, args.max_lines, args.max_mb, args.base_name, output_dir=output_dir)
     vm.set_raw_diff(raw_diff)
     processed_spans = set() # Upgraded to track exact structural spans to prevent duplicate macro traces
 	
@@ -67,7 +121,11 @@ def main():
     # Step 1: Initialize the queue with root-level modified function blocks
     for file_path in diff_files:
         ext = os.path.splitext(file_path)[1]
-        diff_lines = run_command(["git", "diff", "-U0", "HEAD", file_path]).splitlines()
+        if start_ref and end_ref:
+            diff_lines = run_command(["git", "diff", "-U0", start_ref, end_ref, "--", file_path]).splitlines()
+        else:
+            diff_lines = run_command(["git", "diff", "-U0", "HEAD", file_path]).splitlines()
+            
         line_numbers = []
         for line in diff_lines:
             if line.startswith("@@"):
@@ -171,3 +229,75 @@ def main():
     vm.flush_all_volumes()
     cleanup_zombie_lsps()
     print("\n[ContextLens] Context packaging completed successfully.")
+
+def main():
+    parser = argparse.ArgumentParser(description="Compile context-aware git diff tokens optimized for LLMs.")
+    parser.add_argument("--format", choices=["md", "json"], default="md")
+    parser.add_argument("--max-lines", type=int, default=1500)
+    parser.add_argument("--max-mb", type=float, default=2.0)
+    parser.add_argument("--base-name", type=str, default="ContextLens")
+    parser.add_argument("--max-cache-size", type=int, default=100)
+    
+    # Configurable Flags
+    parser.add_argument("--max-interface-depth", type=int, default=15)
+    parser.add_argument("--disable-pruning", action="store_true")
+    parser.add_argument("--lsp-timeout", type=int, default=45)
+    parser.add_argument("--no-language-server", action="store_true")
+    parser.add_argument("--skip-ffi", action="store_true")
+    parser.add_argument("--skip-macro-expansion", action="store_true")
+    parser.add_argument("--caller-depth", type=int, default=1)
+    parser.add_argument("--callee-depth", type=int, default=1)
+    parser.add_argument("--commit-range", type=str, default=None, help="Sequence of commits to analyze (e.g. START..END, -3, START+2, END-3)")
+    
+    args = parser.parse_args()
+    
+    if args.commit_range:
+        try:
+            start_sha, end_sha = parse_and_resolve_range(args.commit_range)
+        except Exception as e:
+            print(f"\n[ContextLens Error] Invalid commit range: {e}")
+            sys.exit(1)
+
+        original_cwd = os.getcwd()
+        # Create a unique temp folder inside the system temp directory for the worktree checkout
+        temp_worktree_dir = tempfile.mkdtemp(prefix="context_lens_worktree_")
+        
+        print(f"\n[ContextLens] Setting up temporary worktree for commit {end_sha[:8]}...")
+        # Check out end_sha in a detached state to avoid branch checkout conflicts
+        add_res = subprocess.run(
+            ["git", "worktree", "add", "--detach", temp_worktree_dir, end_sha],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        if add_res.returncode != 0:
+            print(f"\n[ContextLens Error] Failed to create git worktree: {add_res.stderr.strip()}")
+            shutil.rmtree(temp_worktree_dir, ignore_errors=True)
+            sys.exit(1)
+
+        # Copy compile_commands.json if it exists in the original repo root
+        compile_commands_path = os.path.join(original_cwd, "compile_commands.json")
+        if os.path.exists(compile_commands_path):
+            shutil.copy(compile_commands_path, os.path.join(temp_worktree_dir, "compile_commands.json"))
+
+        try:
+            os.chdir(temp_worktree_dir)
+            # Run scan inside the worktree checking out end_ref and diffing against start_ref
+            run_scan(args, start_ref=start_sha, end_ref=end_sha, output_dir=original_cwd)
+        finally:
+            os.chdir(original_cwd)
+            print(f"\n[ContextLens] Cleaning up temporary worktree...")
+            subprocess.run(
+                ["git", "worktree", "remove", "--force", temp_worktree_dir],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            subprocess.run(
+                ["git", "worktree", "prune"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            shutil.rmtree(temp_worktree_dir, ignore_errors=True)
+    else:
+        # Run scan directly in current workspace
+        run_scan(args)
