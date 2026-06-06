@@ -272,3 +272,33 @@ class TestAstEngine(unittest.TestCase):
         truncated_text = res[0]["text"]
         self.assertIn("myMethod(x) {", truncated_text)
         self.assertIn("/* ... [Inner Body Omitted for Context Preservation] ... */", truncated_text)
+
+    @patch("context_builder.ast_engine.extract_callees_ast")
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_extract_callees_empty_ast_no_regex_fallback(self, mock_ast_engine, mock_ast_fn):
+        """If the AST parser succeeds but finds zero callees (e.g. a function
+        body with only assignments and no calls), extract_callees must return
+        that empty result rather than falling back to the regex extractor.
+
+        Previously, `if callees:` treated an empty set as falsy and triggered
+        the regex fallback, introducing potential false-positives."""
+        mock_ast_engine.is_supported.return_value = True
+        # Simulate AST parse succeeding with zero callees
+        mock_ast_fn.return_value = set()
+
+        code = (
+            "def side_effect_only():\n"
+            "    x = 1 + 2\n"
+            "    return x\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "no_calls.py")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+        self.cache.get_content(file_path)
+
+        result = extract_callees(file_path, 0, 3, file_cache=self.cache)
+
+        # Must return the (empty) AST result, not fall through to regex
+        self.assertEqual(result, [])
+        # extract_callees_ast should have been called exactly once
+        mock_ast_fn.assert_called_once()

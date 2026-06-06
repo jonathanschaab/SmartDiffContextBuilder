@@ -16,8 +16,14 @@ def run_command(cmd, exit_on_fail=False, timeout=None):
     except subprocess.TimeoutExpired:
         warn_once(f"timeout_{cmd[0]}", f"Command '{' '.join(cmd)}' timed out.")
         return ""
-    except subprocess.CalledProcessError:
-        if exit_on_fail: sys.exit(1)
+    except subprocess.CalledProcessError as e:
+        if exit_on_fail:
+            # Print a helpful message before exiting so users can diagnose failures
+            # (e.g. running outside a git repository, missing permissions, etc.)
+            print(f"\n[ContextLens Error] Command failed: {' '.join(cmd)}")
+            if e.stderr and e.stderr.strip():
+                print(f"  Reason: {e.stderr.strip()}")
+            sys.exit(1)
         return ""
     except FileNotFoundError:
         return ""

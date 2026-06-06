@@ -170,11 +170,29 @@ def get_lsp_references(file_path, line_num, func_name, timeout, max_depth, disab
 
     lines = file_cache.get_lines(file_path)
     if line_num > len(lines): return []
-    char_idx = lines[line_num - 1].find(func_name)
-    if char_idx == -1: char_idx = 0
+
+    # line_num points to the start of the function definition block, which may be a
+    # decorator (e.g. @my_decorator).  Scan forward up to DECORATOR_LOOKAHEAD lines
+    # to find the actual line that contains func_name so the LSP cursor lands on it.
+    DECORATOR_LOOKAHEAD = 10
+    actual_line = line_num  # 1-based
+    char_idx = -1
+    for offset in range(DECORATOR_LOOKAHEAD):
+        candidate_idx = line_num - 1 + offset  # 0-based
+        if candidate_idx >= len(lines):
+            break
+        pos = lines[candidate_idx].find(func_name)
+        if pos != -1:
+            actual_line = line_num + offset
+            char_idx = pos
+            break
+    if char_idx == -1:
+        # func_name not found in any nearby line; fall back to the original line at col 0
+        actual_line = line_num
+        char_idx = 0
 
     print(f" [LSP] Querying {cmd[0]} for {func_name}() references...")
-    refs = client.get_references(file_path, line_num, char_idx, timeout=timeout)
+    refs = client.get_references(file_path, actual_line, char_idx, timeout=timeout)
     
     callers = {}
     total_refs = len(refs)

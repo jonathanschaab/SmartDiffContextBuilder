@@ -7,7 +7,8 @@ from context_builder.cache import LRUFileCache
 from context_builder.preprocessor import (
     analyze_compile_commands,
     build_ffi_registry,
-    trace_ffi_callers
+    trace_ffi_callers,
+    trace_macro_expansion
 )
 
 class TestPreprocessor(unittest.TestCase):
@@ -147,3 +148,34 @@ class TestPreprocessor(unittest.TestCase):
             # Should fall back to the absolute path formatted with forward slashes
             expected_key = abs_ref.replace("\\", "/")
             self.assertIn(expected_key, callers)
+
+    def test_trace_macro_expansion_relpath_drive_mismatch(self):
+        """On Windows, clang linemarkers can reference absolute paths on a
+        different drive from the project root.  os.path.relpath raises
+        ValueError in that case.  trace_macro_expansion must catch it and fall
+        back to the absolute path so execution continues rather than crashing."""
+        # Build a fake clang -E output whose linemarker points to an absolute path.
+        # We mock os.path.relpath in the preprocessor module to raise ValueError
+        # while still letting os.path.exists return False so the code skips the
+        # file body lookup (we only care that no exception is raised).
+        abs_header = "/D:/sys/include/stdio.h"
+        func_name = "my_macro"
+        expanded = (
+            f'# 1 "{abs_header}"\n'
+            f"void {func_name}() {{}}\n"
+        )
+
+        mock_cache = MagicMock()
+        mock_cache.get_lines.return_value = []
+
+        with patch("context_builder.preprocessor.run_command", return_value=expanded), \
+             patch("context_builder.preprocessor.os.path.relpath",
+                   side_effect=ValueError("path is on mount 'D:'")) as mock_rp, \
+             patch("context_builder.preprocessor.os.path.exists", return_value=False):
+            # Should not raise even though relpath raises ValueError
+            result = trace_macro_expansion(
+                func_name, ["src/main.c"], file_cache=mock_cache
+            )
+
+        # The result dict may be empty (file doesn't exist), but no exception was raised.
+        self.assertIsInstance(result, dict)

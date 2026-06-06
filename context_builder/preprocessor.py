@@ -30,7 +30,12 @@ def trace_macro_expansion(func_name, repo_files, file_cache=None):
                         marker_match = re.match(r'#\s+(\d+)\s+"([^"]+)"', expanded_lines[marker_idx])
                         if marker_match:
                             orig_line = int(marker_match.group(1))
-                            orig_file = os.path.relpath(marker_match.group(2), os.getcwd())
+                            # Wrap in try/except ValueError to handle Windows drive mismatches
+                            # (e.g. system headers on C: when the project is on D:).
+                            try:
+                                orig_file = os.path.relpath(marker_match.group(2), os.getcwd())
+                            except ValueError:
+                                orig_file = marker_match.group(2)
                             if os.path.exists(orig_file):
                                 lines = file_cache.get_lines(orig_file)
                                 if 1 <= orig_line <= len(lines):

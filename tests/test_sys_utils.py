@@ -1,4 +1,6 @@
+import sys
 import unittest
+from io import StringIO
 from unittest.mock import MagicMock, patch
 from context_builder.sys_utils import run_command, get_git_diff_files, get_git_tracked_files, ripgrep_filter
 
@@ -91,3 +93,27 @@ class TestSysUtils(unittest.TestCase):
         filtered = ripgrep_filter(files, "query")
         
         self.assertEqual(filtered, ["src/a.py", "src/b.py"])
+
+    def test_exit_on_fail_prints_error_before_exit(self):
+        """When exit_on_fail=True, a helpful error message (with the command and
+        stderr) must be printed before sys.exit(1) is called so that users
+        running outside a git repo (or with missing permissions) can diagnose the
+        problem without grepping logs."""
+        import subprocess
+        error = subprocess.CalledProcessError(
+            returncode=128,
+            cmd=["git", "ls-files"],
+            stderr="fatal: not a git repository (or any of the parent directories): .git"
+        )
+        with patch("subprocess.run", side_effect=error), \
+             patch("sys.stdout", new_callable=StringIO) as mock_out, \
+             self.assertRaises(SystemExit) as ctx:
+            run_command(["git", "ls-files"], exit_on_fail=True)
+
+        # Should exit with code 1
+        self.assertEqual(ctx.exception.code, 1)
+
+        # Should have printed both the command and the reason
+        output = mock_out.getvalue()
+        self.assertIn("git ls-files", output)
+        self.assertIn("fatal: not a git repository", output)

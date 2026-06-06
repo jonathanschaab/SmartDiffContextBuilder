@@ -113,4 +113,47 @@ class TestLspClient(unittest.TestCase):
         success = client.start()
         self.assertTrue(success)
 
+    @patch("context_builder.lsp_client.USE_LSP", True)
+    @patch("context_builder.lsp_client.LSP_INSTANCES")
+    def test_get_lsp_references_skips_decorator_lines(self, mock_instances):
+        """When line_num points at a decorator (@my_decorator) rather than the
+        actual 'def' line, get_lsp_references must scan forward to find the
+        line containing func_name so the LSP receives the correct character
+        offset instead of defaulting to column 0 on the decorator."""
+        mock_client = MagicMock()
+        mock_instances.get.return_value = mock_client
+        mock_instances.__contains__.return_value = True
 
+        # func_name is on line 3 (0-indexed: index 2), preceded by two decorators.
+        # line_num=1 means the first line (index 0) is where we start scanning.
+        lines = [
+            "@decorator_one\n",         # line 1 (1-based) — decorator
+            "@decorator_two\n",         # line 2
+            "def my_func(x, y):\n",     # line 3 — actual def
+            "    return x + y\n",
+        ]
+        func_name = "my_func"
+        expected_line = 3    # 1-based line where func_name lives
+        expected_char = lines[2].find(func_name)   # character offset within that line
+
+        mock_client.get_references.return_value = []
+
+        mock_cache = MagicMock()
+        mock_cache.get_lines.return_value = lines
+
+        import os
+        with patch("os.path.splitext", return_value=("", ".py")):
+            get_lsp_references(
+                "dummy.py", line_num=1, func_name=func_name,
+                timeout=1, max_depth=5, disable_pruning=True,
+                file_cache=mock_cache
+            )
+
+        # Verify the LSP was called with the corrected line and character offset
+        mock_client.get_references.assert_called_once()
+        call_args = mock_client.get_references.call_args
+        _, called_line, called_char = call_args[0][0], call_args[0][1], call_args[0][2]
+        self.assertEqual(called_line, expected_line,
+                         f"Expected LSP to be queried at line {expected_line}, got {called_line}")
+        self.assertEqual(called_char, expected_char,
+                         f"Expected char offset {expected_char}, got {called_char}")

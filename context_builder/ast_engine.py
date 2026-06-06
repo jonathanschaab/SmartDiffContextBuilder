@@ -327,7 +327,10 @@ def extract_callees(file_path, start_line, end_line, file_cache=None):
     if AST_ENGINE.is_supported(ext):
         try:
             callees = extract_callees_ast(file_path, start_line, end_line, ext, file_cache)
-            if callees: return list(callees)
+            # Return AST results unconditionally — even an empty set is valid (the
+            # function genuinely has no callees).  Only fall back to regex when the
+            # AST parser itself raised an error (e.g. old py-tree-sitter without .text).
+            return list(callees)
         except AttributeError as e:
             # Catch AttributeError to gracefully fall back on systems using older py-tree-sitter versions
             print(f"\n[ContextLens Warning] {e} Falling back to regex-based callee extraction.")
