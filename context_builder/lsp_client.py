@@ -4,6 +4,8 @@ import json
 import atexit
 import subprocess
 import urllib.parse
+import queue
+import threading
 from .sys_utils import warn_once
 from .cache import get_global_cache
 
@@ -15,12 +17,18 @@ class MinimalLSPClient:
         self.cmd = cmd
         self.proc = None
         self.req_id = 1
+        self.msg_queue = queue.Queue()
+        self.reader_thread = None
 
     def start(self):
         try:
             self.proc = subprocess.Popen(
                 self.cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
             )
+            # Start background reader thread to prevent blocking on hangs
+            self.reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
+            self.reader_thread.start()
+
             init_msg = {
                 "jsonrpc": "2.0", "id": self.req_id, "method": "initialize",
                 "params": {"processId": os.getpid(), "rootUri": f"file://{os.path.abspath('.')}", "capabilities": {}}
@@ -29,7 +37,7 @@ class MinimalLSPClient:
             
             start_time = time.time()
             while time.time() - start_time < 10:
-                res = self._recv()
+                res = self._recv(timeout=0.1)
                 if res and res.get("id") == self.req_id: break
             self.req_id += 1
             
@@ -45,17 +53,43 @@ class MinimalLSPClient:
         self.proc.stdin.write(header + body)
         self.proc.stdin.flush()
 
-    def _recv(self):
+    def _reader_loop(self):
+        # Background thread continuously reads stdout, parsing JSON-RPC messages and queuing them
+        try:
+            while self.proc and self.proc.poll() is None:
+                msg = self._recv_blocking()
+                if msg is not None:
+                    self.msg_queue.put(msg)
+                else:
+                    break
+        except Exception:
+            pass
+
+    def _recv_blocking(self):
+        # Performs blocking I/O to read a single JSON-RPC message from stdout
         content_length = 0
         while True:
-            line = self.proc.stdout.readline().decode('utf-8')
-            if not line or line == "\r\n": break
-            if line.startswith("Content-Length:"):
-                content_length = int(line.split(":")[1].strip())
+            line = self.proc.stdout.readline()
+            if not line:
+                return None
+            line_str = line.decode('utf-8')
+            if line_str == "\r\n":
+                break
+            if line_str.startswith("Content-Length:"):
+                content_length = int(line_str.split(":")[1].strip())
         
-        if content_length == 0: return None
-        body = self.proc.stdout.read(content_length).decode('utf-8')
-        return json.loads(body)
+        if content_length == 0:
+            return None
+        body = self.proc.stdout.read(content_length)
+        if not body:
+            return None
+        return json.loads(body.decode('utf-8'))
+
+    def _recv(self, timeout=0.05):
+        try:
+            return self.msg_queue.get(timeout=timeout)
+        except queue.Empty:
+            return None
 
     def get_references(self, file_path, line_num, char_num, timeout):
         req_id = self.req_id
@@ -72,15 +106,15 @@ class MinimalLSPClient:
 
         start_time = time.time()
         while time.time() - start_time < timeout:
-            res = self._recv()
-            if not res: 
-                time.sleep(0.05)
+            res = self._recv(timeout=0.05)
+            if not res:
                 continue
             if "id" not in res: continue
             if res["id"] == req_id: return res.get("result", [])
                 
         warn_once("lsp_timeout", f"LSP query timed out after {timeout}s. Increase --lsp-timeout if indexing takes longer.")
         return []
+
 
 def cleanup_zombie_lsps():
     for client in LSP_INSTANCES.values():

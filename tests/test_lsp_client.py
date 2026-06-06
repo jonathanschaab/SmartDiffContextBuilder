@@ -24,3 +24,21 @@ class TestLspClient(unittest.TestCase):
         # When USE_LSP is false, get_lsp_references should return None immediately
         refs = get_lsp_references("file.py", 10, "my_func", 5, 15, False)
         self.assertIsNone(refs)
+
+    @patch("subprocess.Popen")
+    def test_lsp_client_timeout(self, mock_popen):
+        mock_proc = MagicMock()
+        mock_popen.return_value = mock_proc
+        mock_proc.stdout = BytesIO(b"")
+
+        client = MinimalLSPClient(["some_lsp_binary"])
+        client.proc = mock_proc
+        
+        import time
+        start = time.time()
+        refs = client.get_references("file.py", 10, "my_func", timeout=0.05)
+        duration = time.time() - start
+        
+        self.assertEqual(refs, [])
+        self.assertTrue(duration < 0.5)
+

@@ -61,6 +61,19 @@ class TestAstEngine(unittest.TestCase):
         self.assertEqual(result[0]["suffix"], " (Truncated)")
         self.assertIn("line1\nline2", result[0]["text"])
 
+    def test_split_massive_block_ast_python_fallback(self):
+        source = "line1\nline2\nline3\nline4\n"
+        result = split_massive_block_ast(source, "file.py", max_lines=2)
+        self.assertEqual(result[0]["suffix"], " (Truncated)")
+        self.assertIn("# ... [Lines Omitted due to size] ...", result[0]["text"])
+
+    def test_split_massive_block_ast_cpp_fallback(self):
+        source = "line1\nline2\nline3\nline4\n"
+        result = split_massive_block_ast(source, "file.cpp", max_lines=2)
+        self.assertEqual(result[0]["suffix"], " (Truncated)")
+        self.assertIn("/* ... [Lines Omitted due to size] ... */", result[0]["text"])
+
+
     def test_trace_lexical_dependencies_regex(self):
         code = (
             "void target_func();\n"

@@ -61,6 +61,21 @@ class TestSysUtils(unittest.TestCase):
                 self.assertFalse(is_in_repo(ignored_file))
                 # Check external file
                 self.assertFalse(is_in_repo("/usr/include/stdio.h"))
+                
+                # Check sibling directory with matching prefix (e.g., project vs project_extra)
+                sibling_dir = temp_dir + "_extra"
+                os.makedirs(sibling_dir, exist_ok=True)
+                sibling_file = os.path.join(sibling_dir, "file.py")
+                with open(sibling_file, "w") as f:
+                    f.write("pass")
+                self.assertFalse(is_in_repo(sibling_file))
             finally:
                 os.chdir(old_cwd)
+                # Clean up sibling folder
+                try:
+                    import shutil
+                    if 'sibling_dir' in locals() and os.path.exists(sibling_dir):
+                        shutil.rmtree(sibling_dir)
+                except Exception:
+                    pass
 

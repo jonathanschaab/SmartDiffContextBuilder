@@ -68,7 +68,16 @@ def main():
     for file_path in diff_files:
         ext = os.path.splitext(file_path)[1]
         diff_lines = run_command(["git", "diff", "-U0", "HEAD", file_path]).splitlines()
-        line_numbers = [int(m.group(1)) for l in diff_lines for m in [re.search(r'\+(\d+)', l)] if m]
+        line_numbers = []
+        for line in diff_lines:
+            if line.startswith("@@"):
+                # Parse git unified diff hunk headers specifically (e.g., @@ -1,4 +1,8 @@)
+                # to extract the complete range of modified line numbers.
+                m = re.match(r'^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@', line)
+                if m:
+                    start = int(m.group(1))
+                    count = int(m.group(2)) if m.group(2) else 1
+                    line_numbers.extend(range(start, start + count))
         if not line_numbers or not os.path.exists(file_path): continue
 
         file_lines = file_cache.get_lines(file_path)

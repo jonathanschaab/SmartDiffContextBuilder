@@ -47,6 +47,27 @@ class TestPreprocessor(unittest.TestCase):
         self.assertIn("other.cpp", callers)
         self.assertEqual(callers["main.cpp"][0]["code"], "// [Compilation Link via compile_commands.json]")
 
+    def test_analyze_compile_commands_relative_paths(self):
+        import shutil
+        os.makedirs("build", exist_ok=True)
+        os.makedirs("src", exist_ok=True)
+        
+        db = [
+            {
+                "directory": os.path.abspath("build"),
+                "command": "clang++ -c ../src/main.cpp",
+                "file": "../src/main.cpp"
+            }
+        ]
+        with open("compile_commands.json", "w") as f:
+            json.dump(db, f)
+
+        # Target file is src/main.h. Since ../src/main.cpp resolves to src/main.cpp,
+        # it should link correctly by matching base name main.cpp to main.h.
+        callers = analyze_compile_commands("src/main.h")
+        self.assertIn("src/main.cpp", callers)
+
+
     def test_build_ffi_registry_and_trace(self):
         # Create a file with FFI exports using arbitrary return type
         code = (

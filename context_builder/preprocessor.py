@@ -88,27 +88,41 @@ def analyze_compile_commands(target_file, file_cache=None):
         with open("compile_commands.json", "r") as f: db = json.load(f)
         target_base = os.path.basename(target_file)
         target_name = os.path.splitext(target_base)[0]
+        abs_target_file = os.path.abspath(target_file)
+        
         for entry in db:
             ref_file = entry.get("file")
-            if not ref_file or ref_file == target_file:
+            if not ref_file:
                 continue
             
-            ref_base = os.path.basename(ref_file)
+            comp_dir = entry.get("directory")
+            # Resolve relative paths in compile_commands relative to the directory specified
+            if comp_dir and not os.path.isabs(ref_file):
+                ref_file = os.path.join(comp_dir, ref_file)
+            
+            abs_ref_file = os.path.abspath(ref_file)
+            if abs_ref_file == abs_target_file:
+                continue
+            
+            ref_base = os.path.basename(abs_ref_file)
             ref_name = os.path.splitext(ref_base)[0]
             
             is_linked = False
             # Check if base names match (e.g. foo.h and foo.cpp)
             if ref_name == target_name:
                 is_linked = True
-            elif os.path.exists(ref_file):
+            elif os.path.exists(abs_ref_file):
                 # Check if the translation unit includes target_base
-                content = file_cache.get_content(ref_file)
+                content = file_cache.get_content(abs_ref_file)
                 if '#include' in content and target_base in content:
                     is_linked = True
                     
             if is_linked:
-                if ref_file not in callers: callers[ref_file] = []
-                callers[ref_file].append({"line": 0, "code": f"// [Compilation Link via compile_commands.json]"})
+                # Store relative to current working directory for consistency, using forward slashes
+                rel_ref_file = os.path.relpath(abs_ref_file, os.getcwd()).replace("\\", "/")
+                if rel_ref_file not in callers: callers[rel_ref_file] = []
+                callers[rel_ref_file].append({"line": 0, "code": f"// [Compilation Link via compile_commands.json]"})
     except Exception as exc:
         warn_once("compile_commands_parse_fail", f"Failed to parse compile_commands.json: {exc}")
     return callers
+

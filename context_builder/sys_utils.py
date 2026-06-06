@@ -57,9 +57,11 @@ def is_in_repo(file_path):
         if pattern in normalized:
             return False
     try:
-        abs_path = os.path.abspath(file_path).lower()
-        repo_root = os.path.abspath(".").lower()
-        # Ensure it resides inside the repository root workspace
-        return abs_path.startswith(repo_root) and os.path.exists(file_path)
+        abs_path = os.path.abspath(file_path)
+        repo_root = os.path.abspath(".")
+        # Safely verify if the file resides within the repository root using commonpath
+        common = os.path.commonpath([repo_root, abs_path])
+        # Compare normalized absolute paths case-insensitively for Windows compatibility
+        return os.path.abspath(common).lower() == repo_root.lower() and os.path.exists(file_path)
     except Exception:
         return False

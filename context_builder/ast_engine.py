@@ -200,9 +200,15 @@ def split_massive_block_ast(source_text, file_path, max_lines):
     if len(lines) <= max_lines: return [{"suffix": "", "text": source_text}]
 
     ext = os.path.splitext(file_path)[1]
+    is_python = (ext == '.py')
+
     if not AST_ENGINE.is_supported(ext):
         # Dumb fallback
-        return [{"suffix": " (Truncated)", "text": "\n".join(lines[:max_lines]) + "\n/* ... [Lines Omitted due to size] ... */"}]
+        if is_python:
+            fallback_text = "\n".join(lines[:max_lines]) + "\n# ... [Lines Omitted due to size] ..."
+        else:
+            fallback_text = "\n".join(lines[:max_lines]) + "\n/* ... [Lines Omitted due to size] ... */"
+        return [{"suffix": " (Truncated)", "text": fallback_text}]
 
     tree = AST_ENGINE.parsers[ext].parse(source_text.encode('utf-8'))
     
@@ -220,12 +226,21 @@ def split_massive_block_ast(source_text, file_path, max_lines):
             if child.type in ['function_definition', 'class_definition', 'function_item', 'impl_item']:
                 signature = lines[child.start_point[0]]
                 output_lines.append(signature)
-                output_lines.append("    /* ... [Inner Body Omitted for Context Preservation] ... */")
-                output_lines.append("}") # Generic close
+                if is_python:
+                    # Provide indentation and pass to keep Python syntax valid
+                    output_lines.append("    # ... [Inner Body Omitted for Context Preservation] ...")
+                    output_lines.append("    pass")
+                else:
+                    output_lines.append("    /* ... [Inner Body Omitted for Context Preservation] ... */")
+                    output_lines.append("}") # Generic close
             else:
                 output_lines.extend(child_lines[:5])
-                output_lines.append("/* ... [Data Structure Omitted] ... */")
+                if is_python:
+                    output_lines.append("# ... [Data Structure Omitted] ...")
+                else:
+                    output_lines.append("/* ... [Data Structure Omitted] ... */")
             budget -= 3
             if budget <= 0: break
 
     return [{"suffix": " (AST Semantically Pruned)", "text": "\n".join(output_lines)}]
+
