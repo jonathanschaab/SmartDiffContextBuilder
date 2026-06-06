@@ -76,7 +76,8 @@ class MinimalLSPClient:
             line = self.proc.stdout.readline()
             if not line:
                 return None
-            line_str = line.decode('utf-8')
+            # Decode stream with errors='ignore' to prevent UnicodeDecodeError on unexpected bytes
+            line_str = line.decode('utf-8', errors='ignore')
             if line_str == "\r\n":
                 break
             # The LSP/JSON-RPC specification states that header names are case-insensitive.
@@ -88,7 +89,8 @@ class MinimalLSPClient:
         body = self.proc.stdout.read(content_length)
         if not body:
             return None
-        return json.loads(body.decode('utf-8'))
+        # Decode body using errors='ignore' for robustness against malformed/unexpected bytes
+        return json.loads(body.decode('utf-8', errors='ignore'))
 
     def _recv(self, timeout=0.05):
         try:
@@ -106,7 +108,13 @@ class MinimalLSPClient:
                 "context": {"includeDeclaration": False}
             }
         }
-        self._send(req)
+        try:
+            # Wrap send in try/except to gracefully handle cases where the LSP server
+            # has crashed or disconnected, preventing a fatal BrokenPipeError or OSError.
+            self._send(req)
+        except (BrokenPipeError, OSError) as e:
+            warn_once("lsp_send_error", f"LSP server error during send: {e}")
+            return []
         self.req_id += 1
 
         start_time = time.time()
@@ -182,7 +190,13 @@ def get_lsp_references(file_path, line_num, func_name, timeout, max_depth, disab
         except ValueError: rel_path = ref_path
             
         ref_line = ref["range"]["start"]["line"]
-        ref_code = file_cache.get_lines(rel_path)[ref_line].strip() if os.path.exists(rel_path) else "[Code Unavailable]"
+        ref_code = "[Code Unavailable]"
+        if os.path.exists(rel_path):
+            lines = file_cache.get_lines(rel_path)
+            # Add a defensive bounds check to prevent IndexError if the file
+            # has been modified or if the LSP returned an out-of-bounds line number.
+            if 0 <= ref_line < len(lines):
+                ref_code = lines[ref_line].strip()
         
         if rel_path not in callers: callers[rel_path] = []
         callers[rel_path].append({"line": ref_line + 1, "code": ref_code})

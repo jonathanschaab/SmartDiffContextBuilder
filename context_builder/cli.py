@@ -90,6 +90,22 @@ def parse_and_resolve_range(range_str):
         
     return start_sha, end_sha
 
+def _extract_function_name(cleaned_chunk, start, end):
+    """Extracts a function name from a cleaned (comment/string stripped) function chunk.
+    First tries matching standard declaration keywords, then falls back to C-style function
+    names (identifier followed by parenthesis) excluding control flow keywords.
+    """
+    if name_match := re.search(r'\b(?:fn|def|function|sub|func|class|macro)\s+([A-Za-z0-9_]+)', cleaned_chunk):
+        return name_match.group(1)
+    
+    # Fallback to C-style: identifier followed by '('
+    for m in re.finditer(r'\b([A-Za-z_][A-Za-z0-9_]*)\s*\(', cleaned_chunk):
+        name = m.group(1)
+        if name not in {'if', 'for', 'while', 'switch', 'catch', 'return', 'sizeof', 'sizeof_array'}:
+            return name
+            
+    return f"block_lines_{start}_{end}"
+
 def run_scan(args, start_ref=None, end_ref=None, output_dir="."):
     # Initialize global cache
     file_cache = get_global_cache(args.max_cache_size)
@@ -158,11 +174,10 @@ def run_scan(args, start_ref=None, end_ref=None, output_dir="."):
             func_chunk = "".join(file_lines[start:end])
             
             # If a function starts with a decorator or spans multiple lines, searching file_lines[start] might fail.
-            # We strip comments and strings to ensure we don't match dummy keywords inside them, then search in func_chunk
-            # using the walrus operator to simplify the assignment and condition.
+            # We strip comments and strings to ensure we don't match dummy keywords inside them, then search in func_chunk.
             is_py = file_path.endswith('.py')
             cleaned_func_chunk = "\n".join(strip_strings_and_comments(line, is_python=is_py) for line in func_chunk.splitlines())
-            func_name = name_match.group(1) if (name_match := re.search(r'\b(?:fn|def|function|sub|func|class|macro)\s+([A-Za-z0-9_]+)', cleaned_func_chunk)) else f"block_lines_{start}_{end}"
+            func_name = _extract_function_name(cleaned_func_chunk, start, end)
 
             # Deduplication
             span_signature = f"{file_path}::line_{start}_to_{end}"
@@ -235,11 +250,11 @@ def run_scan(args, start_ref=None, end_ref=None, output_dir="."):
                     
                     # If a function starts with a decorator or spans multiple lines, searching ref_lines[start] might fail.
                     # We join ref_lines[start:end] to get the full function chunk, strip comments and strings line-by-line,
-                    # and search in ref_chunk using the walrus operator to simplify the regex matching expression.
+                    # and search in ref_chunk.
                     ref_chunk = "".join(ref_lines[start:end])
                     is_py_ref = ref_path.endswith('.py')
                     cleaned_ref_chunk = "\n".join(strip_strings_and_comments(line, is_python=is_py_ref) for line in ref_chunk.splitlines())
-                    occ_func = name_match.group(1) if (name_match := re.search(r'\b(?:fn|def|function|sub|func|class|macro)\s+([A-Za-z0-9_]+)', cleaned_ref_chunk)) else f"block_lines_{start}_{end}"
+                    occ_func = _extract_function_name(cleaned_ref_chunk, start, end)
                     
                     span_sig = f"{ref_path}::line_{start}_to_{end}"
                     if span_sig not in processed_spans:

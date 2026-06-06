@@ -409,3 +409,27 @@ class TestCLI(unittest.TestCase):
         # Verify the original exception is preserved, not masked by cleanup failures
         self.assertEqual(str(ctx.exception), "Original scan error")
 
+    def test_extract_function_name_c_style(self):
+        from context_builder.cli import _extract_function_name
+        
+        # Test standard Python/Rust with keyword
+        res = _extract_function_name("def my_python_func(x):", 0, 5)
+        self.assertEqual(res, "my_python_func")
+        
+        # Test C-style (no keyword, identifier followed by parenthesis)
+        res = _extract_function_name("void my_c_func(int x) {", 10, 15)
+        self.assertEqual(res, "my_c_func")
+        
+        # Test C-style with spaces before parenthesis
+        res = _extract_function_name("int spaced_func   (double y)", 20, 25)
+        self.assertEqual(res, "spaced_func")
+        
+        # Test exclusion of control flow keywords
+        res = _extract_function_name("if (x > y) {", 30, 35)
+        self.assertEqual(res, "block_lines_30_35")
+        
+        # Test another control flow
+        res = _extract_function_name("while (true)", 40, 45)
+        self.assertEqual(res, "block_lines_40_45")
+
+

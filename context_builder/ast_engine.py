@@ -51,7 +51,11 @@ class AstEngine:
 AST_ENGINE = AstEngine()
 
 def strip_strings_and_comments(line, is_python=False):
+    # Strip string literals (both single and double quoted)
     line = re.sub(r'(["\'])(?:(?=(\\?))\2.)*?\1', '', line)
+    # Strip C-style block comments (/* ... */) on the same line if not Python
+    if not is_python:
+        line = re.sub(r'/\*.*?\*/', '', line)
     comment_char = "#" if is_python else "//"
     if comment_char in line: line = line.split(comment_char)[0]
     return line
@@ -232,7 +236,9 @@ def split_massive_block_ast(source_text, file_path, max_lines):
             ]:
                 # Extract the full multi-line signature by scanning until colon (Python) or opening brace (others)
                 sig_lines = []
-                for idx in range(child.start_point[0], child.end_point[0] + 1):
+                # Add a defensive min check to ensure we do not index out of bounds
+                end_idx = min(child.end_point[0], len(lines) - 1)
+                for idx in range(child.start_point[0], end_idx + 1):
                     line = lines[idx]
                     sig_lines.append(line)
                     # Strip comments and strings to ensure we don't match colons/braces inside them
@@ -319,8 +325,12 @@ def extract_callees(file_path, start_line, end_line, file_cache=None):
         file_cache = get_global_cache()
     ext = os.path.splitext(file_path)[1]
     if AST_ENGINE.is_supported(ext):
-        callees = extract_callees_ast(file_path, start_line, end_line, ext, file_cache)
-        if callees: return list(callees)
+        try:
+            callees = extract_callees_ast(file_path, start_line, end_line, ext, file_cache)
+            if callees: return list(callees)
+        except AttributeError as e:
+            # Catch AttributeError to gracefully fall back on systems using older py-tree-sitter versions
+            print(f"\n[ContextLens Warning] {e} Falling back to regex-based callee extraction.")
     return list(extract_callees_regex(file_path, start_line, end_line, file_cache))
 
 def find_callee_definition(callee_name, all_repo_files, file_cache=None):
