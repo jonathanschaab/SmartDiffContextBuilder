@@ -7,6 +7,7 @@ class TestLspClient(unittest.TestCase):
     @patch("subprocess.Popen")
     def test_lsp_client_init_and_send(self, mock_popen):
         mock_proc = MagicMock()
+        mock_proc.poll.return_value = None
         mock_popen.return_value = mock_proc
         
         # Set stdout to a BytesIO stream
@@ -355,3 +356,44 @@ class TestLspClient(unittest.TestCase):
             client._send({"jsonrpc": "2.0", "method": "exit"})
         except Exception as e:
             self.fail(f"_send raised an exception: {e}")
+
+    @patch("subprocess.Popen")
+    def test_lsp_client_startup_timeout_returns_false(self, mock_popen):
+        mock_proc = MagicMock()
+        mock_popen.return_value = mock_proc
+        mock_proc.stdout = BytesIO(b"")
+        mock_proc.poll.return_value = None
+
+        client = MinimalLSPClient(["some_lsp_binary"])
+
+        # Patch time.time to simulate a startup timeout (>10 seconds)
+        with patch("time.time") as mock_time:
+            mock_time.side_effect = [100.0, 115.0]
+            success = client.start()
+
+        self.assertFalse(success)
+        self.assertIsNone(client.proc)
+        mock_proc.terminate.assert_called_once()
+        mock_proc.wait.assert_called_once_with(timeout=1)
+
+    @patch("context_builder.lsp_client.USE_LSP", True)
+    @patch("context_builder.lsp_client.LSP_INSTANCES")
+    def test_get_lsp_references_malformed_string_ref(self, mock_instances):
+        from context_builder.lsp_client import get_lsp_references
+
+        mock_client = MagicMock()
+        mock_instances.__contains__.return_value = True
+        mock_instances.get.return_value = mock_client
+
+        # Mocking references list containing a string and a dictionary without 'uri'
+        mock_client.get_references.return_value = [
+            "string_reference_structure",
+            {"uri": None, "range": None}
+        ]
+
+        mock_file_cache = MagicMock()
+
+        # It should handle the AttributeError from the string and return empty dict
+        res = get_lsp_references("empty.cpp", 1, "my_func", 5.0, 100, False, file_cache=mock_file_cache)
+        self.assertEqual(res, {})
+

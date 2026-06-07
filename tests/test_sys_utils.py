@@ -136,3 +136,17 @@ class TestSysUtils(unittest.TestCase):
             
         self.assertEqual(ctx.exception.code, 1)
         self.assertIn("Executable not found: nonexistent_binary", mock_out.getvalue())
+
+    @patch("subprocess.run")
+    def test_ripgrep_filter_regex_alternation(self, mock_run):
+        mock_res = MagicMock()
+        mock_res.returncode = 0
+        mock_res.stdout = "file1.py\n"
+        mock_run.return_value = mock_res
+
+        filtered = ripgrep_filter(["file1.py", "file2.py"], "query|another", fixed_strings=False)
+        self.assertEqual(filtered, ["file1.py"])
+        # Verify that "-F" was NOT in the command arguments
+        cmd_args = mock_run.call_args[0][0]
+        self.assertNotIn("-F", cmd_args)
+

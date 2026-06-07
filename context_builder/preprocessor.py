@@ -58,7 +58,8 @@ def build_ffi_registry(repo_files, file_cache=None):
         file_cache = get_global_cache()
     ffi_symbols = set()
     print(" [FFI] Running pre-computation pass for cross-language boundaries...")
-    fast_files = ripgrep_filter(repo_files, "no_mangle|wasm_bindgen|extern \"C\"|EMSCRIPTEN_KEEPALIVE|PYBIND11_MODULE|m.def") if HAS_RG else repo_files
+    # We pass fixed_strings=False because FFI registry uses regex alternation (|) rather than literal matching
+    fast_files = ripgrep_filter(repo_files, "no_mangle|wasm_bindgen|extern \"C\"|EMSCRIPTEN_KEEPALIVE|PYBIND11_MODULE|m.def", fixed_strings=False) if HAS_RG else repo_files
     
     for f in fast_files:
         content = file_cache.get_content(f)

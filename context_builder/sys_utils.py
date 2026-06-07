@@ -45,9 +45,14 @@ def get_git_tracked_files():
 
 HAS_RG = bool(run_command(["rg", "--version"]))
 
-def ripgrep_filter(files, token):
+def ripgrep_filter(files, token, fixed_strings=True):
     try:
-        res = subprocess.run(["rg", "-l", "-F", token], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10)
+        cmd = ["rg", "-l"]
+        if fixed_strings:
+            # -F treats the token as a literal fixed string rather than a regular expression
+            cmd.append("-F")
+        cmd.append(token)
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10)
         # rg exits with 0 if matches are found, 1 if no matches are found, and 2 if an error occurs.
         if res.returncode == 0:
             # Normalize path separators to forward slashes to prevent mismatches on Windows

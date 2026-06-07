@@ -43,16 +43,41 @@ class MinimalLSPClient:
             }
             self._send(init_msg)
             
+            initialized = False
             start_time = time.time()
             while time.time() - start_time < 10:
                 res = self._recv(timeout=0.1)
-                if res and res.get("id") == self.req_id: break
-            self.req_id += 1
+                if res and res.get("id") == self.req_id:
+                    initialized = True
+                    break
             
+            if not initialized:
+                try:
+                    self.proc.terminate()
+                    self.proc.wait(timeout=1)
+                except Exception:
+                    try:
+                        self.proc.kill()
+                    except OSError:
+                        pass
+                self.proc = None
+                return False
+
+            self.req_id += 1
             self._send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
             return True
         except Exception as e:
             warn_once("lsp_fail", f"Failed to start LSP {self.cmd[0]}: {e}")
+            if self.proc:
+                try:
+                    self.proc.terminate()
+                    self.proc.wait(timeout=1)
+                except Exception:
+                    try:
+                        self.proc.kill()
+                    except OSError:
+                        pass
+                self.proc = None
             return False
 
     def _send(self, msg_dict):
@@ -261,7 +286,7 @@ def get_lsp_references(file_path, line_num, func_name, timeout, max_depth, disab
             
             if rel_path not in callers: callers[rel_path] = []
             callers[rel_path].append({"line": ref_line + 1, "code": ref_code})
-        except (KeyError, TypeError) as exc:
+        except (KeyError, TypeError, AttributeError) as exc:
             warn_once("lsp_ref_malformed", f"Skipping malformed LSP reference structure: {exc}")
 
     if not disable_pruning and total_refs > max_depth:
