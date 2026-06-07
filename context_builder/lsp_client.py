@@ -9,180 +9,186 @@ from pathlib import Path
 from urllib.request import url2pathname
 import queue
 import threading
+import asyncio
+from pygls.lsp.client import LanguageClient
+import lsprotocol.types as types
 from .sys_utils import warn_once
 from .cache import get_global_cache
 
 USE_LSP = True
 LSP_INSTANCES = {}
 
+class LSPEventLoopThread(threading.Thread):
+    def __init__(self):
+        super().__init__(daemon=True)
+        self.loop = asyncio.new_event_loop()
+        
+    def run(self):
+        asyncio.set_event_loop(self.loop)
+        self.loop.run_forever()
+        
+    def stop(self):
+        self.loop.call_soon_threadsafe(self.loop.stop)
+
+_LOOP_THREAD = None
+_LOOP_LOCK = threading.Lock()
+
+def get_lsp_loop():
+    global _LOOP_THREAD
+    with _LOOP_LOCK:
+        if _LOOP_THREAD is None or not _LOOP_THREAD.is_alive():
+            _LOOP_THREAD = LSPEventLoopThread()
+            _LOOP_THREAD.start()
+        return _LOOP_THREAD.loop
+
 class MinimalLSPClient:
     def __init__(self, cmd):
         self.cmd = cmd
-        self.proc = None
-        self.req_id = 1
-        self.msg_queue = queue.Queue()
-        self.reader_thread = None
+        self.client = None
+        self.loop = get_lsp_loop()
 
-    def start(self):
-        try:
-            self.proc = subprocess.Popen(
-                self.cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+    def start(self) -> bool:
+        async def _async_start():
+            self.client = LanguageClient(name="SmartDiffContextBuilder-LSP", version="1.0")
+            # Start subprocess with stderr redirected to devnull to prevent cluttering stdout
+            await self.client.start_io(self.cmd[0], *self.cmd[1:], stderr=asyncio.subprocess.DEVNULL)
+            
+            # Send initialize request
+            params = types.InitializeParams(
+                process_id=os.getpid(),
+                root_uri=Path('.').absolute().as_uri(),
+                capabilities=types.ClientCapabilities()
             )
-            # Start background reader thread to prevent blocking on hangs
-            self.reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
-            self.reader_thread.start()
-
-            init_msg = {
-                "jsonrpc": "2.0", "id": self.req_id, "method": "initialize",
-                # Use Path.absolute().as_uri() instead of a manual f-string.  On Windows,
-                # os.path.abspath returns a backslash path, producing an invalid URI like
-                # file://C:\path\to\file that strict LSP servers (clangd, rust-analyzer)
-                # reject.  Path.as_uri() always emits forward slashes and three leading
-                # slashes (file:///C:/path/to/file), which is correct on every platform.
-                "params": {"processId": os.getpid(), "rootUri": Path('.').absolute().as_uri(), "capabilities": {}}
-            }
-            self._send(init_msg)
+            # 10 second timeout for initialization
+            await asyncio.wait_for(self.client.initialize_async(params), timeout=10.0)
             
-            initialized = False
-            start_time = time.time()
-            while time.time() - start_time < 10:
-                res = self._recv(timeout=0.1)
-                if res and res.get("id") == self.req_id:
-                    initialized = True
-                    break
-            
-            if not initialized:
-                try:
-                    self.proc.terminate()
-                    self.proc.wait(timeout=1)
-                except Exception:
-                    try:
-                        self.proc.kill()
-                    except OSError:
-                        pass
-                self.proc = None
-                return False
-
-            self.req_id += 1
-            self._send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+            # Send initialized notification
+            self.client.initialized(types.InitializedParams())
             return True
+
+        fut = asyncio.run_coroutine_threadsafe(_async_start(), self.loop)
+        try:
+            return fut.result(timeout=11.0)
         except Exception as e:
+            fut.cancel()
             warn_once("lsp_fail", f"Failed to start LSP {self.cmd[0]}: {e}")
-            if self.proc:
-                try:
-                    self.proc.terminate()
-                    self.proc.wait(timeout=1)
-                except Exception:
-                    try:
-                        self.proc.kill()
-                    except OSError:
-                        pass
-                self.proc = None
+            self.cleanup()
             return False
 
-    def _send(self, msg_dict):
-        try:
-            body = json.dumps(msg_dict).encode('utf-8')
-            header = f"Content-Length: {len(body)}\r\n\r\n".encode('utf-8')
-            self.proc.stdin.write(header + body)
-            self.proc.stdin.flush()
-        except (BrokenPipeError, OSError) as e:
-            # Under Windows or Unix, if the LSP server crashes, write/flush raises BrokenPipeError/OSError.
-            # Catching it here prevents crashing the entire caller flow.
-            warn_once("lsp_send_fail", f"LSP process stdin write failed (process may have crashed): {e}")
+    def get_references(self, file_path, line_num, char_num, timeout) -> list:
+        if not self.client or self.client.stopped:
+            return []
 
-    def _reader_loop(self):
-        # Background thread continuously reads stdout, parsing JSON-RPC messages and queuing them
+        async def _async_get_refs():
+            params = types.ReferenceParams(
+                context=types.ReferenceContext(include_declaration=False),
+                text_document=types.TextDocumentIdentifier(uri=Path(file_path).absolute().as_uri()),
+                position=types.Position(line=line_num - 1, character=char_num)
+            )
+            refs = await self.client.text_document_references_async(params)
+            if not refs:
+                return []
+            
+            # Serialize types.Location and types.LocationLink to standard dicts
+            serialized = []
+            for ref in refs:
+                if isinstance(ref, dict):
+                    serialized.append(ref)
+                    continue
+                # Location
+                if hasattr(ref, "uri") and hasattr(ref, "range"):
+                    serialized.append({
+                        "uri": ref.uri,
+                        "range": {
+                            "start": {
+                                "line": ref.range.start.line,
+                                "character": ref.range.start.character
+                            },
+                            "end": {
+                                "line": ref.range.end.line,
+                                "character": ref.range.end.character
+                            }
+                        }
+                    })
+                    continue
+                # LocationLink
+                target_uri = getattr(ref, "target_uri", None) or getattr(ref, "targetUri", None)
+                target_range = getattr(ref, "target_range", None) or getattr(ref, "targetRange", None)
+                target_selection_range = getattr(ref, "target_selection_range", None) or getattr(ref, "targetSelectionRange", None)
+                if target_uri:
+                    res = {"targetUri": target_uri}
+                    rng = target_selection_range or target_range
+                    if rng:
+                        res["targetSelectionRange"] = {
+                            "start": {
+                                "line": rng.start.line,
+                                "character": rng.start.character
+                            },
+                            "end": {
+                                "line": rng.end.line,
+                                "character": rng.end.character
+                            }
+                        }
+                    serialized.append(res)
+            return serialized
+
+        fut = asyncio.run_coroutine_threadsafe(_async_get_refs(), self.loop)
         try:
-            while self.proc and self.proc.poll() is None:
-                msg = self._recv_blocking()
-                if msg is not None:
-                    # Memory Leak Prevention: Only queue responses (which contain an "id").
-                    # Notifications (e.g. diagnostics, progress) do not have an "id" and can be discarded safely.
-                    if "id" in msg:
-                        self.msg_queue.put(msg)
-                else:
-                    break
+            return fut.result(timeout=timeout)
+        except Exception as e:
+            fut.cancel()
+            warn_once("lsp_timeout", f"LSP query timed out after {timeout}s or failed: {e}")
+            return []
+
+    def cleanup(self):
+        if not self.client:
+            return
+
+        async def _async_cleanup():
+            if not self.client.stopped:
+                try:
+                    await asyncio.wait_for(self.client.shutdown_async(None), timeout=2.0)
+                except Exception:
+                    pass
+                try:
+                    self.client.exit(None)
+                except Exception:
+                    pass
+                try:
+                    await asyncio.wait_for(self.client.stop(), timeout=2.0)
+                except Exception:
+                    pass
+            # Force kill subprocess if still running
+            server = getattr(self.client, "_server", None)
+            if server and server.returncode is None:
+                try:
+                    server.kill()
+                except Exception:
+                    pass
+
+        fut = asyncio.run_coroutine_threadsafe(_async_cleanup(), self.loop)
+        try:
+            fut.result(timeout=5.0)
         except Exception:
             pass
-
-    def _recv_blocking(self):
-        # Performs blocking I/O to read a single JSON-RPC message from stdout
-        content_length = 0
-        while True:
-            line = self.proc.stdout.readline()
-            if not line:
-                return None
-            # Decode stream with errors='ignore' to prevent UnicodeDecodeError on unexpected bytes
-            line_str = line.decode('utf-8', errors='ignore')
-            if line_str in ("\r\n", "\n"):
-                break
-            # The LSP/JSON-RPC specification states that header names are case-insensitive.
-            if line_str.lower().startswith("content-length:"):
-                content_length = int(line_str.split(":")[1].strip())
-        
-        if content_length == 0:
-            return None
-        body = self.proc.stdout.read(content_length)
-        if not body:
-            return None
-        # Decode body using errors='ignore' for robustness against malformed/unexpected bytes
-        try:
-            return json.loads(body.decode('utf-8', errors='ignore'))
-        except Exception as e:
-            warn_once("lsp_json_parse_error", f"Failed to parse JSON message from LSP: {e}")
-            return {}
-
-    def _recv(self, timeout=0.05):
-        try:
-            return self.msg_queue.get(timeout=timeout)
-        except queue.Empty:
-            return None
-
-    def get_references(self, file_path, line_num, char_num, timeout):
-        req_id = self.req_id
-        req = {
-            "jsonrpc": "2.0", "id": req_id, "method": "textDocument/references",
-            "params": {
-                # Use Path.absolute().as_uri() for the same reason as rootUri above:
-                # manual f-string formatting produces invalid URIs on Windows.
-                "textDocument": {"uri": Path(file_path).absolute().as_uri()},
-                "position": {"line": line_num - 1, "character": char_num},
-                "context": {"includeDeclaration": False}
-            }
-        }
-        try:
-            # Wrap send in try/except to gracefully handle cases where the LSP server
-            # has crashed or disconnected, preventing a fatal BrokenPipeError or OSError.
-            self._send(req)
-        except (BrokenPipeError, OSError) as e:
-            warn_once("lsp_send_error", f"LSP server error during send: {e}")
-            return []
-        self.req_id += 1
-
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            res = self._recv(timeout=0.05)
-            if not res:
-                continue
-            if "id" not in res: continue
-            if res["id"] == req_id: return res.get("result", [])
-                
-        warn_once("lsp_timeout", f"LSP query timed out after {timeout}s. Increase --lsp-timeout if indexing takes longer.")
-        return []
-
+        self.client = None
 
 def cleanup_zombie_lsps():
     for client in LSP_INSTANCES.values():
-        if client and client.proc:
+        if client:
             try:
-                client._send({"jsonrpc": "2.0", "method": "exit"})
-                client.proc.terminate()
-                client.proc.wait(timeout=1)
+                client.cleanup()
             except Exception:
-                try: client.proc.kill()
-                except OSError: pass
+                pass
     LSP_INSTANCES.clear()
+    
+    # Stop the loop thread
+    global _LOOP_THREAD
+    with _LOOP_LOCK:
+        if _LOOP_THREAD and _LOOP_THREAD.is_alive():
+            _LOOP_THREAD.stop()
+            _LOOP_THREAD.join(timeout=1.0)
+            _LOOP_THREAD = None
 
 atexit.register(cleanup_zombie_lsps)
 
