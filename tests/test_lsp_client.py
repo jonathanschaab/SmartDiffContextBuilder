@@ -626,6 +626,95 @@ class TestLspClient(unittest.TestCase):
         mock_client.stop.assert_called_once()
         mock_subproc.kill.assert_called_once()
 
+    def test_get_lsp_loop_joins_closed_thread(self):
+        import context_builder.lsp_client as lsp_client
+        initial_loop = lsp_client.get_lsp_loop()
+        thread_to_close = lsp_client._LOOP_THREAD
+        
+        thread_to_close.loop.call_soon_threadsafe(thread_to_close.loop.stop)
+        thread_to_close.join(timeout=1.0)
+        thread_to_close.loop.close()
+        
+        with patch.object(thread_to_close, "is_alive", return_value=True), \
+             patch.object(thread_to_close, "join") as mock_join:
+            new_loop = lsp_client.get_lsp_loop()
+            mock_join.assert_called_once()
+            
+        self.assertNotEqual(initial_loop, new_loop)
+        lsp_client.cleanup_zombie_lsps()
+
+    @patch("context_builder.lsp_client.LanguageClient")
+    def test_get_references_defensive_parsing_checks(self, mock_lc_class):
+        mock_client = MagicMock()
+        mock_lc_class.return_value = mock_client
+        
+        client = MinimalLSPClient(["some_lsp_binary"])
+        client.client = mock_client
+        client.client.stopped = False
+        
+        buggy_loc1 = MagicMock(spec=types.Location)
+        buggy_loc1.uri = "file:///foo.py"
+        buggy_loc1.range = None
+        
+        buggy_loc2 = MagicMock(spec=types.Location)
+        buggy_loc2.uri = "file:///bar.py"
+        buggy_loc2.range = MagicMock(spec=types.Range)
+        buggy_loc2.range.start = None
+        
+        valid_loc = MagicMock(spec=types.Location)
+        valid_loc.uri = "file:///valid.py"
+        valid_loc.range = MagicMock(spec=types.Range)
+        valid_loc.range.start = MagicMock(spec=types.Position)
+        valid_loc.range.start.line = 10
+        valid_loc.range.start.character = 2
+        valid_loc.range.end = MagicMock(spec=types.Position)
+        valid_loc.range.end.line = 10
+        valid_loc.range.end.character = 15
+        
+        buggy_link = MagicMock(spec=types.LocationLink)
+        buggy_link.target_uri = "file:///link.py"
+        buggy_link.target_range = MagicMock(spec=types.Range)
+        buggy_link.target_range.start = None
+        buggy_link.target_selection_range = None
+        
+        async def mock_references(*args, **kwargs):
+            return [buggy_loc1, buggy_loc2, valid_loc, buggy_link]
+            
+        mock_client.text_document_references_async = mock_references
+        
+        refs = client.get_references("file.py", 10, 0, timeout=1.0)
+        self.assertEqual(len(refs), 2)
+        
+        self.assertEqual(refs[0]["uri"], "file:///valid.py")
+        self.assertEqual(refs[0]["range"]["start"]["line"], 10)
+        
+        self.assertEqual(refs[1]["targetUri"], "file:///link.py")
+        self.assertNotIn("targetSelectionRange", refs[1])
+
+    @patch("context_builder.lsp_client.LanguageClient")
+    def test_cleanup_concurrency_race(self, mock_lc_class):
+        mock_client = MagicMock()
+        mock_lc_class.return_value = mock_client
+        
+        client = MinimalLSPClient(["some_lsp_binary"])
+        client.client = mock_client
+        
+        mock_subproc = MagicMock()
+        mock_subproc.returncode = None
+        mock_client.subprocess = mock_subproc
+        mock_client.stopped = False
+        
+        mock_client.shutdown_async = AsyncMock()
+        mock_client.stop = AsyncMock()
+        
+        client.cleanup()
+        self.assertIsNone(client.client)
+        
+        mock_client.stop.reset_mock()
+        client.cleanup()
+        mock_client.stop.assert_not_called()
+
+
 
 
 

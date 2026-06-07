@@ -46,7 +46,16 @@ _LOOP_LOCK = threading.Lock()
 def get_lsp_loop():
     global _LOOP_THREAD
     with _LOOP_LOCK:
-        if _LOOP_THREAD is None or not _LOOP_THREAD.is_alive() or _LOOP_THREAD.loop.is_closed():
+        if _LOOP_THREAD is not None and (_LOOP_THREAD.loop.is_closed() or not _LOOP_THREAD.is_alive()):
+            try:
+                if _LOOP_THREAD.is_alive():
+                    _LOOP_THREAD.stop()
+                    _LOOP_THREAD.join(timeout=1.0)
+            except Exception:
+                pass
+            _LOOP_THREAD = None
+
+        if _LOOP_THREAD is None:
             _LOOP_THREAD = LSPEventLoopThread()
             _LOOP_THREAD.start()
         return _LOOP_THREAD.loop
@@ -153,21 +162,31 @@ class MinimalLSPClient:
                     serialized.append(ref)
                     continue
                 # Location
-                if hasattr(ref, "uri") and hasattr(ref, "range"):
-                    serialized.append({
-                        "uri": ref.uri,
-                        "range": {
-                            "start": {
-                                "line": ref.range.start.line,
-                                "character": ref.range.start.character
-                            },
-                            "end": {
-                                "line": ref.range.end.line,
-                                "character": ref.range.end.character
-                            }
-                        }
-                    })
-                    continue
+                uri = getattr(ref, "uri", None)
+                rng_obj = getattr(ref, "range", None)
+                if uri and rng_obj:
+                    start_pos = getattr(rng_obj, "start", None)
+                    end_pos = getattr(rng_obj, "end", None)
+                    if start_pos and end_pos:
+                        start_line = getattr(start_pos, "line", None)
+                        start_char = getattr(start_pos, "character", None)
+                        end_line = getattr(end_pos, "line", None)
+                        end_char = getattr(end_pos, "character", None)
+                        if start_line is not None and start_char is not None and end_line is not None and end_char is not None:
+                            serialized.append({
+                                "uri": uri,
+                                "range": {
+                                    "start": {
+                                        "line": start_line,
+                                        "character": start_char
+                                    },
+                                    "end": {
+                                        "line": end_line,
+                                        "character": end_char
+                                    }
+                                }
+                            })
+                            continue
                 # LocationLink
                 target_uri = getattr(ref, "target_uri", None) or getattr(ref, "targetUri", None)
                 target_range = getattr(ref, "target_range", None) or getattr(ref, "targetRange", None)
@@ -176,16 +195,24 @@ class MinimalLSPClient:
                     res = {"targetUri": target_uri}
                     rng = target_selection_range or target_range
                     if rng:
-                        res["targetSelectionRange"] = {
-                            "start": {
-                                "line": rng.start.line,
-                                "character": rng.start.character
-                            },
-                            "end": {
-                                "line": rng.end.line,
-                                "character": rng.end.character
-                            }
-                        }
+                        start_pos = getattr(rng, "start", None)
+                        end_pos = getattr(rng, "end", None)
+                        if start_pos and end_pos:
+                            start_line = getattr(start_pos, "line", None)
+                            start_char = getattr(start_pos, "character", None)
+                            end_line = getattr(end_pos, "line", None)
+                            end_char = getattr(end_pos, "character", None)
+                            if start_line is not None and start_char is not None and end_line is not None and end_char is not None:
+                                res["targetSelectionRange"] = {
+                                    "start": {
+                                        "line": start_line,
+                                        "character": start_char
+                                    },
+                                    "end": {
+                                        "line": end_line,
+                                        "character": end_char
+                                    }
+                                }
                     serialized.append(res)
             return serialized
 
@@ -202,6 +229,7 @@ class MinimalLSPClient:
         client = self.client
         if not client:
             return
+        self.client = None
 
         async def _async_cleanup():
             # Check stopped status safely
@@ -262,7 +290,6 @@ class MinimalLSPClient:
                     server.kill()
             except Exception:
                 pass
-        self.client = None
 
 def cleanup_zombie_lsps():
     for client in LSP_INSTANCES.values():
