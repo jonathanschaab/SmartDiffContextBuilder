@@ -85,7 +85,7 @@ class MinimalLSPClient:
                 return None
             # Decode stream with errors='ignore' to prevent UnicodeDecodeError on unexpected bytes
             line_str = line.decode('utf-8', errors='ignore')
-            if line_str == "\r\n":
+            if line_str in ("\r\n", "\n"):
                 break
             # The LSP/JSON-RPC specification states that header names are case-insensitive.
             if line_str.lower().startswith("content-length:"):
@@ -97,7 +97,11 @@ class MinimalLSPClient:
         if not body:
             return None
         # Decode body using errors='ignore' for robustness against malformed/unexpected bytes
-        return json.loads(body.decode('utf-8', errors='ignore'))
+        try:
+            return json.loads(body.decode('utf-8', errors='ignore'))
+        except Exception as e:
+            warn_once("lsp_json_parse_error", f"Failed to parse JSON message from LSP: {e}")
+            return {}
 
     def _recv(self, timeout=0.05):
         try:

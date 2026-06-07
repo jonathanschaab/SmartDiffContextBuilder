@@ -1,7 +1,7 @@
 import os
 import re
 import json
-from .sys_utils import warn_once, run_command, ripgrep_filter, HAS_RG
+from .sys_utils import warn_once, run_command, ripgrep_filter, HAS_RG, get_comment_prefix
 from .cache import get_global_cache
 
 def trace_macro_expansion(func_name, repo_files, file_cache=None):
@@ -85,7 +85,8 @@ def trace_ffi_callers(func_name, repo_files, source_ext, file_cache=None):
             # Match using word boundaries to prevent substring false-positives
             if re.search(rf'\b{re.escape(func_name)}\b', line):
                 if f not in callers: callers[f] = []
-                callers[f].append({"line": idx + 1, "code": f"// [FFI Bridge] {line.strip()}"})
+                comment_prefix = get_comment_prefix(f)
+                callers[f].append({"line": idx + 1, "code": f"{comment_prefix} [FFI Bridge] {line.strip()}"})
     return callers
 
 _COMPILE_COMMANDS_CACHE = None
@@ -111,12 +112,6 @@ def analyze_compile_commands(target_file, file_cache=None, repo_root=None):
         file_cache = get_global_cache()
     callers = {}
     if not os.path.exists("compile_commands.json"): return callers
-    # Choose the base for relpath computation.  os.getcwd() is correct for
-    # normal runs, but inside a temp worktree it points to the worktree
-    # directory while compile_commands.json references the original repo.
-    # Using repo_root (the original project root) keeps returned paths inside
-    # the project tree so that is_in_repo() accepts them.
-    relpath_base = repo_root if repo_root else os.getcwd()
     try:
         # Cache the parsed database to avoid repeatedly reading/parsing it in a loop for every file.
         mtime = os.path.getmtime("compile_commands.json")
@@ -140,6 +135,20 @@ def analyze_compile_commands(target_file, file_cache=None, repo_root=None):
                 ref_file = os.path.join(comp_dir, ref_file)
             
             abs_ref_file = os.path.abspath(ref_file)
+            
+            # If repo_root is provided, we are running inside a temporary worktree.
+            # compile_commands.json contains absolute paths pointing to the original repo.
+            # To analyze the correct historical state of the files, we must map those
+            # paths to the corresponding location in the temporary worktree (the current CWD).
+            if repo_root:
+                norm_ref = abs_ref_file.replace("\\", "/").lower()
+                norm_root = os.path.abspath(repo_root).replace("\\", "/").lower()
+                if norm_ref.startswith(norm_root):
+                    # Extract relative path from original repo root
+                    rel_to_root = abs_ref_file[len(os.path.abspath(repo_root)):].lstrip("\\/")
+                    # Map to the current temporary worktree CWD
+                    abs_ref_file = os.path.abspath(os.path.join(os.getcwd(), rel_to_root))
+            
             if abs_ref_file == abs_target_file:
                 continue
             
@@ -158,11 +167,10 @@ def analyze_compile_commands(target_file, file_cache=None, repo_root=None):
                     is_linked = True
                     
             if is_linked:
-                # Compute a path relative to the project root (relpath_base) so
-                # that the key is a valid in-repo path even when cwd is a worktree.
+                # Compute a path relative to the active worktree root (CWD)
                 # Wrap in try/except ValueError to catch drive mismatches on Windows.
                 try:
-                    rel_ref_file = os.path.relpath(abs_ref_file, relpath_base).replace("\\", "/")
+                    rel_ref_file = os.path.relpath(abs_ref_file, os.getcwd()).replace("\\", "/")
                 except ValueError:
                     # Fallback to absolute path using forward slashes if drives differ
                     rel_ref_file = abs_ref_file.replace("\\", "/")

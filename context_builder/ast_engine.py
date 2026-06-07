@@ -246,12 +246,16 @@ def split_massive_block_ast(source_text, file_path, max_lines):
                 sig_lines = []
                 # Add a defensive min check to ensure we do not index out of bounds
                 end_idx = min(child.end_point[0], len(lines) - 1)
+                has_brace = False
                 for idx in range(child.start_point[0], end_idx + 1):
                     line = lines[idx]
                     sig_lines.append(line)
                     # Strip comments and strings to ensure we don't match colons/braces inside them
                     clean_line = strip_strings_and_comments(line, is_python=is_python)
-                    if (is_python and clean_line.rstrip().endswith(":")) or (not is_python and "{" in clean_line):
+                    if not is_python and "{" in clean_line:
+                        has_brace = True
+                        break
+                    if is_python and clean_line.rstrip().endswith(":"):
                         break
                 output_lines.extend(sig_lines)
                 indent = len(sig_lines[0]) - len(sig_lines[0].lstrip())
@@ -260,8 +264,9 @@ def split_massive_block_ast(source_text, file_path, max_lines):
                     output_lines.append(" " * (indent + 4) + "# ... [Inner Body Omitted for Context Preservation] ...")
                     output_lines.append(" " * (indent + 4) + "pass")
                 else:
-                    output_lines.append(" " * (indent + 4) + "/* ... [Inner Body Omitted for Context Preservation] ... */")
-                    output_lines.append(" " * indent + "}") # Generic close
+                    if has_brace:
+                        output_lines.append(" " * (indent + 4) + "/* ... [Inner Body Omitted for Context Preservation] ... */")
+                        output_lines.append(" " * indent + "}") # Generic close
             else:
                 output_lines.extend(child_lines[:5])
                 if is_python:

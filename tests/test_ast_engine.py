@@ -321,3 +321,27 @@ class TestAstEngine(unittest.TestCase):
         path, line = find_callee_definition("my_header_func", [file_path], file_cache=self.cache)
         self.assertEqual(path, file_path)
         self.assertEqual(line, 1)
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_split_massive_block_ast_declaration_no_brace(self, mock_ast_engine):
+        # A function declaration in C++ does not have a body or a brace.
+        # It should not have a dangling brace appended when truncated.
+        source = "void my_func_decl(int x);\n"
+        
+        mock_parser = MagicMock()
+        mock_tree = MagicMock()
+        mock_child = MagicMock()
+        
+        mock_tree.root_node.children = [mock_child]
+        mock_child.type = "function_declaration"
+        mock_child.start_point = (0, 0)
+        mock_child.end_point = (0, 0)
+        
+        mock_parser.parse.return_value = mock_tree
+        mock_ast_engine.parsers = {".cpp": mock_parser}
+        mock_ast_engine.is_supported.return_value = True
+        
+        res = split_massive_block_ast(source, "test.cpp", max_lines=1)
+        self.assertEqual(len(res), 1)
+        truncated_text = res[0]["text"]
+        self.assertEqual(truncated_text.strip(), "void my_func_decl(int x);")

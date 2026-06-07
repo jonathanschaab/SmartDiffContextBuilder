@@ -273,3 +273,43 @@ class TestPreprocessor(unittest.TestCase):
             
         self.assertIn("my_header.h", result)
         self.assertEqual(result["my_header.h"][0]["code"], "// [Macro Expansion Link] #define MY_MACRO 10")
+
+    def test_analyze_compile_commands_worktree_mapping(self):
+        """Verify that when repo_root is passed, absolute paths in compile_commands.json
+        pointing to the original repo are mapped to the active worktree (CWD) and read correctly."""
+        original_repo = os.path.abspath("original_repo")
+        worktree = os.path.abspath("worktree")
+        os.makedirs(os.path.join(original_repo, "src"), exist_ok=True)
+        os.makedirs(os.path.join(worktree, "src"), exist_ok=True)
+
+        ref_cpp_orig = os.path.join(original_repo, "src", "other.cpp")
+        ref_cpp_wt = os.path.join(worktree, "src", "other.cpp")
+        
+        # Write different contents to the original and worktree files
+        # Since we want to analyze the worktree file, the include match should succeed on the worktree content but fail on the original
+        with open(ref_cpp_orig, "w") as f:
+            f.write("// original file content - no include\n")
+        with open(ref_cpp_wt, "w") as f:
+            f.write('#include "target.h"\n')
+
+        db = [
+            {
+                "directory": os.path.join(original_repo, "src"),
+                "command": f"clang++ -c {ref_cpp_orig}",
+                "file": ref_cpp_orig
+            }
+        ]
+        
+        # Write compile_commands.json in the worktree directory (simulating main behavior)
+        with open(os.path.join(worktree, "compile_commands.json"), "w") as f:
+            json.dump(db, f)
+
+        old_cwd = os.getcwd()
+        os.chdir(worktree)
+        try:
+            # We look for target.h. It should find other.cpp in the worktree because
+            # it has mapped the path, checked its existence in the worktree, and read its includes.
+            callers = analyze_compile_commands("src/target.h", repo_root=original_repo)
+            self.assertIn("src/other.cpp", callers)
+        finally:
+            os.chdir(old_cwd)

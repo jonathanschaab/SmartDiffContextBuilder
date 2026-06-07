@@ -8,7 +8,7 @@ import tempfile
 from collections import deque
 
 from .cache import LRUFileCache, get_global_cache
-from .sys_utils import run_command, get_git_diff_files, get_git_tracked_files, is_in_repo
+from .sys_utils import run_command, get_git_diff_files, get_git_tracked_files, is_in_repo, get_comment_prefix
 from .ast_engine import (
     extract_function_bounds,
     trace_lexical_dependencies_ast,
@@ -195,7 +195,8 @@ def run_scan(args, start_ref=None, end_ref=None, output_dir=".", repo_root=None)
             processed_spans.add(span_signature)
 
             # 1. Funnel: Add Object
-            vm.add_modified_object(file_path, func_name, f"// [Test Coverage: {cov_status}]\n{func_chunk}")
+            comment_prefix = get_comment_prefix(file_path)
+            vm.add_modified_object(file_path, func_name, f"{comment_prefix} [Test Coverage: {cov_status}]\n{func_chunk}")
 
             # 2. Funnel: Add Tests
             vm.unit_tests.extend(mine_relevant_unit_tests(func_name, all_repo_files, current_source_file=file_path, file_cache=file_cache))

@@ -26,6 +26,9 @@ def run_command(cmd, exit_on_fail=False, timeout=None):
             sys.exit(1)
         return ""
     except FileNotFoundError:
+        if exit_on_fail:
+            print(f"\n[ContextLens Error] Executable not found: {cmd[0]}")
+            sys.exit(1)
         return ""
 
 def get_git_diff_files(start_ref=None, end_ref=None):
@@ -75,3 +78,15 @@ def is_in_repo(file_path):
         return os.path.abspath(common).lower() == repo_root.lower() and os.path.exists(file_path)
     except Exception:
         return False
+
+def get_comment_prefix(file_path):
+    """Returns the correct comment prefix (e.g. #, //, REM) based on the file extension or name."""
+    base = os.path.basename(file_path)
+    if base.lower() == 'makefile' or base.startswith('Makefile'):
+        return "#"
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext in ('.py', '.sh', '.pl', '.mk', '.cmake'):
+        return "#"
+    elif ext == '.bat':
+        return "REM"
+    return "//"

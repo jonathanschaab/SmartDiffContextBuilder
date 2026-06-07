@@ -117,3 +117,22 @@ class TestSysUtils(unittest.TestCase):
         output = mock_out.getvalue()
         self.assertIn("git ls-files", output)
         self.assertIn("fatal: not a git repository", output)
+
+    def test_get_comment_prefix(self):
+        from context_builder.sys_utils import get_comment_prefix
+        self.assertEqual(get_comment_prefix("main.py"), "#")
+        self.assertEqual(get_comment_prefix("script.sh"), "#")
+        self.assertEqual(get_comment_prefix("Makefile"), "#")
+        self.assertEqual(get_comment_prefix("run.bat"), "REM")
+        self.assertEqual(get_comment_prefix("main.cpp"), "//")
+        self.assertEqual(get_comment_prefix("main.rs"), "//")
+
+    @patch("subprocess.run")
+    def test_run_command_file_not_found_exit(self, mock_run):
+        mock_run.side_effect = FileNotFoundError()
+        with patch("sys.stdout", new_callable=StringIO) as mock_out, \
+             self.assertRaises(SystemExit) as ctx:
+            run_command(["nonexistent_binary"], exit_on_fail=True)
+            
+        self.assertEqual(ctx.exception.code, 1)
+        self.assertIn("Executable not found: nonexistent_binary", mock_out.getvalue())

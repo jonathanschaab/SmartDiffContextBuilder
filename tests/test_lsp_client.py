@@ -170,3 +170,60 @@ class TestLspClient(unittest.TestCase):
         self.assertEqual(len(LSP_INSTANCES), 0)
         mock_client._send.assert_called_with({"jsonrpc": "2.0", "method": "exit"})
         mock_client.proc.terminate.assert_called_once()
+
+    @patch("subprocess.Popen")
+    def test_lsp_client_json_decode_robustness(self, mock_popen):
+        mock_proc = MagicMock()
+        mock_proc.poll.return_value = None
+        mock_popen.return_value = mock_proc
+        
+        # We need an init response first so client.start() completes instantly
+        init_response = b"Content-Length: 45\r\n\r\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true}}"
+        # Test with a malformed JSON message followed by a valid one.
+        # {invalid} has exactly 9 bytes, so Content-Length must be 9 to avoid stream desync.
+        malformed_msg = b"Content-Length: 9\r\n\r\n{invalid}"
+        valid_msg = b"Content-Length: 45\r\n\r\n{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{\"ok\":true}}"
+        mock_proc.stdout = BytesIO(init_response + malformed_msg + valid_msg)
+
+        client = MinimalLSPClient(["some_lsp_binary"])
+        client.proc = mock_proc
+        
+        # Start the thread loop
+        client.start()
+        
+        import time
+        start = time.time()
+        # It should skip the malformed one (since json.loads raises exception and returns {})
+        # and queue the valid one (which contains id 3)
+        while client.msg_queue.empty() and time.time() - start < 1:
+            time.sleep(0.01)
+            
+        self.assertEqual(client.msg_queue.qsize(), 1)
+        queued_msg = client.msg_queue.get()
+        self.assertEqual(queued_msg.get("id"), 3)
+
+    @patch("subprocess.Popen")
+    def test_lsp_client_lf_only_headers(self, mock_popen):
+        mock_proc = MagicMock()
+        mock_proc.poll.return_value = None
+        mock_popen.return_value = mock_proc
+        
+        # We need an init response first so client.start() completes instantly
+        init_response = b"Content-Length: 45\n\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true}}"
+        # Test with headers separated by \n instead of \r\n
+        msg = b"Content-Length: 45\n\n{\"jsonrpc\":\"2.0\",\"id\":4,\"result\":{\"ok\":true}}"
+        mock_proc.stdout = BytesIO(init_response + msg)
+
+        client = MinimalLSPClient(["some_lsp_binary"])
+        client.proc = mock_proc
+        
+        client.start()
+        
+        import time
+        start = time.time()
+        while client.msg_queue.empty() and time.time() - start < 1:
+            time.sleep(0.01)
+            
+        self.assertEqual(client.msg_queue.qsize(), 1)
+        queued_msg = client.msg_queue.get()
+        self.assertEqual(queued_msg.get("id"), 4)
