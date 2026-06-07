@@ -132,3 +132,27 @@ class TestTestMiner(unittest.TestCase):
         self.assertIn("def test_greet_behavior", test_names)
         self.assertIn("def test_greet_with_name", test_names)
         self.assertNotIn("def test_greeter", test_names)
+
+    def test_mine_relevant_unit_tests_operator(self):
+        """Verify that mine_relevant_unit_tests correctly mines tests for functions with
+        non-word boundaries (like C++ operator overloads operator+)."""
+        test_code = (
+            "it('should test operator+', () => {\n"
+            "    obj1.operator+(obj2);\n"
+            "});\n"
+            "\n"
+            "it('should test other', () => {\n"
+            "    other();\n"
+            "});\n"
+        )
+        file_path = "test_ops.js"
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(test_code)
+
+        cache = LRUFileCache(capacity=5)
+        cache.get_content(file_path)
+
+        tests = mine_relevant_unit_tests("operator+", [file_path], file_cache=cache)
+        # Should match the JS test that has both 'it(' and 'operator+' on the first line
+        self.assertEqual(len(tests), 1)
+        self.assertEqual(tests[0]["file"], file_path)

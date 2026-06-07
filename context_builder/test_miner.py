@@ -27,6 +27,13 @@ def mine_relevant_unit_tests(func_name, repo_files, current_source_file=None, fi
     seen_bodies = set()
     if not func_name or len(func_name) < 3: return discovered_tests
 
+    # We dynamically construct boundaries so \b is only applied if the adjacent character
+    # is a word character (alphanumeric or underscore). This avoids boundary mismatch for C++ destructors
+    # (e.g. ~MyClass) or C++ operator overloads (e.g. operator+). Pre-compiled once for efficiency.
+    lead_b = r'\b' if func_name[0].isalnum() or func_name[0] == '_' else ''
+    trail_b = r'\b' if func_name[-1].isalnum() or func_name[-1] == '_' else ''
+    test_pattern = re.compile(rf'(?:\btest_|{lead_b}){re.escape(func_name)}(?:_[A-Za-z0-9_]+)?{trail_b}')
+
     files_to_scan = ripgrep_filter(repo_files, func_name) if HAS_RG else repo_files
     if current_source_file and current_source_file not in files_to_scan: files_to_scan.append(current_source_file)
 
@@ -55,9 +62,9 @@ def mine_relevant_unit_tests(func_name, repo_files, current_source_file=None, fi
                         while func_node and func_node.type not in ['function_item', 'function_definition']:
                             func_node = func_node.parent
                         if func_node:
-                            # Using regex with word boundaries (\b), optional test_ prefix, and optional suffix starting with an underscore (e.g. _behavior or _with_name) to allow descriptive test names while avoiding false positive substring matching (e.g. matching 'run' in 'runner' but matching 'run_behavior').
+                            # Match using the pre-compiled test_pattern to handle non-word boundaries and avoid repeated compilation
                             node_text = source_bytes[func_node.start_byte:func_node.end_byte].decode('utf-8', errors='ignore')
-                            if re.search(rf'\b(?:test_)?{re.escape(func_name)}(?:_[A-Za-z0-9_]+)?\b', node_text):
+                            if test_pattern.search(node_text):
                                 start_l, end_l = func_node.start_point[0], func_node.end_point[0] + 1
                                 test_body = "".join(lines[start_l:end_l])
                                 normalized = test_body.strip()
@@ -70,8 +77,8 @@ def mine_relevant_unit_tests(func_name, repo_files, current_source_file=None, fi
 
         if not ast_success:
             for idx, line in enumerate(lines):
-                # Using regex with word boundaries (\b), optional test_ prefix, and optional suffix starting with an underscore (e.g. _behavior or _with_name) to allow descriptive test names while avoiding false positive substring matching (e.g. matching 'run' in 'runner' but matching 'run_behavior').
-                if re.search(rf'\b(?:test_)?{re.escape(func_name)}(?:_[A-Za-z0-9_]+)?\b', line) and any(term in line.lower() for term in ["test", "it(", "describe"]):
+                # Match using the pre-compiled test_pattern to handle non-word boundaries and avoid repeated compilation
+                if test_pattern.search(line) and any(term in line.lower() for term in ["test", "it(", "describe"]):
                     start, end = extract_function_bounds_regex(file_path, idx + 1, file_cache=file_cache)
                     if start is not None:
                         test_body = "".join(lines[start:end])

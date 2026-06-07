@@ -485,3 +485,55 @@ class TestAstEngine(unittest.TestCase):
         # Verify it successfully extracted the callees via regex fallback
         self.assertIn("bar", callees)
         self.assertIn("baz", callees)
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_trace_lexical_dependencies_ast_operator_escape(self, mock_ast_engine):
+        """Verify that when func_name contains regex metacharacters (e.g., C++ operator+),
+        the query string is escaped and double-escaped correctly for the tree-sitter query engine."""
+        from context_builder.ast_engine import trace_lexical_dependencies_ast
+        
+        mock_ast_engine.is_supported.return_value = True
+        mock_parser = MagicMock()
+        mock_tree = MagicMock()
+        mock_parser.parse.return_value = mock_tree
+        mock_ast_engine.parsers = {".cpp": mock_parser}
+        
+        mock_lang = MagicMock()
+        mock_query = MagicMock()
+        mock_query.captures.return_value = []
+        mock_lang.query.return_value = mock_query
+        mock_ast_engine.languages = {".cpp": mock_lang}
+        
+        mock_cache = MagicMock()
+        mock_cache.get_bytes.return_value = b"void operator+();"
+        
+        trace_lexical_dependencies_ast("operator+", ["file.cpp"], file_cache=mock_cache)
+        
+        # Verify that AST_ENGINE.languages[".cpp"].query was called with double-escaped operator\\+
+        mock_lang.query.assert_called_once()
+        query_str = mock_lang.query.call_args[0][0]
+        self.assertIn("operator\\\\+", query_str)
+
+    def test_trace_lexical_dependencies_regex_operators(self):
+        """Verify that trace_lexical_dependencies_regex correctly matches operator names
+        and functions starting/ending with non-word characters by applying dynamic boundaries."""
+        code = (
+            "void test() {\n"
+            "    obj1 + obj2;\n"       # not matching call directly
+            "    obj1.operator+(obj2);\n" # should match caller
+            "    operator+(obj1, obj2);\n"# should match caller
+            "}\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "operators.cpp")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+            
+        self.cache.get_content(file_path)
+        
+        # We search for "operator+"
+        callers = trace_lexical_dependencies_regex("operator+", [file_path], file_cache=self.cache)
+        self.assertIn(file_path, callers)
+        lines = [c["line"] for c in callers[file_path]]
+        self.assertIn(3, lines)
+        self.assertIn(4, lines)
+        self.assertNotIn(2, lines)

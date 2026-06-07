@@ -153,14 +153,18 @@ def trace_lexical_dependencies_ast(func_name, repo_files, file_cache=None):
         source_bytes = file_cache.get_bytes(file_path)
         tree = AST_ENGINE.parsers[ext].parse(source_bytes)
         
+        # We escape func_name using re.escape and double-escape backslashes for the tree-sitter query parser,
+        # because tree-sitter treats backslashes as escape characters inside query patterns.
+        escaped_func_name = re.escape(func_name).replace("\\", "\\\\")
+
         # Included Registry Pattern matching (register_x)
         query_strings = {
-            '.py': f'(call function: [(identifier) @id (attribute attribute: (identifier) @id)] (#match? @id ".*({func_name}|register).*"))',
-            '.rs': f'(call_expression function: [(identifier) @id (scoped_identifier name: (identifier) @id) (field_expression field: (field_identifier) @id)] (#match? @id ".*({func_name}|register).*"))',
-            '.js': f'(call_expression function: [(identifier) @id (member_expression property: (property_identifier) @id)] (#match? @id ".*({func_name}|register).*"))',
-            '.ts': f'(call_expression function: [(identifier) @id (member_expression property: (property_identifier) @id)] (#match? @id ".*({func_name}|register).*"))',
-            '.c': f'(call_expression function: (identifier) @id (#match? @id ".*({func_name}|register).*"))',
-            '.cpp': f'(call_expression function: [(identifier) @id (scoped_identifier name: (identifier) @id) (field_expression field: (field_identifier) @id)] (#match? @id ".*({func_name}|register).*"))'
+            '.py': f'(call function: [(identifier) @id (attribute attribute: (identifier) @id)] (#match? @id ".*({escaped_func_name}|register).*"))',
+            '.rs': f'(call_expression function: [(identifier) @id (scoped_identifier name: (identifier) @id) (field_expression field: (field_identifier) @id)] (#match? @id ".*({escaped_func_name}|register).*"))',
+            '.js': f'(call_expression function: [(identifier) @id (member_expression property: (property_identifier) @id)] (#match? @id ".*({escaped_func_name}|register).*"))',
+            '.ts': f'(call_expression function: [(identifier) @id (member_expression property: (property_identifier) @id)] (#match? @id ".*({escaped_func_name}|register).*"))',
+            '.c': f'(call_expression function: (identifier) @id (#match? @id ".*({escaped_func_name}|register).*"))',
+            '.cpp': f'(call_expression function: [(identifier) @id (scoped_identifier name: (identifier) @id) (field_expression field: (field_identifier) @id)] (#match? @id ".*({escaped_func_name}|register).*"))'
         }
         
         q_str = query_strings.get(ext)
@@ -195,27 +199,20 @@ def trace_lexical_dependencies_regex(func_name, repo_files, file_cache=None):
     if not func_name or len(func_name) < 3: return callers
     fast_files = ripgrep_filter(repo_files, func_name) if HAS_RG else repo_files
     # Pre-compile the word-boundary pattern once so we don't recompile it per line.
-    # \b prevents partial-word matches: e.g. func_name="my_func" must not match
-    # "my_func_other", which would flood the caller list with false positives.
-    has_tilde = func_name.startswith("~")
-    base_name = func_name[1:] if has_tilde else func_name
+    # We dynamically construct boundaries so \b is only applied if the adjacent character
+    # is a word character (alphanumeric or underscore). This avoids boundary mismatch for C++ destructors
+    # (e.g. ~MyClass) or C++ operator overloads (e.g. operator+).
+    lead_b = r'\b' if func_name[0].isalnum() or func_name[0] == '_' else ''
+    trail_b = r'\b' if func_name[-1].isalnum() or func_name[-1] == '_' else ''
+    escaped_name = re.escape(func_name)
 
-    if has_tilde:
-        call_pattern = re.compile(r'~\b' + re.escape(base_name) + r'\b')
-        def_keyword_pattern = re.compile(
-            r'\b(?:fn|def|function|sub|func|class|macro)\s+~\b' + re.escape(base_name) + r'\b'
-        )
-        def_cpp_pattern = re.compile(
-            r'^\s*(?:[A-Za-z0-9_<>:]+(?:\s+\*?\s*)*)?~\b' + re.escape(base_name) + r'\s*\('
-        )
-    else:
-        call_pattern = re.compile(r'\b' + re.escape(func_name) + r'\b')
-        def_keyword_pattern = re.compile(
-            r'\b(?:fn|def|function|sub|func|class|macro)\s+' + re.escape(func_name) + r'\b'
-        )
-        def_cpp_pattern = re.compile(
-            r'^\s*(?:[A-Za-z0-9_<>:]+(?:\s+\*?\s*)*)?~?\b' + re.escape(func_name) + r'\s*\('
-        )
+    call_pattern = re.compile(lead_b + escaped_name + trail_b)
+    def_keyword_pattern = re.compile(
+        r'\b(?:fn|def|function|sub|func|class|macro)\s+' + lead_b + escaped_name + trail_b
+    )
+    def_cpp_pattern = re.compile(
+        r'^\s*(?:[A-Za-z0-9_<>:]+(?:\s+\*?\s*)*)?' + lead_b + escaped_name + r'\s*\('
+    )
     for file_path in fast_files:
         ext = os.path.splitext(file_path)[1]
         if ext not in LANG_MAP or file_path.endswith('.md'): continue
@@ -391,15 +388,16 @@ def find_callee_definition(callee_name, all_repo_files, file_cache=None):
     
     candidate_files = ripgrep_filter(all_repo_files, callee_name) if HAS_RG else all_repo_files
     
-    has_tilde = callee_name.startswith("~")
-    base_name = callee_name[1:] if has_tilde else callee_name
+    # We dynamically construct boundaries so \b is only applied if the adjacent character
+    # is a word character (alphanumeric or underscore). This avoids boundary mismatch for C++ destructors
+    # (e.g. ~MyClass) or C++ operator overloads (e.g. operator+).
+    lead_b = r'\b' if callee_name[0].isalnum() or callee_name[0] == '_' else ''
+    trail_b = r'\b' if callee_name[-1].isalnum() or callee_name[-1] == '_' else ''
+    escaped_callee = re.escape(callee_name)
 
     # Precise patterns for definitions
-    pattern = rf'\b(?:fn|def|function|sub|func|class|macro)\s+{re.escape(callee_name)}\b'
-    if has_tilde:
-        cpp_pattern = rf'^\s*(?:[A-Za-z0-9_<>:]+(?:\s+\*?\s*)*)?~\b{re.escape(base_name)}\s*\('
-    else:
-        cpp_pattern = rf'^\s*(?:[A-Za-z0-9_<>:]+(?:\s+\*?\s*)*)?~?\b{re.escape(base_name)}\s*\('
+    pattern = rf'\b(?:fn|def|function|sub|func|class|macro)\s+' + lead_b + escaped_callee + trail_b
+    cpp_pattern = rf'^\s*(?:[A-Za-z0-9_<>:]+(?:\s+\*?\s*)*)?' + lead_b + escaped_callee + r'\s*\('
 
     for file_path in candidate_files:
         ext = os.path.splitext(file_path)[1]

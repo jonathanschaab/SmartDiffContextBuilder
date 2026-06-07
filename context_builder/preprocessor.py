@@ -12,6 +12,13 @@ def trace_macro_expansion(func_name, repo_files, file_cache=None):
     print(f" [Pre-Expansion] Searching expanded ASTs for {func_name}...")
     fast_files = ripgrep_filter(repo_files, func_name) if HAS_RG else repo_files
     
+    # We dynamically construct boundaries so \b is only applied if the adjacent character
+    # is a word character (alphanumeric or underscore). This avoids boundary mismatch for C++ destructors
+    # (e.g. ~MyClass) or C++ operator overloads (e.g. operator+). Pre-compiled once for efficiency.
+    lead_b = r'\b' if func_name and (func_name[0].isalnum() or func_name[0] == '_') else ''
+    trail_b = r'\b' if func_name and (func_name[-1].isalnum() or func_name[-1] == '_') else ''
+    func_pattern = re.compile(lead_b + re.escape(func_name) + trail_b)
+
     for f in fast_files:
         ext = os.path.splitext(f)[1]
         if ext not in ['.c', '.cpp', '.hpp', '.h']: continue
@@ -22,10 +29,6 @@ def trace_macro_expansion(func_name, repo_files, file_cache=None):
         
         # Pass 2: Map
         expanded_lines = expanded_code.splitlines()
-        # Use a word-boundary regex so that a short func_name (e.g. "init") does
-        # not match inside longer identifiers (e.g. "reinitialize"), which would
-        # create spurious Macro Expansion Link entries.
-        func_pattern = re.compile(r'\b' + re.escape(func_name) + r'\b')
         for idx, line in enumerate(expanded_lines):
             if func_pattern.search(line):
                 # Walk backward to find linemarker
@@ -77,13 +80,20 @@ def trace_ffi_callers(func_name, repo_files, source_ext, file_cache=None):
     print(f" [FFI] Cross-language tracing triggered for exported symbol: {func_name}()")
     fast_files = ripgrep_filter(repo_files, func_name) if HAS_RG else repo_files
     
+    # We dynamically construct boundaries so \b is only applied if the adjacent character
+    # is a word character (alphanumeric or underscore). This avoids boundary mismatch for C++ destructors
+    # (e.g. ~MyClass) or C++ operator overloads (e.g. operator+). Pre-compiled once for efficiency.
+    lead_b = r'\b' if func_name and (func_name[0].isalnum() or func_name[0] == '_') else ''
+    trail_b = r'\b' if func_name and (func_name[-1].isalnum() or func_name[-1] == '_') else ''
+    func_pattern = re.compile(lead_b + re.escape(func_name) + trail_b)
+
     for f in fast_files:
         ext = os.path.splitext(f)[1]
         if ext == source_ext: continue
         lines = file_cache.get_lines(f)
         for idx, line in enumerate(lines):
             # Match using word boundaries to prevent substring false-positives
-            if re.search(rf'\b{re.escape(func_name)}\b', line):
+            if func_pattern.search(line):
                 if f not in callers: callers[f] = []
                 comment_prefix = get_comment_prefix(f)
                 callers[f].append({"line": idx + 1, "code": f"{comment_prefix} [FFI Bridge] {line.strip()}"})
