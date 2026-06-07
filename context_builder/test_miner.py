@@ -55,9 +55,9 @@ def mine_relevant_unit_tests(func_name, repo_files, current_source_file=None, fi
                         while func_node and func_node.type not in ['function_item', 'function_definition']:
                             func_node = func_node.parent
                         if func_node:
-                            # Using regex with word boundaries (\b) and optional test prefix/suffix to avoid false positive substring matching (e.g. matching 'run' in 'runner' but matching 'test_run' or 'run_test')
+                            # Using regex with word boundaries (\b), optional test_ prefix, and optional suffix starting with an underscore (e.g. _behavior or _with_name) to allow descriptive test names while avoiding false positive substring matching (e.g. matching 'run' in 'runner' but matching 'run_behavior').
                             node_text = source_bytes[func_node.start_byte:func_node.end_byte].decode('utf-8', errors='ignore')
-                            if re.search(rf'\b(?:test_)?{re.escape(func_name)}(?:_test)?\b', node_text):
+                            if re.search(rf'\b(?:test_)?{re.escape(func_name)}(?:_[A-Za-z0-9_]+)?\b', node_text):
                                 start_l, end_l = func_node.start_point[0], func_node.end_point[0] + 1
                                 test_body = "".join(lines[start_l:end_l])
                                 normalized = test_body.strip()
@@ -70,8 +70,8 @@ def mine_relevant_unit_tests(func_name, repo_files, current_source_file=None, fi
 
         if not ast_success:
             for idx, line in enumerate(lines):
-                # Using regex with word boundaries (\b) and optional test prefix/suffix to avoid false positive substring matching (e.g. matching 'run' in 'runner' but matching 'test_run' or 'run_test')
-                if re.search(rf'\b(?:test_)?{re.escape(func_name)}(?:_test)?\b', line) and any(term in line.lower() for term in ["test", "it(", "describe"]):
+                # Using regex with word boundaries (\b), optional test_ prefix, and optional suffix starting with an underscore (e.g. _behavior or _with_name) to allow descriptive test names while avoiding false positive substring matching (e.g. matching 'run' in 'runner' but matching 'run_behavior').
+                if re.search(rf'\b(?:test_)?{re.escape(func_name)}(?:_[A-Za-z0-9_]+)?\b', line) and any(term in line.lower() for term in ["test", "it(", "describe"]):
                     start, end = extract_function_bounds_regex(file_path, idx + 1, file_cache=file_cache)
                     if start is not None:
                         test_body = "".join(lines[start:end])

@@ -104,7 +104,8 @@ def _extract_function_name(cleaned_chunk, start, end):
         return name_match.group(1)
     
     # Fallback to C-style: identifier followed by '('
-    for m in re.finditer(r'\b([A-Za-z_][A-Za-z0-9_]*)\s*\(', cleaned_chunk):
+    # We optionally capture a leading tilde (~) to correctly identify C++ destructors.
+    for m in re.finditer(r'(~?\b[A-Za-z_][A-Za-z0-9_]*)\s*\(', cleaned_chunk):
         name = m.group(1)
         if name not in {'if', 'for', 'while', 'switch', 'catch', 'return', 'sizeof', 'sizeof_array'}:
             return name
@@ -377,12 +378,15 @@ def main():
                 pass
             sys.exit(1)
 
-        # Copy compile_commands.json if it exists in the original repo root
-        compile_commands_path = os.path.join(original_cwd, "compile_commands.json")
-        if os.path.exists(compile_commands_path):
-            shutil.copy(compile_commands_path, os.path.join(temp_worktree_dir, "compile_commands.json"))
-
         try:
+            # Copy compile_commands.json if it exists in the original repo root.
+            # Wrapping this file copy and chdir inside the try...finally block ensures that
+            # if either fails (e.g. disk full, permission error, or invalid path),
+            # the git worktree is guaranteed to be cleaned up and not leaked.
+            compile_commands_path = os.path.join(original_cwd, "compile_commands.json")
+            if os.path.exists(compile_commands_path):
+                shutil.copy(compile_commands_path, os.path.join(temp_worktree_dir, "compile_commands.json"))
+
             os.chdir(temp_worktree_dir)
             # Run scan inside the worktree checking out end_ref and diffing against start_ref.
             # Pass original_cwd as repo_root so that compile_commands.json paths are resolved

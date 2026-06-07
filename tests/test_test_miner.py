@@ -103,3 +103,32 @@ class TestTestMiner(unittest.TestCase):
         cov = get_coverage_data()
         self.assertIn("src/a.py", cov)
         self.assertEqual(cov["src/a.py"], [5])
+
+    def test_mine_relevant_unit_tests_descriptive_suffixes(self):
+        # Test that functions with descriptive suffixes like test_greet_behavior,
+        # test_greet_with_name, or greet_empty are matched, but substring-similar
+        # functions like test_runner are not.
+        test_code = (
+            "def test_greet_behavior():\n"
+            "    greet()\n"
+            "\n"
+            "def test_greet_with_name():\n"
+            "    greet()\n"
+            "\n"
+            "def test_greeter():\n"
+            "    greeter()\n"
+        )
+        file_path = "test_descriptive.py"
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(test_code)
+
+        cache = LRUFileCache(capacity=5)
+        cache.get_content(file_path)
+
+        tests = mine_relevant_unit_tests("greet", [file_path], file_cache=cache)
+        # Should match test_greet_behavior and test_greet_with_name, but NOT test_greeter
+        self.assertEqual(len(tests), 2)
+        test_names = [t["code"].split("(")[0].strip() for t in tests]
+        self.assertIn("def test_greet_behavior", test_names)
+        self.assertIn("def test_greet_with_name", test_names)
+        self.assertNotIn("def test_greeter", test_names)

@@ -496,6 +496,10 @@ class TestCLI(unittest.TestCase):
         # Test another control flow
         res = _extract_function_name("while (true)", 40, 45)
         self.assertEqual(res, "block_lines_40_45")
+        
+        # Test C++ destructor (~MyClass)
+        res = _extract_function_name("MyClass::~MyClass() {", 50, 55)
+        self.assertEqual(res, "~MyClass")
 
     @patch("context_builder.cli.run_command")
     def test_get_default_branch(self, mock_run):
@@ -520,5 +524,46 @@ class TestCLI(unittest.TestCase):
         # Test case 3: neither exist (fallback to main)
         mock_run.side_effect = lambda cmd, **kwargs: ""
         self.assertEqual(get_default_branch(), "main")
+
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    @patch("context_builder.cli.parse_and_resolve_range")
+    @patch("context_builder.cli.run_scan")
+    @patch("context_builder.cli.cleanup_zombie_lsps")
+    @patch("subprocess.run")
+    @patch("shutil.rmtree")
+    @patch("shutil.copy")
+    @patch("os.path.exists")
+    def test_cli_worktree_cleanup_on_copy_exception(
+        self, mock_exists, mock_copy, mock_rmtree, mock_sub_run, mock_cleanup_lsps, mock_run_scan, mock_resolve_range, mock_parse_args
+    ):
+        """If shutil.copy raises an exception, the worktree must still be cleaned up."""
+        mock_args = MagicMock()
+        mock_args.commit_range = "-1"
+        mock_parse_args.return_value = mock_args
+        mock_resolve_range.return_value = ("sha_start", "sha_end")
+
+        mock_exists.return_value = True
+        mock_copy.side_effect = IOError("Disk full or permission denied")
+
+        # Record call order to check cleanup is run
+        call_order = []
+        mock_cleanup_lsps.side_effect = lambda: call_order.append("cleanup_zombie_lsps")
+        mock_rmtree.side_effect = lambda *a, **kw: call_order.append("rmtree")
+
+        def sub_run_side_effect(*args, **kwargs):
+            cmd = args[0] if args else kwargs.get("args", [])
+            if isinstance(cmd, list) and "worktree" in cmd:
+                call_order.append(f"subprocess.run:{' '.join(cmd)}")
+                if "add" in cmd:
+                    os.makedirs(cmd[4], exist_ok=True)
+            return MagicMock(returncode=0)
+        mock_sub_run.side_effect = sub_run_side_effect
+
+        with self.assertRaises(IOError):
+            main()
+
+        # cleanup_zombie_lsps and worktree removal must be called in finally
+        self.assertIn("cleanup_zombie_lsps", call_order)
+        self.assertTrue(any("worktree remove" in s for s in call_order))
 
 
