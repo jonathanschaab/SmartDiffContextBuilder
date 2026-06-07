@@ -78,3 +78,28 @@ class TestTestMiner(unittest.TestCase):
         # We look for "run". It should NOT match "test_runner" or "runner()" because of the word boundaries
         tests = mine_relevant_unit_tests("run", [file_path], file_cache=cache)
         self.assertEqual(len(tests), 0)
+
+    def test_coverage_data_separator_normalization(self):
+        # Create a coverage.xml with backslashes in filename
+        xml_content = (
+            '<?xml version="1.0" ?>\n'
+            '<coverage line-rate="0.5">\n'
+            '  <packages>\n'
+            '    <package name="src">\n'
+            '      <classes>\n'
+            '        <class name="a.py" filename="src\\a.py">\n'
+            '          <lines>\n'
+            '            <line number="5" hits="1"/>\n'
+            '          </lines>\n'
+            '        </class>\n'
+            '      </classes>\n'
+            '    </package>\n'
+            '  </packages>\n'
+            '</coverage>\n'
+        )
+        with open("coverage.xml", "w", encoding="utf-8") as f:
+            f.write(xml_content)
+
+        cov = get_coverage_data()
+        self.assertIn("src/a.py", cov)
+        self.assertEqual(cov["src/a.py"], [5])

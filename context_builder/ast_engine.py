@@ -194,18 +194,44 @@ def trace_lexical_dependencies_regex(func_name, repo_files, file_cache=None):
     # Pre-compile the word-boundary pattern once so we don't recompile it per line.
     # \b prevents partial-word matches: e.g. func_name="my_func" must not match
     # "my_func_other", which would flood the caller list with false positives.
-    call_pattern = re.compile(r'\b' + re.escape(func_name) + r'\b')
-    def_pattern  = re.compile(r'\b(?:fn|def|function|sub|func|class|macro)\s+' + re.escape(func_name))
+    has_tilde = func_name.startswith("~")
+    base_name = func_name[1:] if has_tilde else func_name
+
+    if has_tilde:
+        call_pattern = re.compile(r'~\b' + re.escape(base_name) + r'\b')
+        def_keyword_pattern = re.compile(
+            r'\b(?:fn|def|function|sub|func|class|macro)\s+~\b' + re.escape(base_name) + r'\b'
+        )
+        def_cpp_pattern = re.compile(
+            r'^\s*(?:[A-Za-z0-9_<>:]+(?:\s+\*?\s*)*)?~\b' + re.escape(base_name) + r'\s*\('
+        )
+    else:
+        call_pattern = re.compile(r'\b' + re.escape(func_name) + r'\b')
+        def_keyword_pattern = re.compile(
+            r'\b(?:fn|def|function|sub|func|class|macro)\s+' + re.escape(func_name) + r'\b'
+        )
+        def_cpp_pattern = re.compile(
+            r'^\s*(?:[A-Za-z0-9_<>:]+(?:\s+\*?\s*)*)?~?\b' + re.escape(func_name) + r'\s*\('
+        )
     for file_path in fast_files:
-        if os.path.splitext(file_path)[1] not in LANG_MAP or file_path.endswith('.md'): continue
+        ext = os.path.splitext(file_path)[1]
+        if ext not in LANG_MAP or file_path.endswith('.md'): continue
         content = file_cache.get_content(file_path)
         if call_pattern.search(content):
+            is_cpp = ext in ['.c', '.cpp', '.hpp', '.h']
             for idx, line in enumerate(content.splitlines()):
                 # Match with word boundaries to avoid substring false positives,
                 # and exclude definition lines (they are not callers).
-                if call_pattern.search(line) and not def_pattern.search(line):
-                    if file_path not in callers: callers[file_path] = []
-                    callers[file_path].append({"line": idx + 1, "code": line.strip()})
+                if call_pattern.search(line):
+                    is_def = False
+                    if def_keyword_pattern.search(line):
+                        is_def = True
+                    elif is_cpp and def_cpp_pattern.search(line) and not line.strip().endswith(';'):
+                        is_def = True
+
+                    if not is_def:
+                        if file_path not in callers: callers[file_path] = []
+                        callers[file_path].append({"line": idx + 1, "code": line.strip()})
     return callers
 
 def split_massive_block_ast(source_text, file_path, max_lines):
@@ -356,9 +382,15 @@ def find_callee_definition(callee_name, all_repo_files, file_cache=None):
     
     candidate_files = ripgrep_filter(all_repo_files, callee_name) if HAS_RG else all_repo_files
     
+    has_tilde = callee_name.startswith("~")
+    base_name = callee_name[1:] if has_tilde else callee_name
+
     # Precise patterns for definitions
     pattern = rf'\b(?:fn|def|function|sub|func|class|macro)\s+{re.escape(callee_name)}\b'
-    cpp_pattern = rf'^\s*[A-Za-z0-9_<>:]+(?:\s+\*?\s*)*{re.escape(callee_name)}\s*\('
+    if has_tilde:
+        cpp_pattern = rf'^\s*(?:[A-Za-z0-9_<>:]+(?:\s+\*?\s*)*)?~\b{re.escape(base_name)}\s*\('
+    else:
+        cpp_pattern = rf'^\s*(?:[A-Za-z0-9_<>:]+(?:\s+\*?\s*)*)?~?\b{re.escape(base_name)}\s*\('
 
     for file_path in candidate_files:
         ext = os.path.splitext(file_path)[1]
@@ -368,7 +400,7 @@ def find_callee_definition(callee_name, all_repo_files, file_cache=None):
         is_python = (ext == '.py')
         for idx, line in enumerate(lines):
             clean_line = strip_strings_and_comments(line, is_python)
-            if re.search(pattern, clean_line) or (ext in ['.c', '.cpp', '.hpp', '.h'] and re.search(cpp_pattern, clean_line)):
+            if re.search(pattern, clean_line) or (ext in ['.c', '.cpp', '.hpp', '.h'] and re.search(cpp_pattern, clean_line) and not clean_line.strip().endswith(';')):
                 return file_path, idx + 1
     return None, None
 

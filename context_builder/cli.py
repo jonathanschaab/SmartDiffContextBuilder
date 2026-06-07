@@ -32,6 +32,13 @@ def resolve_commit_ref(ref):
         out = run_command(["git", "rev-parse", ref])
     return out.strip()
 
+def get_default_branch():
+    """Queries git to see if 'main' or 'master' exists as a ref, returning the first one that exists."""
+    for branch in ["main", "master"]:
+        if run_command(["git", "rev-parse", "--verify", branch]).strip():
+            return branch
+    return "main"
+
 def parse_and_resolve_range(range_str):
     """Parses range string into (start_sha, end_sha) commit hashes."""
     range_str = range_str.strip()
@@ -61,7 +68,8 @@ def parse_and_resolve_range(range_str):
         commits_out = run_command(["git", "log", "--reverse", "--format=%H", f"{start_sha}..HEAD"])
         commits = [c.strip() for c in commits_out.splitlines() if c.strip()]
         if len(commits) < count:
-            commits_out = run_command(["git", "log", "--reverse", "--format=%H", f"{start_sha}..main"])
+            default_branch = get_default_branch()
+            commits_out = run_command(["git", "log", "--reverse", "--format=%H", f"{start_sha}..{default_branch}"])
             commits = [c.strip() for c in commits_out.splitlines() if c.strip()]
             
         if len(commits) < count:
@@ -177,7 +185,8 @@ def run_scan(args, start_ref=None, end_ref=None, output_dir=".", repo_root=None)
         file_lines = file_cache.get_lines(file_path)
 
         for line_num in line_numbers:
-            cov_status = "Covered" if file_path in coverage_data and line_num in coverage_data[file_path] else "Unknown"
+            normalized_file_path = file_path.replace("\\", "/")
+            cov_status = "Covered" if normalized_file_path in coverage_data and line_num in coverage_data[normalized_file_path] else "Unknown"
 
             start, end = extract_function_bounds(file_path, line_num, file_cache=file_cache)
             if start is None: continue
@@ -217,7 +226,7 @@ def run_scan(args, start_ref=None, end_ref=None, output_dir=".", repo_root=None)
                 callers = trace_lexical_dependencies_ast(curr_func, all_repo_files, file_cache=file_cache) if AST_ENGINE.is_supported(ext) else trace_lexical_dependencies_regex(curr_func, all_repo_files, file_cache=file_cache)
             
             # INTEGRATION: Invoke Macro Expansion only if requested and C/C++
-            if not args.skip_macro_expansion and ext in ['.c', '.cpp', '.hpp']:
+            if not args.skip_macro_expansion and ext in ['.c', '.cpp', '.hpp', '.h']:
                 macro_results = trace_macro_expansion(curr_func, all_repo_files, file_cache=file_cache)
                 for f_path, matches in macro_results.items():
                     if f_path not in callers: callers[f_path] = []

@@ -145,7 +145,7 @@ def analyze_compile_commands(target_file, file_cache=None, repo_root=None):
                 norm_root = os.path.abspath(repo_root).replace("\\", "/").lower()
                 if norm_ref.startswith(norm_root):
                     # Extract relative path from original repo root
-                    rel_to_root = abs_ref_file[len(os.path.abspath(repo_root)):].lstrip("\\/")
+                    rel_to_root = os.path.relpath(abs_ref_file, repo_root)
                     # Map to the current temporary worktree CWD
                     abs_ref_file = os.path.abspath(os.path.join(os.getcwd(), rel_to_root))
             

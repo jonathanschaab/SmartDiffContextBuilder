@@ -345,3 +345,56 @@ class TestAstEngine(unittest.TestCase):
         self.assertEqual(len(res), 1)
         truncated_text = res[0]["text"]
         self.assertEqual(truncated_text.strip(), "void my_func_decl(int x);")
+
+    def test_find_callee_definition_cpp_optional_prefix(self):
+        # Checks C++ constructors, destructors (~), and multiline return type definitions
+        code = (
+            "MyClass::MyClass() {\n"
+            "}\n"
+            "MyClass::~MyClass() {\n"
+            "}\n"
+            "void\n"
+            "my_multiline_func()\n"
+            "{\n"
+            "}\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "methods.cpp")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+        
+        self.cache.get_content(file_path)
+        
+        # Test constructor
+        path, line = find_callee_definition("MyClass", [file_path], file_cache=self.cache)
+        self.assertEqual(path, file_path)
+        self.assertEqual(line, 1) # first match
+        
+        # Test destructor
+        path, line = find_callee_definition("~MyClass", [file_path], file_cache=self.cache)
+        self.assertEqual(path, file_path)
+        self.assertEqual(line, 3)
+        
+        # Test multiline
+        path, line = find_callee_definition("my_multiline_func", [file_path], file_cache=self.cache)
+        self.assertEqual(path, file_path)
+        self.assertEqual(line, 6)
+
+    def test_trace_lexical_dependencies_regex_excludes_c_def(self):
+        # Verify that C-style definitions matched by def_cpp_pattern are excluded,
+        # but calls (even on lines by themselves) are counted.
+        code = (
+            "void my_func() {\n" # Definition
+            "    my_func();\n"    # Caller (has semicolon)
+            "}\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "regex_exclude.cpp")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+            
+        self.cache.get_content(file_path)
+        
+        callers = trace_lexical_dependencies_regex("my_func", [file_path], file_cache=self.cache)
+        self.assertIn(file_path, callers)
+        # Should only find 1 caller (line 2), not line 1 (the definition)
+        self.assertEqual(len(callers[file_path]), 1)
+        self.assertEqual(callers[file_path][0]["line"], 2)

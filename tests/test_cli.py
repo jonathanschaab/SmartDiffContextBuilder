@@ -497,4 +497,28 @@ class TestCLI(unittest.TestCase):
         res = _extract_function_name("while (true)", 40, 45)
         self.assertEqual(res, "block_lines_40_45")
 
+    @patch("context_builder.cli.run_command")
+    def test_get_default_branch(self, mock_run):
+        from context_builder.cli import get_default_branch
+        
+        # Test case 1: main exists
+        def run_side_effect(cmd, **kwargs):
+            if "rev-parse" in cmd and "main" in cmd:
+                return "some_sha_for_main\n"
+            return ""
+        mock_run.side_effect = run_side_effect
+        self.assertEqual(get_default_branch(), "main")
+        
+        # Test case 2: main does not exist, but master does
+        def run_side_effect_master(cmd, **kwargs):
+            if "rev-parse" in cmd and "master" in cmd:
+                return "some_sha_for_master\n"
+            return ""
+        mock_run.side_effect = run_side_effect_master
+        self.assertEqual(get_default_branch(), "master")
+        
+        # Test case 3: neither exist (fallback to main)
+        mock_run.side_effect = lambda cmd, **kwargs: ""
+        self.assertEqual(get_default_branch(), "main")
+
 

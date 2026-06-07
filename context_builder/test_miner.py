@@ -13,7 +13,9 @@ def get_coverage_data():
             root = tree.getroot()
             for cls in root.iter('class'):
                 filename = cls.get('filename')
-                cov_map[filename] = [int(line.get('number')) for line in cls.iter('line') if int(line.get('hits', 0)) > 0]
+                if filename:
+                    normalized_filename = filename.replace("\\", "/")
+                    cov_map[normalized_filename] = [int(line.get('number')) for line in cls.iter('line') if int(line.get('hits', 0)) > 0]
         except Exception as exc:
             warn_once("coverage_xml_parse_fail", f"Failed to parse coverage.xml: {exc}")
     return cov_map
