@@ -537,3 +537,27 @@ class TestAstEngine(unittest.TestCase):
         self.assertIn(3, lines)
         self.assertIn(4, lines)
         self.assertNotIn(2, lines)
+
+    def test_func_decl_pattern_backtracking_prevention(self):
+        """Verify that func_decl_pattern is immune to catastrophic backtracking when evaluated
+        against a long line of words/spaces without an opening parenthesis (."""
+        import time
+        from context_builder.ast_engine import extract_function_bounds_regex
+        
+        # A long line of words and spaces that does NOT end with '('.
+        # Under the old regex, this would cause catastrophic backtracking and hang the process.
+        long_line = "a " * 50 + "b"
+        
+        file_path = os.path.join(self.temp_dir.name, "backtrack.cpp")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(long_line + "\n")
+            
+        self.cache.get_content(file_path)
+        
+        start_time = time.time()
+        # Call extract_function_bounds_regex, which runs func_decl_pattern
+        extract_function_bounds_regex(file_path, 1, file_cache=self.cache)
+        elapsed = time.time() - start_time
+        
+        # Verify it completed almost instantly (e.g. well under 0.1 seconds)
+        self.assertLess(elapsed, 0.1)

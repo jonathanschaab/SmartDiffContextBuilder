@@ -96,7 +96,14 @@ def extract_function_bounds_regex(file_path, line_num, file_cache=None):
     target_idx = line_num - 1
     if target_idx >= len(lines): return None, None
 
-    func_decl_pattern = re.compile(r'\b(fn|function|def|sub|func|class|macro)\b|^\s*([A-Za-z0-9_<>:]+\s+)+[A-Za-z0-9_]+\s*\(', re.MULTILINE)
+    # We use a linear-time, non-backtracking pattern for C++ style definitions:
+    # A \s+ B (?:\s+ C)*
+    # By ensuring the token characters [A-Za-z0-9_<>:&*~] and whitespace separators \s+ are disjoint,
+    # we mathematically prevent catastrophic backtracking. This also adds support for C++ pointer (*), reference (&), and destructor (~) types.
+    func_decl_pattern = re.compile(
+        r'\b(fn|function|def|sub|func|class|macro)\b|^\s*[A-Za-z0-9_<>:&*~]+\s+[A-Za-z0-9_<>:&*~]+(?:\s+[A-Za-z0-9_<>:&*~]+)*\s*\(',
+        re.MULTILINE
+    )
     start_idx = target_idx
     while start_idx >= 0:
         if func_decl_pattern.search(lines[start_idx]) or (lines[start_idx].strip() and start_idx == 0): break

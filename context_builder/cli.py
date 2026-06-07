@@ -5,6 +5,7 @@ import subprocess
 import shutil
 import sys
 import tempfile
+import uuid
 from collections import deque
 
 from .cache import LRUFileCache, get_global_cache
@@ -374,15 +375,10 @@ def main():
             print(f"\n[ContextLens] Current HEAD matches final commit {end_sha[:8]}. Bypassing temporary worktree...")
             run_scan(args, start_ref=start_sha, end_ref=end_sha)
         else:
-            # Create a unique path in the system temp directory for the worktree checkout.
-            # We immediately remove the empty directory created by mkdtemp because several
-            # Git versions (older ones or specific configurations) refuse to run
-            # 'git worktree add' on a path that already exists — even if it is completely
-            # empty — with: fatal: '<path>' already exists.
-            # Deleting it first and passing the same path to worktree add ensures maximum
-            # cross-version compatibility.
-            temp_worktree_dir = tempfile.mkdtemp(prefix="context_lens_worktree_")
-            os.rmdir(temp_worktree_dir)
+            # Generate a unique path in the system temp directory for the worktree checkout.
+            # Using uuid.uuid4() avoids any race conditions or collisions with other processes/threads,
+            # and works perfectly across all Git versions without creating/deleting directories beforehand.
+            temp_worktree_dir = os.path.join(tempfile.gettempdir(), f"context_lens_worktree_{uuid.uuid4()}")
             
             print(f"\n[ContextLens] Setting up temporary worktree for commit {end_sha[:8]}...")
             # Check out end_sha in a detached state to avoid branch checkout conflicts

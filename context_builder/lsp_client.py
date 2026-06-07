@@ -56,10 +56,15 @@ class MinimalLSPClient:
             return False
 
     def _send(self, msg_dict):
-        body = json.dumps(msg_dict).encode('utf-8')
-        header = f"Content-Length: {len(body)}\r\n\r\n".encode('utf-8')
-        self.proc.stdin.write(header + body)
-        self.proc.stdin.flush()
+        try:
+            body = json.dumps(msg_dict).encode('utf-8')
+            header = f"Content-Length: {len(body)}\r\n\r\n".encode('utf-8')
+            self.proc.stdin.write(header + body)
+            self.proc.stdin.flush()
+        except (BrokenPipeError, OSError) as e:
+            # Under Windows or Unix, if the LSP server crashes, write/flush raises BrokenPipeError/OSError.
+            # Catching it here prevents crashing the entire caller flow.
+            warn_once("lsp_send_fail", f"LSP process stdin write failed (process may have crashed): {e}")
 
     def _reader_loop(self):
         # Background thread continuously reads stdout, parsing JSON-RPC messages and queuing them

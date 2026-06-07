@@ -341,3 +341,17 @@ class TestLspClient(unittest.TestCase):
         _, called_line, called_char = call_args[0][0], call_args[0][1], call_args[0][2]
         self.assertEqual(called_line, expected_line)
         self.assertEqual(called_char, expected_char)
+
+    def test_lsp_client_send_broken_pipe(self):
+        """Verify that _send handles BrokenPipeError and OSError gracefully without crashing the tool."""
+        mock_proc = MagicMock()
+        mock_proc.stdin.write.side_effect = BrokenPipeError("Broken pipe")
+        
+        client = MinimalLSPClient(["some_lsp_binary"])
+        client.proc = mock_proc
+        
+        # It should not raise an exception even if the process stdin write throws a BrokenPipeError
+        try:
+            client._send({"jsonrpc": "2.0", "method": "exit"})
+        except Exception as e:
+            self.fail(f"_send raised an exception: {e}")
