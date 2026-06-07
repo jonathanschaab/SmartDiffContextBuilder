@@ -586,6 +586,47 @@ class TestLspClient(unittest.TestCase):
         self.assertFalse(success)
         self.assertTrue(getattr(mock_client, "_start_io_cancelled", False))
 
+    def test_lsp_loop_thread_stop_safety(self):
+        from context_builder.lsp_client import LSPEventLoopThread
+        thread = LSPEventLoopThread()
+        thread.loop.close()
+        try:
+            thread.stop()
+        except Exception as e:
+            self.fail(f"LSPEventLoopThread.stop() raised an exception when loop was closed: {e}")
+
+    @patch("context_builder.lsp_client.LanguageClient")
+    def test_cleanup_local_client_reference_safety(self, mock_lc_class):
+        mock_client = MagicMock()
+        mock_lc_class.return_value = mock_client
+        
+        client = MinimalLSPClient(["some_lsp_binary"])
+        client.client = mock_client
+        
+        mock_subproc = MagicMock()
+        mock_subproc.returncode = None
+        mock_client.subprocess = mock_subproc
+        mock_client.stopped = False
+        
+        async def mock_shutdown_async(*args):
+            client.client = None
+            
+        mock_client.shutdown_async = mock_shutdown_async
+        mock_client.shutdown = AsyncMock()
+        mock_client.exit = AsyncMock()
+        mock_client.stop = AsyncMock()
+        
+        try:
+            client.cleanup()
+        except AttributeError as e:
+            self.fail(f"cleanup() failed with AttributeError due to race condition: {e}")
+            
+        mock_client.shutdown.assert_not_called()
+        mock_client.exit.assert_called_once()
+        mock_client.stop.assert_called_once()
+        mock_subproc.kill.assert_called_once()
+
+
 
 
 
