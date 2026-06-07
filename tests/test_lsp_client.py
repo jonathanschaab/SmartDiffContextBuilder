@@ -516,5 +516,24 @@ class TestLspClient(unittest.TestCase):
         mock_subproc.kill.assert_called_once()
         self.assertIsNone(client.client)
 
+    @patch("context_builder.lsp_client.LanguageClient")
+    def test_lsp_client_start_io_fails_immediately(self, mock_lc_class):
+        mock_client = MagicMock()
+        mock_lc_class.return_value = mock_client
+        
+        async def mock_start_io_fail(*args, **kwargs):
+            raise FileNotFoundError("lsp_binary not found")
+        mock_client.start_io = mock_start_io_fail
+        mock_client.shutdown_async = AsyncMock()
+        mock_client.stop = AsyncMock()
+        mock_client.stopped = False
+        
+        client = MinimalLSPClient(["nonexistent_lsp_binary"])
+        success = client.start()
+        
+        self.assertFalse(success)
+        self.assertIsNone(client.client)
+
+
 
 

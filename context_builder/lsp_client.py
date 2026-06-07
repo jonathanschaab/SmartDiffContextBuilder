@@ -85,8 +85,15 @@ class MinimalLSPClient:
     def start(self) -> bool:
         async def _async_start():
             self.client = LanguageClient(name="SmartDiffContextBuilder-LSP", version="1.0")
-            # Start subprocess with stderr redirected to devnull to prevent cluttering stdout
-            await self.client.start_io(self.cmd[0], *self.cmd[1:], stderr=asyncio.subprocess.DEVNULL)
+            # Start subprocess in a background task to avoid blocking the message loop
+            start_task = asyncio.create_task(
+                self.client.start_io(self.cmd[0], *self.cmd[1:], stderr=asyncio.subprocess.DEVNULL)
+            )
+            # Yield control briefly to allow the subprocess to start or fail immediately
+            await asyncio.sleep(0.1)
+            if start_task.done():
+                # Raise any immediate startup exception (e.g. FileNotFoundError)
+                start_task.result()
             
             # Send initialize request
             params = types.InitializeParams(
@@ -229,7 +236,7 @@ class MinimalLSPClient:
 
         try:
             fut = asyncio.run_coroutine_threadsafe(_async_cleanup(), self.loop)
-            fut.result(timeout=5.0)
+            fut.result(timeout=2.0)
         except Exception:
             if 'fut' in locals():
                 fut.cancel()
