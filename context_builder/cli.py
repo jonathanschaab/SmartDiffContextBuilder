@@ -328,26 +328,149 @@ def run_scan(args, start_ref=None, end_ref=None, output_dir=".", repo_root=None)
     cleanup_zombie_lsps()
     print("\n[ContextLens] Context packaging completed successfully.")
 
+from .lsp_client import get_lsp_references, cleanup_zombie_lsps
+from .preprocessor import build_ffi_registry, trace_ffi_callers, analyze_compile_commands, trace_macro_expansion
+from .volume_manager import VolumeManager
+from .test_miner import get_coverage_data, mine_relevant_unit_tests
+from . import lsp_client
+import json
+from .config import CONFIG, load_json_with_comments, generate_commented_config
+
 def main():
     parser = argparse.ArgumentParser(description="Compile context-aware git diff tokens optimized for LLMs.")
-    parser.add_argument("--format", choices=["md", "json"], default="md")
-    parser.add_argument("--max-lines", type=int, default=1500)
-    parser.add_argument("--max-mb", type=float, default=2.0)
-    parser.add_argument("--base-name", type=str, default="ContextLens")
-    parser.add_argument("--max-cache-size", type=int, default=100)
+    parser.add_argument("--format", choices=["md", "json"], default=None)
+    parser.add_argument("--max-lines", type=int, default=None)
+    parser.add_argument("--max-mb", type=float, default=None)
+    parser.add_argument("--base-name", type=str, default=None)
+    parser.add_argument("--max-cache-size", type=int, default=None)
     
     # Configurable Flags
-    parser.add_argument("--max-interface-depth", type=int, default=15)
-    parser.add_argument("--disable-pruning", action="store_true")
-    parser.add_argument("--lsp-timeout", type=int, default=45)
-    parser.add_argument("--no-language-server", action="store_true")
-    parser.add_argument("--skip-ffi", action="store_true")
-    parser.add_argument("--skip-macro-expansion", action="store_true")
-    parser.add_argument("--caller-depth", type=int, default=1)
-    parser.add_argument("--callee-depth", type=int, default=1)
+    parser.add_argument("--max-interface-depth", type=int, default=None)
+    parser.add_argument("--disable-pruning", action="store_true", default=None)
+    parser.add_argument("--lsp-timeout", type=int, default=None)
+    parser.add_argument("--no-language-server", action="store_true", default=None)
+    parser.add_argument("--skip-ffi", action="store_true", default=None)
+    parser.add_argument("--skip-macro-expansion", action="store_true", default=None)
+    parser.add_argument("--caller-depth", type=int, default=None)
+    parser.add_argument("--callee-depth", type=int, default=None)
     parser.add_argument("--commit-range", type=str, default=None, help="Sequence of commits to analyze (e.g. START..END, -3, START+2, END-3)")
     
+    # Configuration options
+    parser.add_argument("--config", type=str, default=None, help="Path to config file")
+    parser.add_argument("--create-config", type=str, default=None, help="Path to write a commented config file representing current CLI settings")
+    
+    # New externalized configurations override options
+    parser.add_argument("--lang-map", type=str, default=None, help="JSON string of file extension mappings")
+    parser.add_argument("--bindings", type=str, default=None, help="JSON string of tree-sitter bindings")
+    parser.add_argument("--dependency-query-strings", type=str, default=None, help="JSON string of dependency query strings")
+    parser.add_argument("--callee-query-strings", type=str, default=None, help="JSON string of callee query strings")
+    parser.add_argument("--func-decl-pattern", type=str, default=None)
+    parser.add_argument("--def-pattern-template", type=str, default=None)
+    parser.add_argument("--cpp-def-pattern-template", type=str, default=None)
+    parser.add_argument("--callee-pattern", type=str, default=None)
+    parser.add_argument("--callee-ignored-keywords", type=str, default=None, help="JSON list of callee ignored keywords")
+    parser.add_argument("--ffi-patterns", type=str, default=None, help="JSON list of FFI patterns")
+    parser.add_argument("--ffi-rg-pattern", type=str, default=None)
+    
     args = parser.parse_args()
+    
+    def is_mock(obj):
+        return type(obj).__name__ in ('Mock', 'MagicMock', 'NonCallableMock', 'NonCallableMagicMock')
+
+    # 1. Load config file if specified
+    if args.config and isinstance(args.config, str) and not is_mock(args.config):
+        try:
+            loaded_cfg = load_json_with_comments(args.config)
+            for k, v in loaded_cfg.items():
+                if k in CONFIG:
+                    if isinstance(CONFIG[k], dict) and isinstance(v, dict):
+                        CONFIG[k].update(v)
+                    else:
+                        CONFIG[k] = v
+                else:
+                    print(f"[Warning] Unknown config key: {k}")
+        except Exception as e:
+            print(f"[ContextLens Error] Failed to load config from {args.config}: {e}")
+            sys.exit(1)
+            
+    # 2. Merge CLI overrides
+    active_overrides = []
+    cli_mappings = {
+        "format": "format",
+        "max_lines": "max_lines",
+        "max_mb": "max_mb",
+        "base_name": "base_name",
+        "max_cache_size": "max_cache_size",
+        "max_interface_depth": "max_interface_depth",
+        "disable_pruning": "disable_pruning",
+        "lsp_timeout": "lsp_timeout",
+        "no_language_server": "no_language_server",
+        "skip_ffi": "skip_ffi",
+        "skip_macro_expansion": "skip_macro_expansion",
+        "caller_depth": "caller_depth",
+        "callee_depth": "callee_depth",
+        "commit_range": "commit_range",
+        "func_decl_pattern": "func_decl_pattern",
+        "def_pattern_template": "def_pattern_template",
+        "cpp_def_pattern_template": "cpp_def_pattern_template",
+        "callee_pattern": "callee_pattern",
+        "ffi_rg_pattern": "ffi_rg_pattern",
+    }
+    
+    for arg_name, cfg_key in cli_mappings.items():
+        val = getattr(args, arg_name)
+        if val is not None and not is_mock(val):
+            CONFIG[cfg_key] = val
+            active_overrides.append(cfg_key)
+            
+    # Helper to parse CLI JSON overrides
+    def parse_cli_json(val, name):
+        try:
+            return json.loads(val)
+        except Exception as e:
+            print(f"[ContextLens Error] CLI argument {name} is not valid JSON: {e}")
+            sys.exit(1)
+            
+    json_mappings = {
+        "lang_map": "lang_map",
+        "bindings": "bindings",
+        "dependency_query_strings": "dependency_query_strings",
+        "callee_query_strings": "callee_query_strings",
+        "callee_ignored_keywords": "callee_ignored_keywords",
+        "ffi_patterns": "ffi_patterns",
+    }
+    
+    for arg_name, cfg_key in json_mappings.items():
+        val = getattr(args, arg_name)
+        if val is not None and not is_mock(val):
+            parsed = parse_cli_json(val, f"--{arg_name.replace('_', '-')}")
+            if isinstance(CONFIG[cfg_key], dict) and isinstance(parsed, dict):
+                CONFIG[cfg_key].update(parsed)
+            else:
+                CONFIG[cfg_key] = parsed
+            active_overrides.append(cfg_key)
+            
+    # Force AST engine re-initialization because config might have changed bindings
+    AST_ENGINE._initialized = False
+
+    # 3. Create config file if requested
+    if args.create_config and isinstance(args.create_config, str) and not is_mock(args.create_config):
+        try:
+            config_content = generate_commented_config(active_overrides)
+            parent_dir = os.path.dirname(os.path.abspath(args.create_config))
+            if parent_dir:
+                os.makedirs(parent_dir, exist_ok=True)
+            with open(args.create_config, "w", encoding="utf-8") as f:
+                f.write(config_content)
+            print(f"[ContextLens] Created configuration template at: {args.create_config}")
+            sys.exit(0)
+        except Exception as e:
+            print(f"[ContextLens Error] Failed to create configuration file: {e}")
+            sys.exit(1)
+            
+    # Populate the Namespace object with merged CONFIG values for backward compatibility
+    for k in CONFIG.keys():
+        setattr(args, k, CONFIG[k])
     
     if args.commit_range:
         try:

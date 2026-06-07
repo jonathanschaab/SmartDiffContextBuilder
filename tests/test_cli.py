@@ -645,4 +645,144 @@ class TestCLI(unittest.TestCase):
         # Verify that run_scan was called directly
         mock_run_scan.assert_called_once_with(mock_args, start_ref="sha_start", end_ref="sha_end")
 
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    @patch("context_builder.cli.run_scan")
+    def test_cli_config_file_loading_and_merging(self, mock_run_scan, mock_parse_args):
+        """Verify that loading a config file updates CONFIG and merges keys correctly."""
+        from context_builder.config import CONFIG, reset_config
+        reset_config()
+        
+        # Create temp config file with comments
+        config_content = """
+        // custom test config
+        {
+            "max_lines": 4200,
+            "lang_map": {
+                ".custom": "custom_lang"
+            }
+        }
+        """
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as f:
+            f.write(config_content)
+            config_path = f.name
+            
+        try:
+            mock_args = MagicMock()
+            mock_args.config = config_path
+            # Set other args to None so they don't override the config file
+            for attr in ["format", "max_lines", "max_mb", "base_name", "max_cache_size",
+                         "max_interface_depth", "disable_pruning", "lsp_timeout",
+                         "no_language_server", "skip_ffi", "skip_macro_expansion",
+                         "caller_depth", "callee_depth", "commit_range",
+                         "create_config", "lang_map", "bindings",
+                         "dependency_query_strings", "callee_query_strings",
+                         "func_decl_pattern", "def_pattern_template",
+                         "cpp_def_pattern_template", "callee_pattern",
+                         "callee_ignored_keywords", "ffi_patterns", "ffi_rg_pattern"]:
+                setattr(mock_args, attr, None)
+                
+            mock_parse_args.return_value = mock_args
+            
+            main()
+            
+            # Assert CONFIG is updated
+            self.assertEqual(CONFIG["max_lines"], 4200)
+            self.assertEqual(CONFIG["lang_map"][".custom"], "custom_lang")
+            
+            # Assert args namespace passed to run_scan is populated
+            passed_args = mock_run_scan.call_args[0][0]
+            self.assertEqual(passed_args.max_lines, 4200)
+            self.assertEqual(passed_args.lang_map[".custom"], "custom_lang")
+        finally:
+            os.remove(config_path)
+            reset_config()
+
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    @patch("context_builder.cli.run_scan")
+    def test_cli_argument_overrides(self, mock_run_scan, mock_parse_args):
+        """Verify that CLI overrides override config and merge JSON inputs correctly."""
+        from context_builder.config import CONFIG, reset_config
+        reset_config()
+        
+        mock_args = MagicMock()
+        mock_args.config = None
+        mock_args.max_lines = 3300
+        mock_args.lang_map = '{".overridden": "overridden_lang"}'
+        mock_args.create_config = None
+        
+        # Set other args to None
+        for attr in ["format", "max_mb", "base_name", "max_cache_size",
+                     "max_interface_depth", "disable_pruning", "lsp_timeout",
+                     "no_language_server", "skip_ffi", "skip_macro_expansion",
+                     "caller_depth", "callee_depth", "commit_range",
+                     "bindings", "dependency_query_strings", "callee_query_strings",
+                     "func_decl_pattern", "def_pattern_template",
+                     "cpp_def_pattern_template", "callee_pattern",
+                     "callee_ignored_keywords", "ffi_patterns", "ffi_rg_pattern"]:
+            setattr(mock_args, attr, None)
+            
+        mock_parse_args.return_value = mock_args
+        
+        main()
+        
+        self.assertEqual(CONFIG["max_lines"], 3300)
+        self.assertEqual(CONFIG["lang_map"][".overridden"], "overridden_lang")
+        # Default keys should remain intact since dictionary merges are used
+        self.assertEqual(CONFIG["lang_map"][".py"], "python")
+        
+        passed_args = mock_run_scan.call_args[0][0]
+        self.assertEqual(passed_args.max_lines, 3300)
+        self.assertEqual(passed_args.lang_map[".overridden"], "overridden_lang")
+        reset_config()
+
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    def test_create_config_generation(self, mock_parse_args):
+        """Verify that --create-config generates a commented config file with overrides uncommented."""
+        from context_builder.config import reset_config
+        reset_config()
+        
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            temp_path = f.name
+            
+        try:
+            mock_args = MagicMock()
+            mock_args.config = None
+            mock_args.create_config = temp_path
+            mock_args.max_lines = 1234
+            mock_args.format = "json"
+            
+            # Set other args to None
+            for attr in ["max_mb", "base_name", "max_cache_size",
+                         "max_interface_depth", "disable_pruning", "lsp_timeout",
+                         "no_language_server", "skip_ffi", "skip_macro_expansion",
+                         "caller_depth", "callee_depth", "commit_range",
+                         "lang_map", "bindings", "dependency_query_strings", "callee_query_strings",
+                         "func_decl_pattern", "def_pattern_template",
+                         "cpp_def_pattern_template", "callee_pattern",
+                         "callee_ignored_keywords", "ffi_patterns", "ffi_rg_pattern"]:
+                setattr(mock_args, attr, None)
+                
+            mock_parse_args.return_value = mock_args
+            
+            with self.assertRaises(SystemExit) as cm:
+                main()
+                
+            self.assertEqual(cm.exception.code, 0)
+            
+            # Read generated file
+            with open(temp_path, "r", encoding="utf-8") as f:
+                content = f.read()
+                
+            # Verify uncommented overrides
+            self.assertIn('"max_lines": 1234', content)
+            self.assertIn('"format": "json"', content)
+            # Verify commented out defaults
+            self.assertIn('// "max_mb": 2.0', content)
+            self.assertIn('// "base_name": "ContextLens"', content)
+        finally:
+            os.remove(temp_path)
+            reset_config()
+
 

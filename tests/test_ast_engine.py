@@ -561,3 +561,41 @@ class TestAstEngine(unittest.TestCase):
         
         # Verify it completed almost instantly (e.g. well under 0.1 seconds)
         self.assertLess(elapsed, 0.1)
+
+    def test_lazy_initialization(self):
+        """Verify that the AstEngine is initialized lazily upon checking support."""
+        from context_builder.ast_engine import AstEngine, CONFIG, HAS_TREESITTER
+        engine = AstEngine()
+        self.assertFalse(engine._initialized)
+        
+        # Override bindings in CONFIG to test it's read
+        orig_bindings = CONFIG['bindings'].copy()
+        try:
+            CONFIG['bindings'] = {'.dummy': ('dummy_module', 'dummy_func')}
+            engine.is_supported('.dummy')
+            self.assertTrue(engine._initialized)
+            if HAS_TREESITTER:
+                self.assertIn('.dummy', engine.missing_bindings)
+        finally:
+            CONFIG['bindings'] = orig_bindings
+
+    def test_custom_regex_and_query_overrides(self):
+        """Verify that custom func_decl_pattern and callee_pattern configurations are respected."""
+        from context_builder.ast_engine import _get_func_decl_pattern, _get_callee_pattern, CONFIG
+        orig_decl = CONFIG['func_decl_pattern']
+        orig_callee = CONFIG['callee_pattern']
+        try:
+            CONFIG['func_decl_pattern'] = r'\bMY_SPECIAL_DECL\b'
+            CONFIG['callee_pattern'] = r'\bMY_SPECIAL_CALLEE\b'
+            
+            decl_re = _get_func_decl_pattern()
+            callee_re = _get_callee_pattern()
+            
+            self.assertIsNotNone(decl_re.search("MY_SPECIAL_DECL"))
+            self.assertIsNone(decl_re.search("def foo()"))
+            
+            self.assertIsNotNone(callee_re.search("MY_SPECIAL_CALLEE"))
+            self.assertIsNone(callee_re.search("foo()"))
+        finally:
+            CONFIG['func_decl_pattern'] = orig_decl
+            CONFIG['callee_pattern'] = orig_callee

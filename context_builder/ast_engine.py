@@ -9,34 +9,55 @@ try:
 except ImportError:
     HAS_TREESITTER = False
 
-LANG_MAP = {
-    '.rs': 'rust', '.js': 'javascript', '.ts': 'typescript', '.py': 'python',
-    '.cpp': 'cpp', '.hpp': 'cpp', '.c': 'c', '.h': 'cpp', '.go': 'go', '.pl': 'perl',
-    '.mk': 'makefile', '.cmake': 'cmake', '.sh': 'bash', '.bat': 'batch'
-}
+from .config import CONFIG, ConfigDictProxy
+
+LANG_MAP = ConfigDictProxy('lang_map')
+
+_FUNC_DECL_RE = None
+_FUNC_DECL_STR = None
+_CALLEE_RE = None
+_CALLEE_STR = None
+
+def _get_func_decl_pattern():
+    global _FUNC_DECL_RE, _FUNC_DECL_STR
+    current_str = CONFIG['func_decl_pattern']
+    if _FUNC_DECL_RE is None or _FUNC_DECL_STR != current_str:
+        _FUNC_DECL_RE = re.compile(current_str, re.MULTILINE)
+        _FUNC_DECL_STR = current_str
+    return _FUNC_DECL_RE
+
+def _get_callee_pattern():
+    global _CALLEE_RE, _CALLEE_STR
+    current_str = CONFIG['callee_pattern']
+    if _CALLEE_RE is None or _CALLEE_STR != current_str:
+        _CALLEE_RE = re.compile(current_str)
+        _CALLEE_STR = current_str
+    return _CALLEE_RE
+
 
 class AstEngine:
     def __init__(self):
         self.parsers = {}
         self.languages = {}
         self.missing_bindings = {}
+        self._initialized = False
+        
+    def initialize(self):
+        if self._initialized:
+            return
+        self.parsers.clear()
+        self.languages.clear()
+        self.missing_bindings.clear()
         
         if not HAS_TREESITTER:
             warn_once('tree-sitter', "For perfect AST scoping, install tree-sitter bindings.")
+            self._initialized = True
             return
             
-        bindings = {
-            '.py': ('tree_sitter_python', 'language'),
-            '.rs': ('tree_sitter_rust', 'language'),
-            '.js': ('tree_sitter_javascript', 'language'),
-            '.ts': ('tree_sitter_typescript', 'language_typescript'),
-            '.c':  ('tree_sitter_c', 'language'),
-            '.cpp': ('tree_sitter_cpp', 'language'),
-            '.hpp': ('tree_sitter_cpp', 'language'),
-            '.h':   ('tree_sitter_cpp', 'language')
-        }
-        
-        for ext, (module_name, func_name) in bindings.items():
+        for ext, val in CONFIG['bindings'].items():
+            if not isinstance(val, (list, tuple)) or len(val) != 2:
+                continue
+            module_name, func_name = val
             try:
                 mod = __import__(module_name)
                 lang_obj = tree_sitter.Language(getattr(mod, func_name)())
@@ -44,10 +65,12 @@ class AstEngine:
                 parser.set_language(lang_obj)
                 self.languages[ext] = lang_obj
                 self.parsers[ext] = parser
-            except ImportError:
+            except Exception:
                 self.missing_bindings[ext] = module_name
+        self._initialized = True
 
     def is_supported(self, ext):
+        self.initialize()
         return ext in self.parsers
 
 AST_ENGINE = AstEngine()
@@ -96,14 +119,7 @@ def extract_function_bounds_regex(file_path, line_num, file_cache=None):
     target_idx = line_num - 1
     if target_idx >= len(lines): return None, None
 
-    # We use a linear-time, non-backtracking pattern for C++ style definitions:
-    # A \s+ B (?:\s+ C)*
-    # By ensuring the token characters [A-Za-z0-9_<>:&*~] and whitespace separators \s+ are disjoint,
-    # we mathematically prevent catastrophic backtracking. This also adds support for C++ pointer (*), reference (&), and destructor (~) types.
-    func_decl_pattern = re.compile(
-        r'\b(fn|function|def|sub|func|class|macro)\b|^\s*[A-Za-z0-9_<>:&*~]+\s+[A-Za-z0-9_<>:&*~]+(?:\s+[A-Za-z0-9_<>:&*~]+)*\s*\(',
-        re.MULTILINE
-    )
+    func_decl_pattern = _get_func_decl_pattern()
     start_idx = target_idx
     while start_idx >= 0:
         if func_decl_pattern.search(lines[start_idx]) or (lines[start_idx].strip() and start_idx == 0): break
@@ -165,17 +181,14 @@ def trace_lexical_dependencies_ast(func_name, repo_files, file_cache=None):
         escaped_func_name = re.escape(func_name).replace("\\", "\\\\")
 
         # Included Registry Pattern matching (register_x)
-        query_strings = {
-            '.py': f'(call function: [(identifier) @id (attribute attribute: (identifier) @id)] (#match? @id ".*({escaped_func_name}|register).*"))',
-            '.rs': f'(call_expression function: [(identifier) @id (scoped_identifier name: (identifier) @id) (field_expression field: (field_identifier) @id)] (#match? @id ".*({escaped_func_name}|register).*"))',
-            '.js': f'(call_expression function: [(identifier) @id (member_expression property: (property_identifier) @id)] (#match? @id ".*({escaped_func_name}|register).*"))',
-            '.ts': f'(call_expression function: [(identifier) @id (member_expression property: (property_identifier) @id)] (#match? @id ".*({escaped_func_name}|register).*"))',
-            '.c': f'(call_expression function: (identifier) @id (#match? @id ".*({escaped_func_name}|register).*"))',
-            '.cpp': f'(call_expression function: [(identifier) @id (scoped_identifier name: (identifier) @id) (field_expression field: (field_identifier) @id)] (#match? @id ".*({escaped_func_name}|register).*"))'
-        }
-        
+        query_strings = CONFIG['dependency_query_strings']
         q_str = query_strings.get(ext)
         if not q_str: continue
+        
+        try:
+            q_str = q_str.format(escaped_func_name=escaped_func_name)
+        except KeyError:
+            pass
         
         try:
             query = AST_ENGINE.languages[ext].query(q_str)
@@ -328,15 +341,7 @@ def extract_callees_ast(file_path, start_line, end_line, ext, file_cache):
         return None
     func_node = walk(tree.root_node) or tree.root_node
         
-    query_strings = {
-        '.py': '(call function: [(identifier) @id (attribute attribute: (identifier) @id)])',
-        '.rs': '(call_expression function: [(identifier) @id (scoped_identifier name: (identifier) @id) (field_expression field: (field_identifier) @id)])',
-        '.js': '(call_expression function: [(identifier) @id (member_expression property: (property_identifier) @id)])',
-        '.ts': '(call_expression function: [(identifier) @id (member_expression property: (property_identifier) @id)])',
-        '.c': '(call_expression function: (identifier) @id)',
-        '.cpp': '(call_expression function: [(identifier) @id (scoped_identifier name: (identifier) @id) (field_expression field: (field_identifier) @id)])'
-    }
-    
+    query_strings = CONFIG['callee_query_strings']
     q_str = query_strings.get(ext)
     if not q_str: return set()
     
@@ -363,11 +368,12 @@ def extract_callees_regex(file_path, start_line, end_line, file_cache):
     lines = file_cache.get_lines(file_path)[start_line:end_line]
     callees = set()
     is_python = file_path.endswith('.py')
+    callee_pattern = _get_callee_pattern()
     for line in lines:
         line_clean = strip_strings_and_comments(line, is_python)
-        for match in re.finditer(r'\b([A-Za-z_][A-Za-z0-9_]*)\s*\(', line_clean):
+        for match in re.finditer(callee_pattern, line_clean):
             name = match.group(1)
-            if name not in ['if', 'while', 'for', 'with', 'print', 'len', 'fn', 'def', 'function', 'class']:
+            if name not in CONFIG['callee_ignored_keywords']:
                 callees.add(name)
     return callees
 
@@ -403,8 +409,8 @@ def find_callee_definition(callee_name, all_repo_files, file_cache=None):
     escaped_callee = re.escape(callee_name)
 
     # Precise patterns for definitions
-    pattern = rf'\b(?:fn|def|function|sub|func|class|macro)\s+' + lead_b + escaped_callee + trail_b
-    cpp_pattern = rf'^\s*(?:[A-Za-z0-9_<>:]+(?:\s+\*?\s*)*)?' + lead_b + escaped_callee + r'\s*\('
+    pattern = CONFIG['def_pattern_template'].format(lead_b=lead_b, escaped_callee=escaped_callee, trail_b=trail_b)
+    cpp_pattern = CONFIG['cpp_def_pattern_template'].format(lead_b=lead_b, escaped_callee=escaped_callee, trail_b=trail_b)
 
     for file_path in candidate_files:
         ext = os.path.splitext(file_path)[1]

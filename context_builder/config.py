@@ -1,0 +1,200 @@
+import os
+import re
+import json
+
+# Defaults
+DEFAULT_LANG_MAP = {
+    '.rs': 'rust', '.js': 'javascript', '.ts': 'typescript', '.py': 'python',
+    '.cpp': 'cpp', '.hpp': 'cpp', '.c': 'c', '.h': 'cpp', '.go': 'go', '.pl': 'perl',
+    '.mk': 'makefile', '.cmake': 'cmake', '.sh': 'bash', '.bat': 'batch'
+}
+
+DEFAULT_BINDINGS = {
+    '.py': ('tree_sitter_python', 'language'),
+    '.rs': ('tree_sitter_rust', 'language'),
+    '.js': ('tree_sitter_javascript', 'language'),
+    '.ts': ('tree_sitter_typescript', 'language_typescript'),
+    '.c':  ('tree_sitter_c', 'language'),
+    '.cpp': ('tree_sitter_cpp', 'language'),
+    '.hpp': ('tree_sitter_cpp', 'language'),
+    '.h':   ('tree_sitter_cpp', 'language')
+}
+
+DEFAULT_DEPENDENCY_QUERY_STRINGS = {
+    '.py': '(call function: [(identifier) @id (attribute attribute: (identifier) @id)] (#match? @id ".*({escaped_func_name}|register).*"))',
+    '.rs': '(call_expression function: [(identifier) @id (scoped_identifier name: (identifier) @id) (field_expression field: (field_identifier) @id)] (#match? @id ".*({escaped_func_name}|register).*"))',
+    '.js': '(call_expression function: [(identifier) @id (member_expression property: (property_identifier) @id)] (#match? @id ".*({escaped_func_name}|register).*"))',
+    '.ts': '(call_expression function: [(identifier) @id (member_expression property: (property_identifier) @id)] (#match? @id ".*({escaped_func_name}|register).*"))',
+    '.c': '(call_expression function: (identifier) @id (#match? @id ".*({escaped_func_name}|register).*"))',
+    '.cpp': '(call_expression function: [(identifier) @id (scoped_identifier name: (identifier) @id) (field_expression field: (field_identifier) @id)] (#match? @id ".*({escaped_func_name}|register).*"))'
+}
+
+DEFAULT_CALLEE_QUERY_STRINGS = {
+    '.py': '(call function: [(identifier) @id (attribute attribute: (identifier) @id)])',
+    '.rs': '(call_expression function: [(identifier) @id (scoped_identifier name: (identifier) @id) (field_expression field: (field_identifier) @id)])',
+    '.js': '(call_expression function: [(identifier) @id (member_expression property: (property_identifier) @id)])',
+    '.ts': '(call_expression function: [(identifier) @id (member_expression property: (property_identifier) @id)])',
+    '.c': '(call_expression function: (identifier) @id)',
+    '.cpp': '(call_expression function: [(identifier) @id (scoped_identifier name: (identifier) @id) (field_expression field: (field_identifier) @id)])'
+}
+
+DEFAULT_FUNC_DECL_PATTERN = r'\b(fn|function|def|sub|func|class|macro)\b|^\s*[A-Za-z0-9_<>:&*~]+\s+[A-Za-z0-9_<>:&*~]+(?:\s+[A-Za-z0-9_<>:&*~]+)*\s*\('
+
+DEFAULT_DEF_PATTERN_TEMPLATE = "\\b(?:fn|def|function|sub|func|class|macro)\\s+{lead_b}{escaped_callee}{trail_b}"
+DEFAULT_CPP_DEF_PATTERN_TEMPLATE = "^\\s*(?:[A-Za-z0-9_<>:]+(?:\\s+\\*?\\s*)*)?{lead_b}{escaped_callee}\\s*\\("
+
+DEFAULT_CALLEE_PATTERN = r'\b([A-Za-z_][A-Za-z0-9_]*)\s*\('
+DEFAULT_CALLEE_IGNORED_KEYWORDS = ['if', 'while', 'for', 'with', 'print', 'len', 'fn', 'def', 'function', 'class']
+
+DEFAULT_FFI_PATTERNS = [
+    r'#\[(?:no_mangle|wasm_bindgen)\].*?(?:fn|static)\s+([A-Za-z0-9_]+)',
+    r'(?:extern\s+"C"|EMSCRIPTEN_KEEPALIVE).*?\b([A-Za-z_][A-Za-z0-9_]*)\s*\(',
+    r'm\.def\(\s*"([^"]+)"'
+]
+DEFAULT_FFI_RG_PATTERN = "no_mangle|wasm_bindgen|extern \"C\"|EMSCRIPTEN_KEEPALIVE|PYBIND11_MODULE|m.def"
+
+# Global Configuration Dictionary
+CONFIG = {}
+
+def reset_config():
+    """Resets the global configuration dictionary to its default state."""
+    global CONFIG
+    CONFIG.clear()
+    CONFIG.update({
+        # CLI parameters
+        'format': 'md',
+        'max_lines': 1500,
+        'max_mb': 2.0,
+        'base_name': 'ContextLens',
+        'max_cache_size': 100,
+        'max_interface_depth': 15,
+        'disable_pruning': False,
+        'lsp_timeout': 45,
+        'no_language_server': False,
+        'skip_ffi': False,
+        'skip_macro_expansion': False,
+        'caller_depth': 1,
+        'callee_depth': 1,
+        'commit_range': None,
+
+        # Externalized language mappings & queries
+        'lang_map': DEFAULT_LANG_MAP.copy(),
+        'bindings': DEFAULT_BINDINGS.copy(),
+        'dependency_query_strings': DEFAULT_DEPENDENCY_QUERY_STRINGS.copy(),
+        'callee_query_strings': DEFAULT_CALLEE_QUERY_STRINGS.copy(),
+        
+        # Regex configurations
+        'func_decl_pattern': DEFAULT_FUNC_DECL_PATTERN,
+        'def_pattern_template': DEFAULT_DEF_PATTERN_TEMPLATE,
+        'cpp_def_pattern_template': DEFAULT_CPP_DEF_PATTERN_TEMPLATE,
+        'callee_pattern': DEFAULT_CALLEE_PATTERN,
+        'callee_ignored_keywords': DEFAULT_CALLEE_IGNORED_KEYWORDS.copy(),
+        
+        # FFI configurations
+        'ffi_patterns': DEFAULT_FFI_PATTERNS.copy(),
+        'ffi_rg_pattern': DEFAULT_FFI_RG_PATTERN,
+    })
+
+# Initialize configuration
+reset_config()
+
+def load_json_with_comments(filepath):
+    """Loads a JSON file, stripping single-line comments prefixed with '//' or '#'."""
+    with open(filepath, 'r', encoding='utf-8') as f:
+        lines = f.readlines()
+    
+    clean_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith('//') or stripped.startswith('#'):
+            continue
+        # Also remove trailing comments, but be careful not to strip comments inside string literals.
+        # For simplicity, we just strip comments on their own lines, which is typical for JSON configs.
+        clean_lines.append(line)
+        
+    return json.loads("".join(clean_lines))
+
+def generate_commented_config(active_options):
+    """Generates a JSONC string where only options specified in active_options are uncommented."""
+    lines = ["{"]
+    groups = {
+        "General Settings": [
+            'format', 'max_lines', 'max_mb', 'base_name', 'max_cache_size',
+            'max_interface_depth', 'disable_pruning', 'lsp_timeout',
+            'no_language_server', 'skip_ffi', 'skip_macro_expansion',
+            'caller_depth', 'callee_depth', 'commit_range'
+        ],
+        "Language Definitions": [
+            'lang_map', 'bindings', 'dependency_query_strings', 'callee_query_strings'
+        ],
+        "Regex Logic": [
+            'func_decl_pattern', 'def_pattern_template', 'cpp_def_pattern_template',
+            'callee_pattern', 'callee_ignored_keywords'
+        ],
+        "FFI Registry Settings": [
+            'ffi_patterns', 'ffi_rg_pattern'
+        ]
+    }
+    
+    for g_idx, (group_name, keys) in enumerate(groups.items()):
+        lines.append(f"  // === {group_name} ===")
+        for k_idx, key in enumerate(keys):
+            default_val = CONFIG[key]
+            is_active = key in active_options
+            
+            # Serialize the value nicely
+            val_str = json.dumps(default_val, indent=4)
+            if "\n" in val_str:
+                val_str = val_str.replace("\n", "\n  ")
+                if not is_active:
+                    val_str = val_str.replace("\n  ", "\n  // ")
+            
+            # Add comma if not the very last item of the very last group
+            is_last = (g_idx == len(groups) - 1) and (k_idx == len(keys) - 1)
+            comma = "," if not is_last else ""
+            
+            if is_active:
+                lines.append(f"  \"{key}\": {val_str}{comma}")
+            else:
+                lines.append(f"  // \"{key}\": {val_str}{comma}")
+        lines.append("")
+        
+    if lines[-1] == "":
+        lines.pop()
+    lines.append("}")
+    return "\n".join(lines)
+
+class ConfigDictProxy(dict):
+    def __init__(self, key):
+        self._key = key
+    def _get_dict(self):
+        return CONFIG[self._key]
+    def __getitem__(self, item):
+        return self._get_dict()[item]
+    def __setitem__(self, key, value):
+        self._get_dict()[key] = value
+    def __delitem__(self, key):
+        del self._get_dict()[key]
+    def __contains__(self, item):
+        return item in self._get_dict()
+    def __len__(self):
+        return len(self._get_dict())
+    def __iter__(self):
+        return iter(self._get_dict())
+    def get(self, key, default=None):
+        return self._get_dict().get(key, default)
+    def keys(self):
+        return self._get_dict().keys()
+    def values(self):
+        return self._get_dict().values()
+    def items(self):
+        return self._get_dict().items()
+    def copy(self):
+        return self._get_dict().copy()
+    def clear(self):
+        self._get_dict().clear()
+    def update(self, *args, **kwargs):
+        self._get_dict().update(*args, **kwargs)
+    def __repr__(self):
+        return repr(self._get_dict())
+

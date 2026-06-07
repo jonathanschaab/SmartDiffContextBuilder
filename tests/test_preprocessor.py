@@ -340,3 +340,39 @@ class TestPreprocessor(unittest.TestCase):
             callers = analyze_compile_commands(target_h, repo_root=original_repo)
             # Since relpath raised ValueError, the file mapping should fall back gracefully
             self.assertIsInstance(callers, dict)
+
+    def test_custom_ffi_patterns(self):
+        """Verify that build_ffi_registry respects custom ffi_rg_pattern and ffi_patterns in CONFIG."""
+        from context_builder.config import CONFIG, reset_config
+        orig_rg = CONFIG['ffi_rg_pattern']
+        orig_patterns = CONFIG['ffi_patterns'].copy()
+        
+        try:
+            # Setup custom FFI settings
+            CONFIG['ffi_rg_pattern'] = "MY_FFI_EXPORT"
+            CONFIG['ffi_patterns'] = [
+                r'MY_FFI_EXPORT\s+([A-Za-z0-9_]+)',
+                r'INVALID_REGEX_[[[' # Intentional invalid regex
+            ]
+            
+            code = (
+                "MY_FFI_EXPORT my_custom_func\n"
+                "extern \"C\" not_matched_func\n"
+            )
+            file_path = "ffi_test.rs"
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(code)
+                
+            cache = LRUFileCache(capacity=5)
+            cache.get_content(file_path)
+            
+            with patch("context_builder.preprocessor.warn_once") as mock_warn:
+                symbols = build_ffi_registry([file_path], file_cache=cache)
+                self.assertIn("my_custom_func", symbols)
+                self.assertNotIn("not_matched_func", symbols)
+                # Verify that warning was triggered for invalid regex
+                mock_warn.assert_called_once()
+                self.assertIn("ffi_regex_compile_fail", mock_warn.call_args[0][0])
+                
+        finally:
+            reset_config()

@@ -53,23 +53,34 @@ def trace_macro_expansion(func_name, repo_files, file_cache=None):
                         break
     return callers
 
+from .config import CONFIG
+
 def build_ffi_registry(repo_files, file_cache=None):
     if file_cache is None:
         file_cache = get_global_cache()
     ffi_symbols = set()
     print(" [FFI] Running pre-computation pass for cross-language boundaries...")
-    # We pass fixed_strings=False because FFI registry uses regex alternation (|) rather than literal matching
-    fast_files = ripgrep_filter(repo_files, "no_mangle|wasm_bindgen|extern \"C\"|EMSCRIPTEN_KEEPALIVE|PYBIND11_MODULE|m.def", fixed_strings=False) if HAS_RG else repo_files
     
+    ffi_rg_pattern = CONFIG.get('ffi_rg_pattern')
+    if HAS_RG and ffi_rg_pattern:
+        fast_files = ripgrep_filter(repo_files, ffi_rg_pattern, fixed_strings=False)
+    else:
+        fast_files = repo_files
+        
+    compiled_patterns = []
+    for pat in CONFIG.get('ffi_patterns', []):
+        try:
+            compiled_patterns.append(re.compile(pat, re.DOTALL))
+        except re.error as e:
+            warn_once("ffi_regex_compile_fail", f"Failed to compile FFI regex pattern '{pat}': {e}")
+
     for f in fast_files:
         content = file_cache.get_content(f)
-        for m in re.finditer(r'#\[(?:no_mangle|wasm_bindgen)\].*?(?:fn|static)\s+([A-Za-z0-9_]+)', content, re.DOTALL):
-            ffi_symbols.add(m.group(1))
-        # Support arbitrary return types, namespaces, pointers, references, etc.
-        for m in re.finditer(r'(?:extern\s+"C"|EMSCRIPTEN_KEEPALIVE).*?\b([A-Za-z_][A-Za-z0-9_]*)\s*\(', content, re.DOTALL):
-            ffi_symbols.add(m.group(1))
-        for m in re.finditer(r'm\.def\(\s*"([^"]+)"', content):
-            ffi_symbols.add(m.group(1))
+        for pattern in compiled_patterns:
+            for m in re.finditer(pattern, content):
+                # Ensure the pattern actually captured at least one group
+                if m.groups():
+                    ffi_symbols.add(m.group(1))
             
     if ffi_symbols: print(f" [FFI] Registered {len(ffi_symbols)} exported symbols.")
     return ffi_symbols
