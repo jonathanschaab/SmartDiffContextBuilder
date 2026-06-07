@@ -52,15 +52,29 @@ def _call_lsp_method(method, *args):
     try:
         sig = inspect.signature(method)
         params = list(sig.parameters.values())
-        if len(params) == 0:
+        required_params = [
+            p for p in params 
+            if p.default == inspect.Parameter.empty 
+            and p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+        ]
+        if len(required_params) == 0:
             return method()
-        else:
-            return method(*args[:len(params)])
+        
+        call_args = list(args)
+        while len(call_args) < len(required_params):
+            call_args.append(None)
+            
+        return method(*call_args[:len(required_params)])
     except Exception:
         try:
             return method(*args)
         except TypeError:
-            return method()
+            try:
+                return method()
+            except TypeError:
+                if len(args) > 0:
+                    return method(args[0])
+                return method(None)
 
 class MinimalLSPClient:
     def __init__(self, cmd):
@@ -174,14 +188,14 @@ class MinimalLSPClient:
                 # Try shutdown_async
                 if hasattr(self.client, "shutdown_async"):
                     try:
-                        res = _call_lsp_method(self.client.shutdown_async, None)
+                        res = _call_lsp_method(self.client.shutdown_async)
                         if inspect.isawaitable(res) or asyncio.isfuture(res):
                             await asyncio.wait_for(res, timeout=2.0)
                     except Exception:
                         pass
                 elif hasattr(self.client, "shutdown"):
                     try:
-                        res = _call_lsp_method(self.client.shutdown, None)
+                        res = _call_lsp_method(self.client.shutdown)
                         if inspect.isawaitable(res) or asyncio.isfuture(res):
                             await asyncio.wait_for(res, timeout=2.0)
                     except Exception:
@@ -190,7 +204,7 @@ class MinimalLSPClient:
                 # Try exit
                 if hasattr(self.client, "exit"):
                     try:
-                        res = _call_lsp_method(self.client.exit, None)
+                        res = _call_lsp_method(self.client.exit)
                         if inspect.isawaitable(res) or asyncio.isfuture(res):
                             await res
                     except Exception:

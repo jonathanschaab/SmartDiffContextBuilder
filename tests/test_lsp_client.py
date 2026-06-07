@@ -316,7 +316,7 @@ class TestLspClient(unittest.TestCase):
             
         self.assertFalse(success)
         self.assertIsNone(client.client)
-        mock_client.shutdown_async.assert_called_once_with(None)
+        mock_client.shutdown_async.assert_called_once_with()
         mock_client.stop.assert_called_once()
 
     @patch("context_builder.lsp_client.USE_LSP", True)
@@ -490,6 +490,9 @@ class TestLspClient(unittest.TestCase):
             res = _call_lsp_method(fallback_no_params, "ignored")
         self.assertEqual(res, "fallback")
         self.assertEqual(call_count, 1)
+        
+        # 4. Method taking 1 parameter, called with NO arguments (should pad with None)
+        self.assertIsNone(_call_lsp_method(one_param))
 
     @patch("context_builder.lsp_client.LanguageClient")
     def test_cleanup_synchronous_fallback_force_kills(self, mock_lc_class):
