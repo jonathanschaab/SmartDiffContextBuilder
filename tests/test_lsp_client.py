@@ -534,6 +534,59 @@ class TestLspClient(unittest.TestCase):
         self.assertFalse(success)
         self.assertIsNone(client.client)
 
+    def test_get_lsp_loop_recreates_when_closed(self):
+        import context_builder.lsp_client as lsp_client
+        
+        # Ensure we have a loop thread started
+        initial_loop = lsp_client.get_lsp_loop()
+        self.assertIsNotNone(initial_loop)
+        self.assertFalse(initial_loop.is_closed())
+        
+        # Artificially stop the thread loop and close it
+        thread_to_close = lsp_client._LOOP_THREAD
+        thread_to_close.loop.call_soon_threadsafe(thread_to_close.loop.stop)
+        thread_to_close.join(timeout=1.0)
+        thread_to_close.loop.close()
+        
+        # Calling get_lsp_loop should spin up a brand new loop thread
+        new_loop = lsp_client.get_lsp_loop()
+        self.assertIsNotNone(new_loop)
+        self.assertFalse(new_loop.is_closed())
+        self.assertNotEqual(initial_loop, new_loop)
+        
+        # Cleanup
+        lsp_client.cleanup_zombie_lsps()
+
+    @patch("context_builder.lsp_client.LanguageClient")
+    def test_lsp_client_start_io_task_cancelled_on_init_failure(self, mock_lc_class):
+        mock_client = MagicMock()
+        mock_lc_class.return_value = mock_client
+        
+        async def mock_start_io(*args, **kwargs):
+            try:
+                await asyncio.sleep(10.0)
+            except asyncio.CancelledError:
+                mock_client._start_io_cancelled = True
+                raise
+                
+        mock_client.start_io = mock_start_io
+        mock_client._start_io_cancelled = False
+        
+        async def mock_initialize_fail(*args, **kwargs):
+            raise RuntimeError("Init failed")
+        mock_client.initialize_async = mock_initialize_fail
+        
+        mock_client.shutdown_async = AsyncMock()
+        mock_client.stop = AsyncMock()
+        mock_client.stopped = False
+        
+        client = MinimalLSPClient(["some_lsp_binary"])
+        success = client.start()
+        
+        self.assertFalse(success)
+        self.assertTrue(getattr(mock_client, "_start_io_cancelled", False))
+
+
 
 
 

@@ -43,7 +43,7 @@ _LOOP_LOCK = threading.Lock()
 def get_lsp_loop():
     global _LOOP_THREAD
     with _LOOP_LOCK:
-        if _LOOP_THREAD is None or not _LOOP_THREAD.is_alive():
+        if _LOOP_THREAD is None or not _LOOP_THREAD.is_alive() or _LOOP_THREAD.loop.is_closed():
             _LOOP_THREAD = LSPEventLoopThread()
             _LOOP_THREAD.start()
         return _LOOP_THREAD.loop
@@ -89,24 +89,35 @@ class MinimalLSPClient:
             start_task = asyncio.create_task(
                 self.client.start_io(self.cmd[0], *self.cmd[1:], stderr=asyncio.subprocess.DEVNULL)
             )
-            # Yield control briefly to allow the subprocess to start or fail immediately
-            await asyncio.sleep(0.1)
-            if start_task.done():
-                # Raise any immediate startup exception (e.g. FileNotFoundError)
-                start_task.result()
-            
-            # Send initialize request
-            params = types.InitializeParams(
-                process_id=os.getpid(),
-                root_uri=Path('.').absolute().as_uri(),
-                capabilities=types.ClientCapabilities()
-            )
-            # 10 second timeout for initialization
-            await asyncio.wait_for(self.client.initialize_async(params), timeout=10.0)
-            
-            # Send initialized notification
-            self.client.initialized(types.InitializedParams())
-            return True
+            try:
+                # Yield control briefly to allow the subprocess to start or fail immediately
+                await asyncio.sleep(0.1)
+                if start_task.done():
+                    # Raise any immediate startup exception (e.g. FileNotFoundError)
+                    start_task.result()
+                
+                # Send initialize request
+                params = types.InitializeParams(
+                    process_id=os.getpid(),
+                    root_uri=Path('.').absolute().as_uri(),
+                    capabilities=types.ClientCapabilities()
+                )
+                # 10 second timeout for initialization
+                await asyncio.wait_for(self.client.initialize_async(params), timeout=10.0)
+                
+                # Send initialized notification
+                self.client.initialized(types.InitializedParams())
+                return True
+            except BaseException:
+                # Cancel the start_task to avoid leaking subprocesses / message loops
+                start_task.cancel()
+                try:
+                    await start_task
+                except Exception:
+                    pass
+                except asyncio.CancelledError:
+                    pass
+                raise
 
         try:
             fut = asyncio.run_coroutine_threadsafe(_async_start(), self.loop)
