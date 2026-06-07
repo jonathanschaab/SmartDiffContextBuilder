@@ -1,1 +1,3 @@
 pytest>=8.0.0
+pygls>=2.1.1
+lsprotocol>=2025.0.0
