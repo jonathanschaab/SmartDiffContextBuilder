@@ -11,7 +11,7 @@ except ImportError:
 
 LANG_MAP = {
     '.rs': 'rust', '.js': 'javascript', '.ts': 'typescript', '.py': 'python',
-    '.cpp': 'cpp', '.hpp': 'cpp', '.c': 'c', '.go': 'go', '.pl': 'perl',
+    '.cpp': 'cpp', '.hpp': 'cpp', '.c': 'c', '.h': 'cpp', '.go': 'go', '.pl': 'perl',
     '.mk': 'makefile', '.cmake': 'cmake', '.sh': 'bash', '.bat': 'batch'
 }
 
@@ -31,7 +31,9 @@ class AstEngine:
             '.js': ('tree_sitter_javascript', 'language'),
             '.ts': ('tree_sitter_typescript', 'language_typescript'),
             '.c':  ('tree_sitter_c', 'language'),
-            '.cpp': ('tree_sitter_cpp', 'language')
+            '.cpp': ('tree_sitter_cpp', 'language'),
+            '.hpp': ('tree_sitter_cpp', 'language'),
+            '.h':   ('tree_sitter_cpp', 'language')
         }
         
         for ext, (module_name, func_name) in bindings.items():
@@ -361,7 +363,7 @@ def find_callee_definition(callee_name, all_repo_files, file_cache=None):
         is_python = (ext == '.py')
         for idx, line in enumerate(lines):
             clean_line = strip_strings_and_comments(line, is_python)
-            if re.search(pattern, clean_line) or (ext in ['.c', '.cpp', '.hpp'] and re.search(cpp_pattern, clean_line)):
+            if re.search(pattern, clean_line) or (ext in ['.c', '.cpp', '.hpp', '.h'] and re.search(cpp_pattern, clean_line)):
                 return file_path, idx + 1
     return None, None
 

@@ -148,6 +148,7 @@ def cleanup_zombie_lsps():
             except Exception:
                 try: client.proc.kill()
                 except OSError: pass
+    LSP_INSTANCES.clear()
 
 atexit.register(cleanup_zombie_lsps)
 
@@ -161,6 +162,8 @@ def get_lsp_references(file_path, line_num, func_name, timeout, max_depth, disab
     configs = {
         '.cpp': ["clangd", "--background-index"],
         '.c': ["clangd", "--background-index"],
+        '.hpp': ["clangd", "--background-index"],
+        '.h': ["clangd", "--background-index"],
         '.rs': ["rust-analyzer"],
         '.py': ["pylsp"],
         '.ts': ["typescript-language-server", "--stdio"]

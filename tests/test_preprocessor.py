@@ -251,3 +251,25 @@ class TestPreprocessor(unittest.TestCase):
                                  "Path must not start with '..' when repo_root is provided")
             finally:
                 os.chdir(old_cwd)
+
+    def test_trace_macro_expansion_header_file(self):
+        # Create a header file (.h)
+        header_path = "my_header.h"
+        with open(header_path, "w") as f:
+            f.write("#define MY_MACRO 10\n")
+
+        # Fake clang -E output
+        expanded = (
+            f'# 1 "{header_path}"\n'
+            "void my_func() {}\n"
+        )
+        
+        mock_cache = MagicMock()
+        mock_cache.get_lines.return_value = ["#define MY_MACRO 10"]
+        
+        with patch("context_builder.preprocessor.run_command", return_value=expanded), \
+             patch("context_builder.preprocessor.os.path.exists", return_value=True):
+            result = trace_macro_expansion("my_func", [header_path], file_cache=mock_cache)
+            
+        self.assertIn("my_header.h", result)
+        self.assertEqual(result["my_header.h"][0]["code"], "// [Macro Expansion Link] #define MY_MACRO 10")

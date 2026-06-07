@@ -157,3 +157,16 @@ class TestLspClient(unittest.TestCase):
                          f"Expected LSP to be queried at line {expected_line}, got {called_line}")
         self.assertEqual(called_char, expected_char,
                          f"Expected char offset {expected_char}, got {called_char}")
+
+    @patch("subprocess.Popen")
+    def test_cleanup_zombie_lsps_clears_instances(self, mock_popen):
+        from context_builder.lsp_client import LSP_INSTANCES, cleanup_zombie_lsps
+        mock_client = MagicMock()
+        mock_client.proc = MagicMock()
+        LSP_INSTANCES[".py"] = mock_client
+        
+        cleanup_zombie_lsps()
+        
+        self.assertEqual(len(LSP_INSTANCES), 0)
+        mock_client._send.assert_called_with({"jsonrpc": "2.0", "method": "exit"})
+        mock_client.proc.terminate.assert_called_once()

@@ -302,3 +302,22 @@ class TestAstEngine(unittest.TestCase):
         self.assertEqual(result, [])
         # extract_callees_ast should have been called exactly once
         mock_ast_fn.assert_called_once()
+
+    def test_find_callee_definition_in_header(self):
+        # Create a header file (.h) with a function definition
+        code_h = (
+            "void my_header_func() {\n"
+            "    int y = 10;\n"
+            "}\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "my_header.h")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code_h)
+
+        # Seed cache
+        self.cache.get_content(file_path)
+
+        # Find the definition of my_header_func
+        path, line = find_callee_definition("my_header_func", [file_path], file_cache=self.cache)
+        self.assertEqual(path, file_path)
+        self.assertEqual(line, 1)

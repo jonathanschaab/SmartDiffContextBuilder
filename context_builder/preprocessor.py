@@ -14,7 +14,7 @@ def trace_macro_expansion(func_name, repo_files, file_cache=None):
     
     for f in fast_files:
         ext = os.path.splitext(f)[1]
-        if ext not in ['.c', '.cpp', '.hpp']: continue
+        if ext not in ['.c', '.cpp', '.hpp', '.h']: continue
         
         # Pass 1: Expand
         expanded_code = run_command(["clang", "-E", f], timeout=5)

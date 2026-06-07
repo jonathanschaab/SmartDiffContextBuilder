@@ -37,22 +37,19 @@ def parse_and_resolve_range(range_str):
     range_str = range_str.strip()
     
     # Format 4: -N (implied HEAD as end)
-    m = re.match(r'^-(\d+)$', range_str)
-    if m:
+    if m := re.match(r'^-(\d+)$', range_str):
         end_ref = "HEAD"
         count = int(m.group(1))
         start_ref = f"HEAD~{count}"
     
     # Format 3: END-N
-    elif re.match(r'^(.+)-(\d+)$', range_str):
-        m = re.match(r'^(.+)-(\d+)$', range_str)
+    elif m := re.match(r'^(.+)-(\d+)$', range_str):
         end_ref = m.group(1)
         count = int(m.group(2))
         start_ref = f"{end_ref}~{count}"
 
     # Format 2: START+N
-    elif re.match(r'^(.+)\+(\d+)$', range_str):
-        m = re.match(r'^(.+)\+(\d+)$', range_str)
+    elif m := re.match(r'^(.+)\+(\d+)$', range_str):
         start_ref = m.group(1)
         count = int(m.group(2))
         
