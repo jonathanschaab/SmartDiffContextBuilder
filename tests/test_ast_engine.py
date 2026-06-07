@@ -653,3 +653,27 @@ class TestAstEngine(unittest.TestCase):
             query_arg = mock_lang.query.call_args[0][0]
             self.assertIn("foo", query_arg)
             self.assertIn("[a-z]{1,3}", query_arg)
+
+    def test_trace_lexical_dependencies_regex_strips_comments_and_strings(self):
+        """Verify that trace_lexical_dependencies_regex ignores matches inside comments and strings."""
+        file_path = os.path.join(self.temp_dir.name, "regex_strip.py")
+        content = (
+            "def test_func():\n"
+            "    # This is a comment calling target_func()\n"
+            "    x = 'target_func() in a string'\n"
+            "    y = target_func()  # Actual call\n"
+        )
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        self.cache.get_content(file_path)
+
+        callers = trace_lexical_dependencies_regex(
+            "target_func", [file_path], file_cache=self.cache
+        )
+        self.assertIn(file_path, callers)
+        # It should match only the actual call on line 4, not lines 2 and 3
+        occurrences = callers[file_path]
+        self.assertEqual(len(occurrences), 1)
+        self.assertEqual(occurrences[0]["line"], 4)
+        self.assertEqual(occurrences[0]["code"], "y = target_func()  # Actual call")
+

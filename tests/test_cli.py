@@ -767,4 +767,129 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(CONFIG["lang_map"][".direct"], "direct_lang")
         reset_config()
 
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    def test_cli_config_file_loading_non_list_for_list_key(self, mock_parse_args):
+        """Verify that loading a config file with a non-list value for a list key
+
+        exits with an error.
+        """
+        from context_builder.config import reset_config
+        import tempfile
+        import shutil
+        reset_config()
+
+        # Write invalid config to temp file
+        temp_dir = tempfile.mkdtemp()
+        temp_path = os.path.join(temp_dir, "invalid_config.json")
+        try:
+            with open(temp_path, "w", encoding="utf-8") as f:
+                f.write('{"callee_ignored_keywords": "not_a_list_string"}')
+
+            mock_args = CliNamespace()
+            mock_args.config = temp_path
+            mock_parse_args.return_value = mock_args
+
+            with self.assertRaises(SystemExit) as cm:
+                main()
+            self.assertEqual(cm.exception.code, 1)
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            reset_config()
+
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    def test_cli_json_override_non_list_for_list_key(self, mock_parse_args):
+        """Verify that a CLI override with a non-list JSON string for a list key
+
+        exits with an error.
+        """
+        from context_builder.config import reset_config
+        reset_config()
+
+        mock_args = CliNamespace()
+        mock_args.callee_ignored_keywords = '"not_a_list_string"'
+        mock_parse_args.return_value = mock_args
+
+        with self.assertRaises(SystemExit) as cm:
+            main()
+        self.assertEqual(cm.exception.code, 1)
+        reset_config()
+
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    @patch("context_builder.cli.run_scan")
+    def test_cli_partial_namespace_safety(self, mock_run_scan, mock_parse_args):
+        """Verify that main() executes safely when passed a partial namespace
+
+        missing several typical attributes (no AttributeError raised).
+        """
+        from context_builder.config import reset_config
+        reset_config()
+
+        # Create a raw namespace with only format defined, missing all other keys
+        mock_args = argparse.Namespace()
+        mock_args.format = "json"
+        mock_parse_args.return_value = mock_args
+
+        # Calling main should run fine because of getattr default fallbacks
+        try:
+            main()
+        except AttributeError as e:
+            self.fail(f"main() raised AttributeError: {e}")
+
+        reset_config()
+
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    def test_cli_config_file_loading_invalid_primitive_types(self, mock_parse_args):
+        """Verify that config overrides with mismatched primitive types cause error exits."""
+        from context_builder.config import reset_config
+        reset_config()
+
+        import tempfile
+        import shutil
+
+        temp_dir = tempfile.mkdtemp()
+        try:
+            # Test string instead of boolean
+            temp_path = os.path.join(temp_dir, "invalid_config_bool.json")
+            with open(temp_path, "w", encoding="utf-8") as f:
+                f.write('{"disable_pruning": "false"}')
+            mock_args = CliNamespace()
+            mock_args.config = temp_path
+            mock_parse_args.return_value = mock_args
+            with self.assertRaises(SystemExit) as cm:
+                main()
+            self.assertEqual(cm.exception.code, 1)
+
+            # Test boolean instead of integer
+            temp_path2 = os.path.join(temp_dir, "invalid_config_int.json")
+            with open(temp_path2, "w", encoding="utf-8") as f:
+                f.write('{"max_lines": true}')
+            mock_args = CliNamespace()
+            mock_args.config = temp_path2
+            mock_parse_args.return_value = mock_args
+            with self.assertRaises(SystemExit) as cm:
+                main()
+            self.assertEqual(cm.exception.code, 1)
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            reset_config()
+
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    def test_cli_json_override_invalid_primitive_types(self, mock_parse_args):
+        """Verify that CLI JSON overrides with mismatched types cause error exits."""
+        from context_builder.config import reset_config
+        reset_config()
+
+        # Test string instead of float (max_mb)
+        mock_args = CliNamespace()
+        mock_args.max_mb = '"not_a_float"'
+        mock_parse_args.return_value = mock_args
+        with self.assertRaises(SystemExit) as cm:
+            main()
+        self.assertEqual(cm.exception.code, 1)
+
+        reset_config()
+
+
+
+
 

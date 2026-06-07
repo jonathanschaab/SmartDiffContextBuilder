@@ -1,17 +1,44 @@
+"""Module sys_utils provides system utility functions for running commands and filtering files."""
+
 import os
 import subprocess
 import sys
 
 WARNED_MISSING_DEPS = set()
 
+
 def warn_once(key, message):
+    """Print a notice warning once per key to avoid stdout pollution.
+
+    Args:
+        key (str): Unique key for the warning.
+        message (str): Warning message to display.
+    """
     if key not in WARNED_MISSING_DEPS:
         print(f"\n[Notice] {message}")
         WARNED_MISSING_DEPS.add(key)
 
+
 def run_command(cmd, exit_on_fail=False, timeout=None):
+    """Run a system command and return its standard output.
+
+    Args:
+        cmd (list): Command and arguments to run.
+        exit_on_fail (bool): If True, exits program on process error or command missing.
+        timeout (float, optional): Timeout in seconds.
+
+    Returns:
+        str: Decoded standard output.
+    """
     try:
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True, timeout=timeout)
+        res = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True,
+            timeout=timeout,
+        )
         return res.stdout
     except subprocess.TimeoutExpired:
         warn_once(f"timeout_{cmd[0]}", f"Command '{' '.join(cmd)}' timed out.")
@@ -31,41 +58,84 @@ def run_command(cmd, exit_on_fail=False, timeout=None):
             sys.exit(1)
         return ""
 
+
 def get_git_diff_files(start_ref=None, end_ref=None):
-    # Gets all files modified in the specified commit range, or current diff
+    """Get all files modified in the specified commit range, or current diff.
+
+    Args:
+        start_ref (str, optional): Starting git ref.
+        end_ref (str, optional): Ending git ref.
+
+    Returns:
+        list: List of modified files that exist.
+    """
     if start_ref and end_ref:
         out = run_command(["git", "diff", "--name-only", start_ref, end_ref])
     else:
         out = run_command(["git", "diff", "--name-only", "HEAD"])
     return [f for f in out.splitlines() if f.strip() and os.path.exists(f)]
 
+
 def get_git_tracked_files():
+    """Get list of all git tracked files in the current repository.
+
+    Returns:
+        list: List of tracked file paths.
+    """
     stdout = run_command(["git", "ls-files"], exit_on_fail=True)
     return [l.strip() for l in stdout.splitlines() if l.strip()]
 
+
 HAS_RG = bool(run_command(["rg", "--version"]))
 
+
 def ripgrep_filter(files, token, fixed_strings=True):
+    """Filter list of files to only those containing the given token using ripgrep.
+
+    Args:
+        files (list): List of files to filter.
+        token (str): Search token/pattern.
+        fixed_strings (bool): Treat token as literal string instead of regex.
+
+    Returns:
+        list: Filtered list of files.
+    """
     try:
         cmd = ["rg", "-l"]
         if fixed_strings:
             # -F treats the token as a literal fixed string rather than a regular expression
             cmd.append("-F")
         cmd.append(token)
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10)
+        res = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+            timeout=10,
+        )
         # rg exits with 0 if matches are found, 1 if no matches are found, and 2 if an error occurs.
         if res.returncode == 0:
             # Normalize path separators to forward slashes to prevent mismatches on Windows
             rg_files = {f.replace("\\", "/") for f in res.stdout.splitlines()}
             return [f for f in files if f.replace("\\", "/") in rg_files]
-        elif res.returncode == 1:
+        if res.returncode == 1:
             return []
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         pass
-    # Fallback to scanning all files if ripgrep execution fails unexpectedly (e.g. timeout, missing binary, permissions)
+    # Fallback to scanning all files if ripgrep execution fails unexpectedly
     return files
 
+
 def is_in_repo(file_path):
+    """Check if file_path is within the current repository and is not ignored.
+
+    Args:
+        file_path (str): File path to verify.
+
+    Returns:
+        bool: True if the file exists and is in the repo, False otherwise.
+    """
     if not file_path:
         return False
     # Normalize paths
@@ -80,18 +150,29 @@ def is_in_repo(file_path):
         # Safely verify if the file resides within the repository root using commonpath
         common = os.path.commonpath([repo_root, abs_path])
         # Compare normalized absolute paths case-insensitively for Windows compatibility
-        return os.path.abspath(common).lower() == repo_root.lower() and os.path.exists(file_path)
-    except Exception:
+        return (
+            os.path.abspath(common).lower() == repo_root.lower()
+            and os.path.exists(file_path)
+        )
+    except Exception:  # pylint: disable=broad-exception-caught
         return False
 
+
 def get_comment_prefix(file_path):
-    """Returns the correct comment prefix (e.g. #, //, REM) based on the file extension or name."""
+    """Return the correct comment prefix based on the file extension or name.
+
+    Args:
+        file_path (str): Path to the file.
+
+    Returns:
+        str: Comment prefix (e.g., "#", "//", "REM").
+    """
     base = os.path.basename(file_path)
-    if base.lower() == 'makefile' or base.startswith('Makefile'):
+    if base.lower() == "makefile" or base.startswith("Makefile"):
         return "#"
     ext = os.path.splitext(file_path)[1].lower()
-    if ext in ('.py', '.sh', '.pl', '.mk', '.cmake'):
+    if ext in (".py", ".sh", ".pl", ".mk", ".cmake"):
         return "#"
-    elif ext == '.bat':
+    if ext == ".bat":
         return "REM"
     return "//"
