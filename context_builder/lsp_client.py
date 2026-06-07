@@ -185,7 +185,9 @@ def get_lsp_references(file_path, line_num, func_name, timeout, max_depth, disab
     if not client: return None
 
     lines = file_cache.get_lines(file_path)
-    if line_num > len(lines): return []
+    if line_num > len(lines):
+        # Must return an empty dictionary to match callers mapping type and avoid AttributeErrors in callers.items() iteration
+        return {}
 
     # line_num points to the start of the function definition block, which may be a
     # decorator (e.g. @my_decorator).  Scan forward up to DECORATOR_LOOKAHEAD lines

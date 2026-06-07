@@ -305,7 +305,8 @@ def run_scan(args, start_ref=None, end_ref=None, output_dir=".", repo_root=None)
                 if not ref_lines or def_start >= len(ref_lines): continue
 
                 func_chunk = "".join(ref_lines[def_start:def_end])
-                subunits = split_massive_block_ast(func_chunk, def_file, args.max_lines - 100)
+                # Defensive check: Ensure max_lines budget is at least 1 to avoid negative slicing/truncation behavior
+                subunits = split_massive_block_ast(func_chunk, def_file, max(1, args.max_lines - 100))
                 for sub in subunits:
                     vm.local_callees.append({
                         "file": def_file,

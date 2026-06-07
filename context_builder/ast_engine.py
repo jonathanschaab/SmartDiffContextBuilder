@@ -172,6 +172,9 @@ def trace_lexical_dependencies_ast(func_name, repo_files, file_cache=None):
             lines = file_cache.get_lines(file_path)
             
             for capture_node, capture_name in captures:
+                # Defensive check: Ensure the captured node has a parent to avoid AttributeError.
+                if capture_node.parent is None:
+                    continue
                 # Ensure the actual function name is in the text (either as the caller or an argument)
                 node_text = source_bytes[capture_node.parent.start_byte:capture_node.parent.end_byte].decode('utf-8', errors='ignore')
                 if func_name not in node_text: continue
@@ -236,6 +239,8 @@ def trace_lexical_dependencies_regex(func_name, repo_files, file_cache=None):
 
 def split_massive_block_ast(source_text, file_path, max_lines):
     """Replaces dumb slicing by using AST nodes to cleanly truncate bodies."""
+    # Ensure max_lines is at least 1 to prevent negative indexing or invalid slicing bounds
+    max_lines = max(1, max_lines)
     lines = source_text.splitlines()
     if len(lines) <= max_lines: return [{"suffix": "", "text": source_text}]
 

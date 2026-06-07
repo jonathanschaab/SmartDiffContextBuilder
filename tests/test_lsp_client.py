@@ -227,3 +227,19 @@ class TestLspClient(unittest.TestCase):
         self.assertEqual(client.msg_queue.qsize(), 1)
         queued_msg = client.msg_queue.get()
         self.assertEqual(queued_msg.get("id"), 4)
+
+    @patch("context_builder.lsp_client.USE_LSP", True)
+    @patch("context_builder.lsp_client.LSP_INSTANCES")
+    def test_get_lsp_references_out_of_bounds(self, mock_instances):
+        from context_builder.lsp_client import get_lsp_references
+        
+        mock_client = MagicMock()
+        mock_instances.__contains__.return_value = True
+        mock_instances.get.return_value = mock_client
+        
+        mock_file_cache = MagicMock()
+        mock_file_cache.get_lines.return_value = []
+        
+        # Query line 5 (out of bounds). It must return {} instead of [] to avoid AttributeError
+        res = get_lsp_references("empty.cpp", 5, "my_func", 5.0, 100, False, file_cache=mock_file_cache)
+        self.assertEqual(res, {})

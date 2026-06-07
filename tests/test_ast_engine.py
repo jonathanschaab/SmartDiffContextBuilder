@@ -398,3 +398,37 @@ class TestAstEngine(unittest.TestCase):
         # Should only find 1 caller (line 2), not line 1 (the definition)
         self.assertEqual(len(callers[file_path]), 1)
         self.assertEqual(callers[file_path][0]["line"], 2)
+
+    def test_split_massive_block_ast_negative_max_lines(self):
+        source = "def foo():\n    pass\n"
+        # Passing negative max_lines (e.g. -50)
+        res = split_massive_block_ast(source, "test.py", max_lines=-50)
+        self.assertEqual(len(res), 1)
+        self.assertTrue("Omitted" in res[0]["text"] or "Truncated" in res[0]["suffix"])
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_trace_lexical_dependencies_ast_parent_none(self, mock_ast_engine):
+        from context_builder.ast_engine import trace_lexical_dependencies_ast
+        mock_parser = MagicMock()
+        mock_tree = MagicMock()
+        mock_capture_node = MagicMock()
+        mock_capture_node.parent = None
+        mock_capture_node.start_point = (0, 0)
+        
+        mock_query = MagicMock()
+        mock_query.captures.return_value = [(mock_capture_node, "id")]
+        
+        mock_parser.parse.return_value = mock_tree
+        mock_ast_engine.parsers = {".py": mock_parser}
+        mock_ast_engine.languages = {".py": MagicMock()}
+        mock_ast_engine.languages[".py"].query.return_value = mock_query
+        mock_ast_engine.is_supported.return_value = True
+        
+        cache = LRUFileCache(capacity=5)
+        cache.get_content = MagicMock(return_value="my_func()")
+        cache.get_bytes = MagicMock(return_value=b"my_func()")
+        cache.get_lines = MagicMock(return_value=["my_func()"])
+        
+        # It should run without raising AttributeError due to capture_node.parent being None
+        res = trace_lexical_dependencies_ast("my_func", ["test.py"], file_cache=cache)
+        self.assertEqual(res, {})
