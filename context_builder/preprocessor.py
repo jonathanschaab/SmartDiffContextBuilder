@@ -144,10 +144,16 @@ def analyze_compile_commands(target_file, file_cache=None, repo_root=None):
                 norm_ref = abs_ref_file.replace("\\", "/").lower()
                 norm_root = os.path.abspath(repo_root).replace("\\", "/").lower()
                 if norm_ref.startswith(norm_root):
-                    # Extract relative path from original repo root
-                    rel_to_root = os.path.relpath(abs_ref_file, repo_root)
-                    # Map to the current temporary worktree CWD
-                    abs_ref_file = os.path.abspath(os.path.join(os.getcwd(), rel_to_root))
+                    # Extract relative path from original repo root. Wrap in try...except ValueError
+                    # to handle Windows drive mismatches if the temporary worktree (CWD) and the
+                    # original repository (or some headers referenced in compile_commands.json) are on different drives.
+                    try:
+                        rel_to_root = os.path.relpath(abs_ref_file, repo_root)
+                        # Map to the current temporary worktree CWD
+                        abs_ref_file = os.path.abspath(os.path.join(os.getcwd(), rel_to_root))
+                    except ValueError:
+                        # Fallback: keep the absolute path if cross-drive paths on Windows make relpath impossible.
+                        pass
             
             if abs_ref_file == abs_target_file:
                 continue

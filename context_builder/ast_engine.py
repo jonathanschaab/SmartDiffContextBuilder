@@ -349,8 +349,10 @@ def extract_callees_ast(file_path, start_line, end_line, ext, file_cache):
                 callees.add(node.text.decode('utf-8', errors='ignore'))
     except AttributeError as ae:
         raise ae
-    except Exception:
-        pass
+    except Exception as e:
+        # Propagate other tree-sitter failures or query syntax exceptions as a RuntimeError
+        # so that extract_callees can catch them and fall back to the regex parser.
+        raise RuntimeError(f"AST callee extraction failed: {e}") from e
     return callees
 
 def extract_callees_regex(file_path, start_line, end_line, file_cache):
@@ -376,8 +378,9 @@ def extract_callees(file_path, start_line, end_line, file_cache=None):
             # function genuinely has no callees).  Only fall back to regex when the
             # AST parser itself raised an error (e.g. old py-tree-sitter without .text).
             return list(callees)
-        except AttributeError as e:
-            # Catch AttributeError to gracefully fall back on systems using older py-tree-sitter versions
+        except (AttributeError, RuntimeError) as e:
+            # Catch AttributeError and RuntimeError to gracefully fall back on systems using
+            # older py-tree-sitter versions or when query syntax / tree-sitter errors occur.
             print(f"\n[ContextLens Warning] {e} Falling back to regex-based callee extraction.")
     return list(extract_callees_regex(file_path, start_line, end_line, file_cache))
 

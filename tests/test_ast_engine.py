@@ -451,3 +451,37 @@ class TestAstEngine(unittest.TestCase):
         # It should run successfully without raising an IndexError.
         res = split_massive_block_ast(source, "test.py", max_lines=1)
         self.assertEqual(len(res), 1)
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_extract_callees_runtime_error_fallback(self, mock_ast_engine):
+        """Verify that when AST callee extraction raises an unexpected Exception,
+        it propagates as a RuntimeError, which is caught by extract_callees
+        to trigger the regex-based fallback extraction."""
+        mock_ast_engine.is_supported.return_value = True
+        
+        mock_lang = MagicMock()
+        # Raise an exception (e.g. tree-sitter QuerySyntaxError or similar) when compiling query
+        mock_lang.query.side_effect = Exception("Query syntax error")
+        mock_ast_engine.languages = {".py": mock_lang}
+        
+        mock_parser = MagicMock()
+        mock_parser.parse.return_value = MagicMock()
+        mock_ast_engine.parsers = {".py": mock_parser}
+
+        # Code calling some functions
+        code = (
+            "def foo():\n"
+            "    bar()\n"
+            "    baz()\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "fallback.py")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+        self.cache.get_content(file_path)
+
+        # Call extract_callees. It should catch the RuntimeError and fall back to regex
+        callees = extract_callees(file_path, 0, 3, file_cache=self.cache)
+        
+        # Verify it successfully extracted the callees via regex fallback
+        self.assertIn("bar", callees)
+        self.assertIn("baz", callees)

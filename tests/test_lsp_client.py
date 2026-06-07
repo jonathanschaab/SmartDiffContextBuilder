@@ -306,3 +306,38 @@ class TestLspClient(unittest.TestCase):
         # It should skip both without throwing exceptions and return an empty dict
         res = get_lsp_references("empty.cpp", 1, "my_func", 5.0, 100, False, file_cache=mock_file_cache)
         self.assertEqual(res, {})
+
+    @patch("context_builder.lsp_client.USE_LSP", True)
+    @patch("context_builder.lsp_client.LSP_INSTANCES")
+    def test_get_lsp_references_destructor_boundary(self, mock_instances):
+        """Verify that C++ destructors starting with '~' (a non-word character)
+        are matched correctly by dynamically adjusting word boundaries,
+        allowing the LSP cursor to land on the correct character offset."""
+        mock_client = MagicMock()
+        mock_instances.__contains__.return_value = True
+        mock_instances.get.return_value = mock_client
+        mock_client.get_references.return_value = []
+
+        lines = [
+            "class MyClass {\n",
+            "    MyClass::~MyClass() {}\n", # line 2 (1-based), '~' is preceded by ':'
+        ]
+        func_name = "~MyClass"
+        expected_line = 2
+        expected_char = lines[1].find(func_name)
+
+        mock_file_cache = MagicMock()
+        mock_file_cache.get_lines.return_value = lines
+
+        with patch("os.path.splitext", return_value=("", ".cpp")):
+            get_lsp_references(
+                "dummy.cpp", line_num=2, func_name=func_name,
+                timeout=1, max_depth=5, disable_pruning=True,
+                file_cache=mock_file_cache
+            )
+
+        mock_client.get_references.assert_called_once()
+        call_args = mock_client.get_references.call_args
+        _, called_line, called_char = call_args[0][0], call_args[0][1], call_args[0][2]
+        self.assertEqual(called_line, expected_line)
+        self.assertEqual(called_char, expected_char)

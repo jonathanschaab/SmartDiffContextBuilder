@@ -199,7 +199,14 @@ def get_lsp_references(file_path, line_num, func_name, timeout, max_depth, disab
     # (e.g. "run") cannot match inside a longer identifier (e.g. "runner" or
     # "decorator_run"), which would produce an incorrect character offset and
     # send the LSP cursor to the wrong symbol.
-    func_name_pattern = re.compile(r'\b' + re.escape(func_name) + r'\b')
+    #
+    # We dynamically apply the word boundary \b constraint. If the adjacent character
+    # in func_name is a non-word character (e.g. C++ destructor starting with '~' or C++
+    # operators), applying \b would fail if it is preceded or followed by a non-word
+    # character like a colon or space (e.g. MyClass::~MyClass or operator++).
+    lead_b = r'\b' if func_name and (func_name[0].isalnum() or func_name[0] == '_') else ''
+    trail_b = r'\b' if func_name and (func_name[-1].isalnum() or func_name[-1] == '_') else ''
+    func_name_pattern = re.compile(lead_b + re.escape(func_name) + trail_b)
     for offset in range(DECORATOR_LOOKAHEAD):
         candidate_idx = line_num - 1 + offset  # 0-based
         if candidate_idx >= len(lines):

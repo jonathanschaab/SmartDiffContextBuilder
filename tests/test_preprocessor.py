@@ -313,3 +313,30 @@ class TestPreprocessor(unittest.TestCase):
             self.assertIn("src/other.cpp", callers)
         finally:
             os.chdir(old_cwd)
+
+    @patch("context_builder.preprocessor.os.path.relpath")
+    def test_analyze_compile_commands_repo_root_drive_mismatch(self, mock_relpath):
+        """Verify that when repo_root is provided and os.path.relpath raises ValueError
+        due to drive mismatch, the exception is caught and it handles it gracefully."""
+        mock_relpath.side_effect = ValueError("path is on another drive")
+
+        original_repo = os.path.abspath("original_repo")
+        os.makedirs(os.path.join(original_repo, "src"), exist_ok=True)
+        ref_cpp = os.path.join(original_repo, "src", "main.cpp")
+        target_h = os.path.join(original_repo, "src", "main.h")
+
+        db = [
+            {
+                "directory": os.path.join(original_repo, "src"),
+                "command": f"clang++ -c {ref_cpp}",
+                "file": ref_cpp
+            }
+        ]
+        with open("compile_commands.json", "w") as f:
+            json.dump(db, f)
+
+        # Passing repo_root, which normally attempts mapping but fails on relpath
+        with patch("os.path.exists", return_value=True):
+            callers = analyze_compile_commands(target_h, repo_root=original_repo)
+            # Since relpath raised ValueError, the file mapping should fall back gracefully
+            self.assertIsInstance(callers, dict)
