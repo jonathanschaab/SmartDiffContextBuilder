@@ -10,6 +10,7 @@ from urllib.request import url2pathname
 import queue
 import threading
 import asyncio
+import inspect
 from pygls.lsp.client import LanguageClient
 import lsprotocol.types as types
 from .sys_utils import warn_once
@@ -25,7 +26,13 @@ class LSPEventLoopThread(threading.Thread):
         
     def run(self):
         asyncio.set_event_loop(self.loop)
-        self.loop.run_forever()
+        try:
+            self.loop.run_forever()
+        finally:
+            try:
+                self.loop.close()
+            except Exception:
+                pass
         
     def stop(self):
         self.loop.call_soon_threadsafe(self.loop.stop)
@@ -70,13 +77,12 @@ class MinimalLSPClient:
         try:
             return fut.result(timeout=11.0)
         except Exception as e:
-            fut.cancel()
             warn_once("lsp_fail", f"Failed to start LSP {self.cmd[0]}: {e}")
             self.cleanup()
             return False
 
     def get_references(self, file_path, line_num, char_num, timeout) -> list:
-        if not self.client or self.client.stopped:
+        if not self.client or getattr(self.client, "stopped", False):
             return []
 
         async def _async_get_refs():
@@ -145,19 +151,41 @@ class MinimalLSPClient:
             return
 
         async def _async_cleanup():
-            if not self.client.stopped:
-                try:
-                    await asyncio.wait_for(self.client.shutdown_async(None), timeout=2.0)
-                except Exception:
-                    pass
-                try:
-                    self.client.exit(None)
-                except Exception:
-                    pass
-                try:
-                    await asyncio.wait_for(self.client.stop(), timeout=2.0)
-                except Exception:
-                    pass
+            # Check stopped status safely
+            is_stopped = getattr(self.client, "stopped", False)
+            if not is_stopped:
+                # Try shutdown_async
+                if hasattr(self.client, "shutdown_async"):
+                    try:
+                        await asyncio.wait_for(self.client.shutdown_async(None), timeout=2.0)
+                    except Exception:
+                        pass
+                elif hasattr(self.client, "shutdown"):
+                    try:
+                        res = self.client.shutdown(None)
+                        if inspect.isawaitable(res) or asyncio.isfuture(res):
+                            await asyncio.wait_for(res, timeout=2.0)
+                    except Exception:
+                        pass
+                
+                # Try exit
+                if hasattr(self.client, "exit"):
+                    try:
+                        res = self.client.exit(None)
+                        if inspect.isawaitable(res) or asyncio.isfuture(res):
+                            await res
+                    except Exception:
+                        pass
+                
+                # Try stop
+                if hasattr(self.client, "stop"):
+                    try:
+                        res = self.client.stop()
+                        if inspect.isawaitable(res) or asyncio.isfuture(res):
+                            await asyncio.wait_for(res, timeout=2.0)
+                    except Exception:
+                        pass
+            
             # Force kill subprocess if still running
             server = getattr(self.client, "_server", None)
             if server and server.returncode is None:

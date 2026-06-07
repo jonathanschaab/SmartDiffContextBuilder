@@ -396,3 +396,31 @@ class TestLspClient(unittest.TestCase):
         self.assertEqual(refs[0]["targetUri"], "file:///path/to/file.cpp")
         self.assertEqual(refs[0]["targetSelectionRange"]["start"]["line"], 20)
         self.assertEqual(refs[0]["targetSelectionRange"]["start"]["character"], 2)
+
+    def test_cleanup_handles_missing_attributes(self):
+        # Create a mock client that has absolutely no lsp/pygls lifecycle attributes (e.g. stopped, shutdown_async, exit, stop)
+        mock_client = object()  # Bare object with no attributes
+        
+        client = MinimalLSPClient(["some_lsp_binary"])
+        client.client = mock_client
+        
+        # Verify that calling cleanup does not raise any AttributeError and finishes successfully
+        try:
+            client.cleanup()
+        except Exception as e:
+            self.fail(f"cleanup raised an exception on bare client object: {e}")
+            
+        self.assertIsNone(client.client)
+
+    @patch("context_builder.lsp_client.LanguageClient")
+    def test_get_references_handles_missing_stopped_property(self, mock_lc_class):
+        mock_client = MagicMock(spec=[])  # A mock that raises AttributeError on any access
+        mock_lc_class.return_value = mock_client
+        
+        client = MinimalLSPClient(["some_lsp_binary"])
+        client.client = mock_client
+        
+        # Mock get_references to verify it returns [] safely instead of raising AttributeError
+        refs = client.get_references("file.py", 10, 0, timeout=1.0)
+        self.assertEqual(refs, [])
+
