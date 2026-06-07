@@ -400,7 +400,17 @@ class TestCLI(unittest.TestCase):
         mock_run_scan.side_effect = RuntimeError("Original scan error")
         
         # Simulating git worktree remove failing in the finally block
-        mock_sub_run.side_effect = lambda *args, **kwargs: MagicMock(returncode=1) if "remove" in args[0] else MagicMock(returncode=0)
+        # We also need to recreate the directory if git worktree add is run in the test because
+        # it was deleted via os.rmdir in cli.py, and os.chdir requires it to exist.
+        def sub_run_side_effect_robust(*args, **kwargs):
+            cmd = args[0] if args else kwargs.get("args", [])
+            if isinstance(cmd, list) and "worktree" in cmd:
+                if "add" in cmd:
+                    os.makedirs(cmd[4], exist_ok=True)
+                if "remove" in cmd:
+                    return MagicMock(returncode=1)
+            return MagicMock(returncode=0)
+        mock_sub_run.side_effect = sub_run_side_effect_robust
         mock_rmtree.side_effect = PermissionError("Permission denied on Windows cleanup")
 
         with self.assertRaises(RuntimeError) as ctx:
@@ -444,6 +454,8 @@ class TestCLI(unittest.TestCase):
             cmd = args[0] if args else kwargs.get("args", [])
             if isinstance(cmd, list) and "worktree" in cmd:
                 call_order.append(f"subprocess.run:{' '.join(cmd)}")
+                if "add" in cmd:
+                    os.makedirs(cmd[4], exist_ok=True)
             return MagicMock(returncode=0)
         mock_sub_run.side_effect = sub_run_side_effect
 

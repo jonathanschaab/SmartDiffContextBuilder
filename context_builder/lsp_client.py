@@ -1,9 +1,11 @@
 import os
+import re
 import time
 import json
 import atexit
 import subprocess
 import urllib.parse
+from pathlib import Path
 from urllib.request import url2pathname
 import queue
 import threading
@@ -32,7 +34,12 @@ class MinimalLSPClient:
 
             init_msg = {
                 "jsonrpc": "2.0", "id": self.req_id, "method": "initialize",
-                "params": {"processId": os.getpid(), "rootUri": f"file://{os.path.abspath('.')}", "capabilities": {}}
+                # Use Path.absolute().as_uri() instead of a manual f-string.  On Windows,
+                # os.path.abspath returns a backslash path, producing an invalid URI like
+                # file://C:\path\to\file that strict LSP servers (clangd, rust-analyzer)
+                # reject.  Path.as_uri() always emits forward slashes and three leading
+                # slashes (file:///C:/path/to/file), which is correct on every platform.
+                "params": {"processId": os.getpid(), "rootUri": Path('.').absolute().as_uri(), "capabilities": {}}
             }
             self._send(init_msg)
             
@@ -103,7 +110,9 @@ class MinimalLSPClient:
         req = {
             "jsonrpc": "2.0", "id": req_id, "method": "textDocument/references",
             "params": {
-                "textDocument": {"uri": f"file://{os.path.abspath(file_path)}"},
+                # Use Path.absolute().as_uri() for the same reason as rootUri above:
+                # manual f-string formatting produces invalid URIs on Windows.
+                "textDocument": {"uri": Path(file_path).absolute().as_uri()},
                 "position": {"line": line_num - 1, "character": char_num},
                 "context": {"includeDeclaration": False}
             }
@@ -177,14 +186,19 @@ def get_lsp_references(file_path, line_num, func_name, timeout, max_depth, disab
     DECORATOR_LOOKAHEAD = 10
     actual_line = line_num  # 1-based
     char_idx = -1
+    # Use a word-boundary regex instead of str.find() so that a short func_name
+    # (e.g. "run") cannot match inside a longer identifier (e.g. "runner" or
+    # "decorator_run"), which would produce an incorrect character offset and
+    # send the LSP cursor to the wrong symbol.
+    func_name_pattern = re.compile(r'\b' + re.escape(func_name) + r'\b')
     for offset in range(DECORATOR_LOOKAHEAD):
         candidate_idx = line_num - 1 + offset  # 0-based
         if candidate_idx >= len(lines):
             break
-        pos = lines[candidate_idx].find(func_name)
-        if pos != -1:
+        m = func_name_pattern.search(lines[candidate_idx])
+        if m:
             actual_line = line_num + offset
-            char_idx = pos
+            char_idx = m.start()
             break
     if char_idx == -1:
         # func_name not found in any nearby line; fall back to the original line at col 0

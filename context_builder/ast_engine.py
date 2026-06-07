@@ -189,13 +189,19 @@ def trace_lexical_dependencies_regex(func_name, repo_files, file_cache=None):
     callers = {}
     if not func_name or len(func_name) < 3: return callers
     fast_files = ripgrep_filter(repo_files, func_name) if HAS_RG else repo_files
+    # Pre-compile the word-boundary pattern once so we don't recompile it per line.
+    # \b prevents partial-word matches: e.g. func_name="my_func" must not match
+    # "my_func_other", which would flood the caller list with false positives.
+    call_pattern = re.compile(r'\b' + re.escape(func_name) + r'\b')
+    def_pattern  = re.compile(r'\b(?:fn|def|function|sub|func|class|macro)\s+' + re.escape(func_name))
     for file_path in fast_files:
         if os.path.splitext(file_path)[1] not in LANG_MAP or file_path.endswith('.md'): continue
         content = file_cache.get_content(file_path)
-        if func_name in content:
-            pattern = r'\b(fn|def|function|sub|func|class|macro)\s+' + re.escape(func_name)
+        if call_pattern.search(content):
             for idx, line in enumerate(content.splitlines()):
-                if func_name in line and not re.search(pattern, line):
+                # Match with word boundaries to avoid substring false positives,
+                # and exclude definition lines (they are not callers).
+                if call_pattern.search(line) and not def_pattern.search(line):
                     if file_path not in callers: callers[file_path] = []
                     callers[file_path].append({"line": idx + 1, "code": line.strip()})
     return callers

@@ -22,8 +22,12 @@ def trace_macro_expansion(func_name, repo_files, file_cache=None):
         
         # Pass 2: Map
         expanded_lines = expanded_code.splitlines()
+        # Use a word-boundary regex so that a short func_name (e.g. "init") does
+        # not match inside longer identifiers (e.g. "reinitialize"), which would
+        # create spurious Macro Expansion Link entries.
+        func_pattern = re.compile(r'\b' + re.escape(func_name) + r'\b')
         for idx, line in enumerate(expanded_lines):
-            if func_name in line:
+            if func_pattern.search(line):
                 # Walk backward to find linemarker
                 for marker_idx in range(idx, -1, -1):
                     if expanded_lines[marker_idx].startswith("#"):

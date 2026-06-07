@@ -343,8 +343,15 @@ def main():
             sys.exit(1)
 
         original_cwd = os.getcwd()
-        # Create a unique temp folder inside the system temp directory for the worktree checkout
+        # Create a unique path in the system temp directory for the worktree checkout.
+        # We immediately remove the empty directory created by mkdtemp because several
+        # Git versions (older ones or specific configurations) refuse to run
+        # 'git worktree add' on a path that already exists — even if it is completely
+        # empty — with: fatal: '<path>' already exists.
+        # Deleting it first and passing the same path to worktree add ensures maximum
+        # cross-version compatibility.
         temp_worktree_dir = tempfile.mkdtemp(prefix="context_lens_worktree_")
+        os.rmdir(temp_worktree_dir)
         
         print(f"\n[ContextLens] Setting up temporary worktree for commit {end_sha[:8]}...")
         # Check out end_sha in a detached state to avoid branch checkout conflicts
