@@ -577,4 +577,72 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(start, "sha_HEAD")
         self.assertEqual(end, "sha_HEAD")
 
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    @patch("context_builder.cli.parse_and_resolve_range")
+    @patch("context_builder.cli.run_scan")
+    @patch("context_builder.cli.cleanup_zombie_lsps")
+    @patch("subprocess.run")
+    @patch("shutil.rmtree")
+    @patch("shutil.copy")
+    @patch("os.path.exists")
+    def test_cli_worktree_copies_coverage_xml(
+        self, mock_exists, mock_copy, mock_rmtree, mock_sub_run, mock_cleanup_lsps, mock_run_scan, mock_resolve_range, mock_parse_args
+    ):
+        """Verify that coverage.xml is copied to the temporary worktree if it exists in the original repo root."""
+        mock_args = MagicMock()
+        mock_args.commit_range = "-1"
+        mock_parse_args.return_value = mock_args
+        mock_resolve_range.return_value = ("sha_start", "sha_end")
+
+        # Mock HEAD parse return to not match end_sha (so it doesn't bypass worktree creation)
+        def sub_run_side_effect(*args, **kwargs):
+            cmd = args[0] if args else kwargs.get("args", [])
+            if isinstance(cmd, list) and "worktree" in cmd:
+                if "add" in cmd:
+                    os.makedirs(cmd[4], exist_ok=True)
+            res = MagicMock(returncode=0)
+            res.stdout = "different_head_sha\n"
+            return res
+        mock_sub_run.side_effect = sub_run_side_effect
+
+        # Mock existence of compile_commands.json and coverage.xml
+        mock_exists.side_effect = lambda path: "compile_commands.json" in path or "coverage.xml" in path
+
+        main()
+
+        # Check that shutil.copy was called for both compile_commands.json and coverage.xml
+        copy_calls = [call[0][0] for call in mock_copy.call_args_list]
+        self.assertTrue(any("compile_commands.json" in c for c in copy_calls))
+        self.assertTrue(any("coverage.xml" in c for c in copy_calls))
+
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    @patch("context_builder.cli.parse_and_resolve_range")
+    @patch("context_builder.cli.run_scan")
+    @patch("subprocess.run")
+    def test_worktree_bypassed_if_head_matches_end_sha(
+        self, mock_sub_run, mock_run_scan, mock_resolve_range, mock_parse_args
+    ):
+        """Verify that temporary worktree creation is bypassed if HEAD matches end_sha."""
+        mock_args = MagicMock()
+        mock_args.commit_range = "-1"
+        mock_parse_args.return_value = mock_args
+        
+        # Resolve range returns "sha_end" as the end SHA
+        mock_resolve_range.return_value = ("sha_start", "sha_end")
+        
+        # Mock git rev-parse HEAD subprocess call to return "sha_end"
+        mock_res = MagicMock(returncode=0)
+        mock_res.stdout = "sha_end\n"
+        mock_sub_run.return_value = mock_res
+        
+        main()
+        
+        # Verify that git worktree add was NOT called
+        for call in mock_sub_run.call_args_list:
+            cmd = call[0][0]
+            self.assertFalse("worktree" in cmd and "add" in cmd)
+            
+        # Verify that run_scan was called directly
+        mock_run_scan.assert_called_once_with(mock_args, start_ref="sha_start", end_ref="sha_end")
+
 

@@ -356,79 +356,102 @@ def main():
             sys.exit(1)
 
         original_cwd = os.getcwd()
-        # Create a unique path in the system temp directory for the worktree checkout.
-        # We immediately remove the empty directory created by mkdtemp because several
-        # Git versions (older ones or specific configurations) refuse to run
-        # 'git worktree add' on a path that already exists — even if it is completely
-        # empty — with: fatal: '<path>' already exists.
-        # Deleting it first and passing the same path to worktree add ensures maximum
-        # cross-version compatibility.
-        temp_worktree_dir = tempfile.mkdtemp(prefix="context_lens_worktree_")
-        os.rmdir(temp_worktree_dir)
         
-        print(f"\n[ContextLens] Setting up temporary worktree for commit {end_sha[:8]}...")
-        # Check out end_sha in a detached state to avoid branch checkout conflicts
-        add_res = subprocess.run(
-            ["git", "worktree", "add", "--detach", temp_worktree_dir, end_sha],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
-        if add_res.returncode != 0:
-            print(f"\n[ContextLens Error] Failed to create git worktree: {add_res.stderr.strip()}")
-            try:
-                shutil.rmtree(temp_worktree_dir, ignore_errors=True)
-            except Exception:
-                pass
-            sys.exit(1)
-
+        # Optimize: If the current HEAD matches the resolved end_sha, we can bypass
+        # creating a temporary worktree. The workspace files are already in the correct state.
         try:
-            # Copy compile_commands.json if it exists in the original repo root.
-            # Wrapping this file copy and chdir inside the try...finally block ensures that
-            # if either fails (e.g. disk full, permission error, or invalid path),
-            # the git worktree is guaranteed to be cleaned up and not leaked.
-            compile_commands_path = os.path.join(original_cwd, "compile_commands.json")
-            if os.path.exists(compile_commands_path):
-                shutil.copy(compile_commands_path, os.path.join(temp_worktree_dir, "compile_commands.json"))
+            current_head = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=True
+            ).stdout.strip()
+        except Exception:
+            current_head = None
 
-            os.chdir(temp_worktree_dir)
-            # Run scan inside the worktree checking out end_ref and diffing against start_ref.
-            # Pass original_cwd as repo_root so that compile_commands.json paths are resolved
-            # relative to the *project* root, not the temp worktree directory.
-            run_scan(args, start_ref=start_sha, end_ref=end_sha, output_dir=original_cwd, repo_root=original_cwd)
-        finally:
-            os.chdir(original_cwd)
-            print(f"\n[ContextLens] Cleaning up temporary worktree...")
-            # Stop all background LSP server processes BEFORE removing the worktree directory.
-            # LSP servers hold open file handles to files inside temp_worktree_dir.  On Windows,
-            # those open handles prevent git worktree remove and shutil.rmtree from succeeding.
-            # Calling cleanup_zombie_lsps() here ensures all handles are released first.
+        if current_head and end_sha == current_head:
+            print(f"\n[ContextLens] Current HEAD matches final commit {end_sha[:8]}. Bypassing temporary worktree...")
+            run_scan(args, start_ref=start_sha, end_ref=end_sha)
+        else:
+            # Create a unique path in the system temp directory for the worktree checkout.
+            # We immediately remove the empty directory created by mkdtemp because several
+            # Git versions (older ones or specific configurations) refuse to run
+            # 'git worktree add' on a path that already exists — even if it is completely
+            # empty — with: fatal: '<path>' already exists.
+            # Deleting it first and passing the same path to worktree add ensures maximum
+            # cross-version compatibility.
+            temp_worktree_dir = tempfile.mkdtemp(prefix="context_lens_worktree_")
+            os.rmdir(temp_worktree_dir)
+            
+            print(f"\n[ContextLens] Setting up temporary worktree for commit {end_sha[:8]}...")
+            # Check out end_sha in a detached state to avoid branch checkout conflicts
+            add_res = subprocess.run(
+                ["git", "worktree", "add", "--detach", temp_worktree_dir, end_sha],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            if add_res.returncode != 0:
+                print(f"\n[ContextLens Error] Failed to create git worktree: {add_res.stderr.strip()}")
+                try:
+                    shutil.rmtree(temp_worktree_dir, ignore_errors=True)
+                except Exception:
+                    pass
+                sys.exit(1)
+
             try:
-                cleanup_zombie_lsps()
-            except Exception:
-                pass
-            # Wrap each cleanup step in an individual try...except block to ensure robust cleanup
-            # and prevent any cleanup failures (like locked files on Windows) from masking the original exception.
-            try:
-                subprocess.run(
-                    ["git", "worktree", "remove", "--force", temp_worktree_dir],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL
-                )
-            except Exception:
-                pass
-            try:
-                subprocess.run(
-                    ["git", "worktree", "prune"],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL
-                )
-            except Exception:
-                pass
-            try:
-                shutil.rmtree(temp_worktree_dir, ignore_errors=True)
-            except Exception:
-                pass
+                # Copy compile_commands.json if it exists in the original repo root.
+                # Wrapping this file copy and chdir inside the try...finally block ensures that
+                # if either fails (e.g. disk full, permission error, or invalid path),
+                # the git worktree is guaranteed to be cleaned up and not leaked.
+                compile_commands_path = os.path.join(original_cwd, "compile_commands.json")
+                if os.path.exists(compile_commands_path):
+                    shutil.copy(compile_commands_path, os.path.join(temp_worktree_dir, "compile_commands.json"))
+                
+                # Copy coverage.xml if it exists in the original repo root to preserve test coverage data.
+                coverage_xml_path = os.path.join(original_cwd, "coverage.xml")
+                if os.path.exists(coverage_xml_path):
+                    shutil.copy(coverage_xml_path, os.path.join(temp_worktree_dir, "coverage.xml"))
+
+                os.chdir(temp_worktree_dir)
+                # Run scan inside the worktree checking out end_ref and diffing against start_ref.
+                # Pass original_cwd as repo_root so that compile_commands.json paths are resolved
+                # relative to the *project* root, not the temp worktree directory.
+                run_scan(args, start_ref=start_sha, end_ref=end_sha, output_dir=original_cwd, repo_root=original_cwd)
+            finally:
+                os.chdir(original_cwd)
+                print(f"\n[ContextLens] Cleaning up temporary worktree...")
+                # Stop all background LSP server processes BEFORE removing the worktree directory.
+                # LSP servers hold open file handles to files inside temp_worktree_dir.  On Windows,
+                # those open handles prevent git worktree remove and shutil.rmtree from succeeding.
+                # Calling cleanup_zombie_lsps() here ensures all handles are released first.
+                try:
+                    cleanup_zombie_lsps()
+                except Exception:
+                    pass
+                # Wrap each cleanup step in an individual try...except block to ensure robust cleanup
+                # and prevent any cleanup failures (like locked files on Windows) from masking the original exception.
+                try:
+                    subprocess.run(
+                        ["git", "worktree", "remove", "--force", temp_worktree_dir],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL
+                    )
+                except Exception:
+                    pass
+                try:
+                    subprocess.run(
+                        ["git", "worktree", "prune"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL
+                    )
+                except Exception:
+                    pass
+                try:
+                    shutil.rmtree(temp_worktree_dir, ignore_errors=True)
+                except Exception:
+                    pass
     else:
         # Run scan directly in current workspace
         run_scan(args)
