@@ -56,6 +56,7 @@ class AstEngine:
             
         for ext, val in CONFIG['bindings'].items():
             if not isinstance(val, (list, tuple)) or len(val) != 2:
+                warn_once(f"invalid_binding_{ext}", f"Invalid tree-sitter binding configuration for {ext}. Expected list/tuple of (module_name, function_name), but got: {val}")
                 continue
             module_name, func_name = val
             try:
@@ -185,10 +186,7 @@ def trace_lexical_dependencies_ast(func_name, repo_files, file_cache=None):
         q_str = query_strings.get(ext)
         if not q_str: continue
         
-        try:
-            q_str = q_str.format(escaped_func_name=escaped_func_name)
-        except KeyError:
-            pass
+        q_str = q_str.replace("{escaped_func_name}", escaped_func_name)
         
         try:
             query = AST_ENGINE.languages[ext].query(q_str)
@@ -409,8 +407,8 @@ def find_callee_definition(callee_name, all_repo_files, file_cache=None):
     escaped_callee = re.escape(callee_name)
 
     # Precise patterns for definitions
-    pattern = CONFIG['def_pattern_template'].format(lead_b=lead_b, escaped_callee=escaped_callee, trail_b=trail_b)
-    cpp_pattern = CONFIG['cpp_def_pattern_template'].format(lead_b=lead_b, escaped_callee=escaped_callee, trail_b=trail_b)
+    pattern = CONFIG['def_pattern_template'].replace("{lead_b}", lead_b).replace("{escaped_callee}", escaped_callee).replace("{trail_b}", trail_b)
+    cpp_pattern = CONFIG['cpp_def_pattern_template'].replace("{lead_b}", lead_b).replace("{escaped_callee}", escaped_callee).replace("{trail_b}", trail_b)
 
     for file_path in candidate_files:
         ext = os.path.splitext(file_path)[1]

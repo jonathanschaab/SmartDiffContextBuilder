@@ -52,3 +52,23 @@ class TestConfig(unittest.TestCase):
         # Check inactive fields are commented out
         self.assertIn('// "max_mb": 2.0', config_str)
         self.assertIn('// "base_name": "ContextLens"', config_str)
+
+    def test_config_dict_proxy(self):
+        from context_builder.config import ConfigDictProxy
+        proxy = ConfigDictProxy("lang_map")
+        
+        # Test basic MutableMapping functionality
+        self.assertEqual(proxy[".py"], "python")
+        
+        # Test pop and setdefault (which would bypass dict subclasses if not delegated properly)
+        val = proxy.pop(".py")
+        self.assertEqual(val, "python")
+        self.assertNotIn(".py", proxy)
+        
+        default_val = proxy.setdefault(".py", "python_new")
+        self.assertEqual(default_val, "python_new")
+        self.assertEqual(proxy[".py"], "python_new")
+        
+        # Test update
+        proxy.update({".py": "python"})
+        self.assertEqual(proxy[".py"], "python")

@@ -374,11 +374,8 @@ def main():
     
     args = parser.parse_args()
     
-    def is_mock(obj):
-        return type(obj).__name__ in ('Mock', 'MagicMock', 'NonCallableMock', 'NonCallableMagicMock')
-
     # 1. Load config file if specified
-    if args.config and isinstance(args.config, str) and not is_mock(args.config):
+    if args.config and isinstance(args.config, str):
         try:
             loaded_cfg = load_json_with_comments(args.config)
             for k, v in loaded_cfg.items():
@@ -419,12 +416,14 @@ def main():
     
     for arg_name, cfg_key in cli_mappings.items():
         val = getattr(args, arg_name)
-        if val is not None and not is_mock(val):
+        if val is not None:
             CONFIG[cfg_key] = val
             active_overrides.append(cfg_key)
             
     # Helper to parse CLI JSON overrides
     def parse_cli_json(val, name):
+        if not isinstance(val, str):
+            return val
         try:
             return json.loads(val)
         except Exception as e:
@@ -442,7 +441,7 @@ def main():
     
     for arg_name, cfg_key in json_mappings.items():
         val = getattr(args, arg_name)
-        if val is not None and not is_mock(val):
+        if val is not None:
             parsed = parse_cli_json(val, f"--{arg_name.replace('_', '-')}")
             if isinstance(CONFIG[cfg_key], dict) and isinstance(parsed, dict):
                 CONFIG[cfg_key].update(parsed)
@@ -454,7 +453,7 @@ def main():
     AST_ENGINE._initialized = False
 
     # 3. Create config file if requested
-    if args.create_config and isinstance(args.create_config, str) and not is_mock(args.create_config):
+    if args.create_config and isinstance(args.create_config, str):
         try:
             config_content = generate_commented_config(active_overrides)
             parent_dir = os.path.dirname(os.path.abspath(args.create_config))

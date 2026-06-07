@@ -2,7 +2,12 @@ import os
 import unittest
 from unittest.mock import patch, MagicMock, ANY
 import sys
+import argparse
 from context_builder.cli import main
+
+class CliNamespace(argparse.Namespace):
+    def __getattr__(self, name):
+        return None
 
 class TestCLI(unittest.TestCase):
     @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
@@ -16,7 +21,7 @@ class TestCLI(unittest.TestCase):
         self, mock_vm_cls, mock_get_lsp, mock_bounds, mock_run, mock_git_tracked, mock_git_diff, mock_parse_args
     ):
         # 1. Setup argparse mock options
-        mock_args = MagicMock()
+        mock_args = CliNamespace()
         mock_args.format = "md"
         mock_args.max_lines = 100
         mock_args.max_mb = 1.0
@@ -104,7 +109,7 @@ class TestCLI(unittest.TestCase):
     def test_cli_hunk_header_parsing(
         self, mock_vm_cls, mock_bounds, mock_run, mock_git_tracked, mock_git_diff, mock_parse_args
     ):
-        mock_args = MagicMock()
+        mock_args = CliNamespace()
         mock_args.format = "md"
         mock_args.max_lines = 100
         mock_args.max_mb = 1.0
@@ -171,7 +176,7 @@ class TestCLI(unittest.TestCase):
     def test_cli_callee_depth_bfs_traversal(
         self, mock_vm_cls, mock_find_def, mock_extract_callees, mock_bounds, mock_run, mock_git_tracked, mock_git_diff, mock_parse_args
     ):
-        mock_args = MagicMock()
+        mock_args = CliNamespace()
         mock_args.format = "md"
         mock_args.max_lines = 1000
         mock_args.max_mb = 1.0
@@ -263,7 +268,7 @@ class TestCLI(unittest.TestCase):
     def test_cli_decorator_and_multiline_parsing(
         self, mock_vm_cls, mock_bounds, mock_run, mock_git_tracked, mock_git_diff, mock_parse_args
     ):
-        mock_args = MagicMock()
+        mock_args = CliNamespace()
         mock_args.format = "md"
         mock_args.max_lines = 1000
         mock_args.max_mb = 1.0
@@ -338,7 +343,7 @@ class TestCLI(unittest.TestCase):
     def test_cli_function_name_extraction_comments_and_strings(
         self, mock_vm_cls, mock_bounds, mock_run, mock_git_tracked, mock_git_diff, mock_parse_args
     ):
-        mock_args = MagicMock()
+        mock_args = CliNamespace()
         mock_args.format = "md"
         mock_args.max_lines = 1000
         mock_args.max_mb = 1.0
@@ -390,7 +395,7 @@ class TestCLI(unittest.TestCase):
     def test_cli_robust_worktree_cleanup(
         self, mock_rmtree, mock_sub_run, mock_run_scan, mock_resolve_range, mock_parse_args
     ):
-        mock_args = MagicMock()
+        mock_args = CliNamespace()
         mock_args.commit_range = "-3"
         mock_parse_args.return_value = mock_args
         
@@ -436,7 +441,7 @@ class TestCLI(unittest.TestCase):
         the cleanup to fail.  This test records the order of all side-effectful
         calls and asserts that cleanup_zombie_lsps() precedes worktree removal.
         """
-        mock_args = MagicMock()
+        mock_args = CliNamespace()
         mock_args.commit_range = "-1"
         mock_parse_args.return_value = mock_args
         mock_resolve_range.return_value = ("sha_start", "sha_end")
@@ -537,7 +542,7 @@ class TestCLI(unittest.TestCase):
         self, mock_exists, mock_copy, mock_rmtree, mock_sub_run, mock_cleanup_lsps, mock_run_scan, mock_resolve_range, mock_parse_args
     ):
         """If shutil.copy raises an exception, the worktree must still be cleaned up."""
-        mock_args = MagicMock()
+        mock_args = CliNamespace()
         mock_args.commit_range = "-1"
         mock_parse_args.return_value = mock_args
         mock_resolve_range.return_value = ("sha_start", "sha_end")
@@ -589,7 +594,7 @@ class TestCLI(unittest.TestCase):
         self, mock_exists, mock_copy, mock_rmtree, mock_sub_run, mock_cleanup_lsps, mock_run_scan, mock_resolve_range, mock_parse_args
     ):
         """Verify that coverage.xml is copied to the temporary worktree if it exists in the original repo root."""
-        mock_args = MagicMock()
+        mock_args = CliNamespace()
         mock_args.commit_range = "-1"
         mock_parse_args.return_value = mock_args
         mock_resolve_range.return_value = ("sha_start", "sha_end")
@@ -623,7 +628,7 @@ class TestCLI(unittest.TestCase):
         self, mock_sub_run, mock_run_scan, mock_resolve_range, mock_parse_args
     ):
         """Verify that temporary worktree creation is bypassed if HEAD matches end_sha."""
-        mock_args = MagicMock()
+        mock_args = CliNamespace()
         mock_args.commit_range = "-1"
         mock_parse_args.return_value = mock_args
         
@@ -668,20 +673,8 @@ class TestCLI(unittest.TestCase):
             config_path = f.name
             
         try:
-            mock_args = MagicMock()
+            mock_args = CliNamespace()
             mock_args.config = config_path
-            # Set other args to None so they don't override the config file
-            for attr in ["format", "max_lines", "max_mb", "base_name", "max_cache_size",
-                         "max_interface_depth", "disable_pruning", "lsp_timeout",
-                         "no_language_server", "skip_ffi", "skip_macro_expansion",
-                         "caller_depth", "callee_depth", "commit_range",
-                         "create_config", "lang_map", "bindings",
-                         "dependency_query_strings", "callee_query_strings",
-                         "func_decl_pattern", "def_pattern_template",
-                         "cpp_def_pattern_template", "callee_pattern",
-                         "callee_ignored_keywords", "ffi_patterns", "ffi_rg_pattern"]:
-                setattr(mock_args, attr, None)
-                
             mock_parse_args.return_value = mock_args
             
             main()
@@ -705,23 +698,9 @@ class TestCLI(unittest.TestCase):
         from context_builder.config import CONFIG, reset_config
         reset_config()
         
-        mock_args = MagicMock()
-        mock_args.config = None
+        mock_args = CliNamespace()
         mock_args.max_lines = 3300
         mock_args.lang_map = '{".overridden": "overridden_lang"}'
-        mock_args.create_config = None
-        
-        # Set other args to None
-        for attr in ["format", "max_mb", "base_name", "max_cache_size",
-                     "max_interface_depth", "disable_pruning", "lsp_timeout",
-                     "no_language_server", "skip_ffi", "skip_macro_expansion",
-                     "caller_depth", "callee_depth", "commit_range",
-                     "bindings", "dependency_query_strings", "callee_query_strings",
-                     "func_decl_pattern", "def_pattern_template",
-                     "cpp_def_pattern_template", "callee_pattern",
-                     "callee_ignored_keywords", "ffi_patterns", "ffi_rg_pattern"]:
-            setattr(mock_args, attr, None)
-            
         mock_parse_args.return_value = mock_args
         
         main()
@@ -747,23 +726,10 @@ class TestCLI(unittest.TestCase):
             temp_path = f.name
             
         try:
-            mock_args = MagicMock()
-            mock_args.config = None
+            mock_args = CliNamespace()
             mock_args.create_config = temp_path
             mock_args.max_lines = 1234
             mock_args.format = "json"
-            
-            # Set other args to None
-            for attr in ["max_mb", "base_name", "max_cache_size",
-                         "max_interface_depth", "disable_pruning", "lsp_timeout",
-                         "no_language_server", "skip_ffi", "skip_macro_expansion",
-                         "caller_depth", "callee_depth", "commit_range",
-                         "lang_map", "bindings", "dependency_query_strings", "callee_query_strings",
-                         "func_decl_pattern", "def_pattern_template",
-                         "cpp_def_pattern_template", "callee_pattern",
-                         "callee_ignored_keywords", "ffi_patterns", "ffi_rg_pattern"]:
-                setattr(mock_args, attr, None)
-                
             mock_parse_args.return_value = mock_args
             
             with self.assertRaises(SystemExit) as cm:
@@ -784,5 +750,21 @@ class TestCLI(unittest.TestCase):
         finally:
             os.remove(temp_path)
             reset_config()
+
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    @patch("context_builder.cli.run_scan")
+    def test_parse_cli_json_type_guard(self, mock_run_scan, mock_parse_args):
+        """Verify that parse_cli_json doesn't crash if passed a python dict or list directly."""
+        from context_builder.config import CONFIG, reset_config
+        reset_config()
+        
+        mock_args = CliNamespace()
+        mock_args.lang_map = {".direct": "direct_lang"}
+        mock_parse_args.return_value = mock_args
+        
+        main()
+        
+        self.assertEqual(CONFIG["lang_map"][".direct"], "direct_lang")
+        reset_config()
 
 

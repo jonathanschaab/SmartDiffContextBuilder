@@ -1,7 +1,7 @@
 import os
 import tempfile
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, ANY
 import json
 from context_builder.cache import LRUFileCache
 import context_builder.preprocessor as _preprocessor_mod
@@ -374,5 +374,33 @@ class TestPreprocessor(unittest.TestCase):
                 mock_warn.assert_called_once()
                 self.assertIn("ffi_regex_compile_fail", mock_warn.call_args[0][0])
                 
+        finally:
+            reset_config()
+
+    def test_ffi_patterns_safety(self):
+        """Verify that build_ffi_registry doesn't crash on null or non-string FFI patterns."""
+        from context_builder.config import CONFIG, reset_config
+        reset_config()
+        
+        file_path = "ffi_safety.rs"
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write("fn test() {}\n")
+            
+        cache = LRUFileCache(capacity=5)
+        cache.get_content(file_path)
+        
+        try:
+            # 1. Null pattern test
+            CONFIG['ffi_patterns'] = None
+            symbols = build_ffi_registry([file_path], file_cache=cache)
+            self.assertEqual(len(symbols), 0)
+            
+            # 2. Non-string pattern test
+            CONFIG['ffi_patterns'] = [123, True, "fn\\s+([a-z]+)"]
+            with patch("context_builder.preprocessor.warn_once") as mock_warn:
+                symbols = build_ffi_registry([file_path], file_cache=cache)
+                self.assertIn("test", symbols)
+                # Should warn about non-string patterns
+                mock_warn.assert_any_call("ffi_pattern_non_string", ANY)
         finally:
             reset_config()

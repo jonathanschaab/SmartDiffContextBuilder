@@ -1,6 +1,7 @@
 import os
 import re
 import json
+from collections.abc import MutableMapping
 
 # Defaults
 DEFAULT_LANG_MAP = {
@@ -164,7 +165,7 @@ def generate_commented_config(active_options):
     lines.append("}")
     return "\n".join(lines)
 
-class ConfigDictProxy(dict):
+class ConfigDictProxy(MutableMapping):
     def __init__(self, key):
         self._key = key
     def _get_dict(self):
@@ -175,26 +176,10 @@ class ConfigDictProxy(dict):
         self._get_dict()[key] = value
     def __delitem__(self, key):
         del self._get_dict()[key]
-    def __contains__(self, item):
-        return item in self._get_dict()
-    def __len__(self):
-        return len(self._get_dict())
     def __iter__(self):
         return iter(self._get_dict())
-    def get(self, key, default=None):
-        return self._get_dict().get(key, default)
-    def keys(self):
-        return self._get_dict().keys()
-    def values(self):
-        return self._get_dict().values()
-    def items(self):
-        return self._get_dict().items()
-    def copy(self):
-        return self._get_dict().copy()
-    def clear(self):
-        self._get_dict().clear()
-    def update(self, *args, **kwargs):
-        self._get_dict().update(*args, **kwargs)
+    def __len__(self):
+        return len(self._get_dict())
     def __repr__(self):
         return repr(self._get_dict())
 

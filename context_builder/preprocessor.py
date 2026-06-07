@@ -68,10 +68,14 @@ def build_ffi_registry(repo_files, file_cache=None):
         fast_files = repo_files
         
     compiled_patterns = []
-    for pat in CONFIG.get('ffi_patterns', []):
+    ffi_patterns = CONFIG.get('ffi_patterns')
+    for pat in (ffi_patterns or []):
+        if not isinstance(pat, str):
+            warn_once("ffi_pattern_non_string", f"FFI pattern must be a string, got: {pat}")
+            continue
         try:
             compiled_patterns.append(re.compile(pat, re.DOTALL))
-        except re.error as e:
+        except (re.error, TypeError) as e:
             warn_once("ffi_regex_compile_fail", f"Failed to compile FFI regex pattern '{pat}': {e}")
 
     for f in fast_files:

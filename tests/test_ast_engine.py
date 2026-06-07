@@ -599,3 +599,57 @@ class TestAstEngine(unittest.TestCase):
         finally:
             CONFIG['func_decl_pattern'] = orig_decl
             CONFIG['callee_pattern'] = orig_callee
+
+    def test_invalid_bindings_warning(self):
+        """Verify that warn_once is called if bindings are configured incorrectly."""
+        from context_builder.ast_engine import AstEngine, CONFIG
+        engine = AstEngine()
+        
+        orig_bindings = CONFIG['bindings'].copy()
+        try:
+            CONFIG['bindings'] = {'.dummy': 'invalid_string_instead_of_tuple'}
+            with patch("context_builder.ast_engine.warn_once") as mock_warn:
+                engine.initialize()
+                from context_builder.ast_engine import HAS_TREESITTER
+                if HAS_TREESITTER:
+                    mock_warn.assert_any_call("invalid_binding_.dummy", ANY)
+        finally:
+            CONFIG['bindings'] = orig_bindings
+
+    def test_quantifier_curly_braces_in_templates(self):
+        """Verify that curly brace quantifiers (e.g. {1,3}) in templates do not crash definitions or dependency tracing."""
+        from context_builder.ast_engine import trace_lexical_dependencies_ast, find_callee_definition, CONFIG
+        from context_builder.config import reset_config
+        reset_config()
+        
+        CONFIG['def_pattern_template'] = r'{lead_b}{escaped_callee}[a-z]{1,5}'
+        CONFIG['cpp_def_pattern_template'] = r'{lead_b}{escaped_callee}[a-z]{1,5}'
+        CONFIG['dependency_query_strings'] = {
+            '.cpp': '(call_expression function: [(identifier) @id] (#match? @id ".*({escaped_func_name}|[a-z]{1,3}).*"))'
+        }
+        
+        file_path = os.path.join(self.temp_dir.name, "quantifier.cpp")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write("void fooabc() {}\n")
+        
+        self.cache.get_content(file_path)
+        
+        res_file, res_line = find_callee_definition("foo", [file_path], file_cache=self.cache)
+        self.assertEqual(res_file, file_path)
+        
+        mock_lang = MagicMock()
+        mock_query = MagicMock()
+        mock_query.captures.return_value = []
+        mock_lang.query.return_value = mock_query
+        
+        mock_parser = MagicMock()
+        
+        from context_builder.ast_engine import AST_ENGINE
+        with patch.dict(AST_ENGINE.languages, {".cpp": mock_lang}), \
+             patch.dict(AST_ENGINE.parsers, {".cpp": mock_parser}), \
+             patch.object(AST_ENGINE, "is_supported", return_value=True):
+            trace_lexical_dependencies_ast("foo", [file_path], file_cache=self.cache)
+            mock_lang.query.assert_called_once()
+            query_arg = mock_lang.query.call_args[0][0]
+            self.assertIn("foo", query_arg)
+            self.assertIn("[a-z]{1,3}", query_arg)
