@@ -466,4 +466,52 @@ class TestLspClient(unittest.TestCase):
         mock_subproc.kill.assert_called_once()
         self.assertIsNone(client.client)
 
+    def test_call_lsp_method_arguments_handling(self):
+        from context_builder.lsp_client import _call_lsp_method
+        
+        # 1. Method taking 0 parameters
+        def zero_params():
+            return "zero"
+        self.assertEqual(_call_lsp_method(zero_params, "ignored_arg"), "zero")
+        
+        # 2. Method taking 1 parameter
+        def one_param(x):
+            return x
+        self.assertEqual(_call_lsp_method(one_param, "val"), "val")
+        
+        # 3. Method raising TypeError when called with arguments (falls back to calling without)
+        call_count = 0
+        def fallback_no_params():
+            nonlocal call_count
+            call_count += 1
+            return "fallback"
+            
+        with patch("inspect.signature", side_effect=ValueError("no signature")):
+            res = _call_lsp_method(fallback_no_params, "ignored")
+        self.assertEqual(res, "fallback")
+        self.assertEqual(call_count, 1)
+
+    @patch("context_builder.lsp_client.LanguageClient")
+    def test_cleanup_synchronous_fallback_force_kills(self, mock_lc_class):
+        mock_client = MagicMock()
+        mock_lc_class.return_value = mock_client
+        
+        mock_subproc = MagicMock()
+        mock_subproc.returncode = None
+        mock_client.subprocess = mock_subproc
+        
+        client = MinimalLSPClient(["some_lsp_binary"])
+        client.client = mock_client
+        
+        def mock_run_coroutine_threadsafe(coro, loop):
+            coro.close()
+            raise RuntimeError("Loop closed")
+            
+        with patch("asyncio.run_coroutine_threadsafe", side_effect=mock_run_coroutine_threadsafe):
+            client.cleanup()
+            
+        mock_subproc.kill.assert_called_once()
+        self.assertIsNone(client.client)
+
+
 

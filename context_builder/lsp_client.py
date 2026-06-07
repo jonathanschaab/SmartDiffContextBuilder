@@ -48,6 +48,20 @@ def get_lsp_loop():
             _LOOP_THREAD.start()
         return _LOOP_THREAD.loop
 
+def _call_lsp_method(method, *args):
+    try:
+        sig = inspect.signature(method)
+        params = list(sig.parameters.values())
+        if len(params) == 0:
+            return method()
+        else:
+            return method(*args[:len(params)])
+    except Exception:
+        try:
+            return method(*args)
+        except TypeError:
+            return method()
+
 class MinimalLSPClient:
     def __init__(self, cmd):
         self.cmd = cmd
@@ -160,12 +174,14 @@ class MinimalLSPClient:
                 # Try shutdown_async
                 if hasattr(self.client, "shutdown_async"):
                     try:
-                        await asyncio.wait_for(self.client.shutdown_async(None), timeout=2.0)
+                        res = _call_lsp_method(self.client.shutdown_async, None)
+                        if inspect.isawaitable(res) or asyncio.isfuture(res):
+                            await asyncio.wait_for(res, timeout=2.0)
                     except Exception:
                         pass
                 elif hasattr(self.client, "shutdown"):
                     try:
-                        res = self.client.shutdown(None)
+                        res = _call_lsp_method(self.client.shutdown, None)
                         if inspect.isawaitable(res) or asyncio.isfuture(res):
                             await asyncio.wait_for(res, timeout=2.0)
                     except Exception:
@@ -174,7 +190,7 @@ class MinimalLSPClient:
                 # Try exit
                 if hasattr(self.client, "exit"):
                     try:
-                        res = self.client.exit(None)
+                        res = _call_lsp_method(self.client.exit, None)
                         if inspect.isawaitable(res) or asyncio.isfuture(res):
                             await res
                     except Exception:
@@ -183,7 +199,7 @@ class MinimalLSPClient:
                 # Try stop
                 if hasattr(self.client, "stop"):
                     try:
-                        res = self.client.stop()
+                        res = _call_lsp_method(self.client.stop)
                         if inspect.isawaitable(res) or asyncio.isfuture(res):
                             await asyncio.wait_for(res, timeout=2.0)
                     except Exception:
@@ -203,6 +219,13 @@ class MinimalLSPClient:
         except Exception:
             if 'fut' in locals():
                 fut.cancel()
+            # Synchronous fallback: force-kill the subprocess directly from the calling thread
+            try:
+                server = getattr(self.client, "subprocess", None) or getattr(self.client, "_server", None)
+                if server and server.returncode is None:
+                    server.kill()
+            except Exception:
+                pass
         self.client = None
 
 def cleanup_zombie_lsps():
