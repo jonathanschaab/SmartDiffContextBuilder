@@ -243,3 +243,66 @@ class TestLspClient(unittest.TestCase):
         # Query line 5 (out of bounds). It must return {} instead of [] to avoid AttributeError
         res = get_lsp_references("empty.cpp", 5, "my_func", 5.0, 100, False, file_cache=mock_file_cache)
         self.assertEqual(res, {})
+
+    @patch("context_builder.lsp_client.USE_LSP", True)
+    @patch("context_builder.lsp_client.LSP_INSTANCES")
+    def test_get_lsp_references_location_link(self, mock_instances):
+        from context_builder.lsp_client import get_lsp_references
+        from urllib.request import url2pathname
+        import urllib.parse
+        import os
+        
+        mock_client = MagicMock()
+        mock_instances.__contains__.return_value = True
+        mock_instances.get.return_value = mock_client
+        
+        # Mocking references list containing LocationLink structures
+        mock_client.get_references.return_value = [
+            {
+                "targetUri": "file:///path/to/file.cpp",
+                "targetSelectionRange": {
+                    "start": {"line": 10, "character": 5},
+                    "end": {"line": 10, "character": 15}
+                }
+            },
+            {
+                "targetUri": "file:///path/to/file.cpp",
+                "targetRange": {
+                    "start": {"line": 20, "character": 0},
+                    "end": {"line": 20, "character": 10}
+                }
+            }
+        ]
+        
+        mock_file_cache = MagicMock()
+        mock_file_cache.get_lines.return_value = ["line 0", "line 1", "line 2"]
+        
+        with patch("os.path.exists", return_value=True):
+            res = get_lsp_references("empty.cpp", 1, "my_func", 5.0, 100, False, file_cache=mock_file_cache)
+            # Both LocationLinks should be processed successfully
+            path = os.path.relpath(url2pathname(urllib.parse.urlparse("file:///path/to/file.cpp").path), os.getcwd())
+            self.assertIn(path, res)
+            self.assertEqual(len(res[path]), 2)
+            self.assertEqual(res[path][0]["line"], 11)
+            self.assertEqual(res[path][1]["line"], 21)
+
+    @patch("context_builder.lsp_client.USE_LSP", True)
+    @patch("context_builder.lsp_client.LSP_INSTANCES")
+    def test_get_lsp_references_malformed(self, mock_instances):
+        from context_builder.lsp_client import get_lsp_references
+        
+        mock_client = MagicMock()
+        mock_instances.__contains__.return_value = True
+        mock_instances.get.return_value = mock_client
+        
+        # Mocking references list with malformed structures
+        mock_client.get_references.return_value = [
+            {"malformed": "structure"},
+            "not_even_a_dict"
+        ]
+        
+        mock_file_cache = MagicMock()
+        
+        # It should skip both without throwing exceptions and return an empty dict
+        res = get_lsp_references("empty.cpp", 1, "my_func", 5.0, 100, False, file_cache=mock_file_cache)
+        self.assertEqual(res, {})

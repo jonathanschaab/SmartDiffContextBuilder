@@ -226,21 +226,31 @@ def get_lsp_references(file_path, line_num, func_name, timeout, max_depth, disab
         warn_once(f"prune_{func_name}", f"Polymorphic explosion detected for {func_name}. Pruning to {max_depth} callers.")
 
     for ref in refs:
-        ref_path = url2pathname(urllib.parse.urlparse(ref.get("uri", "")).path)
-        try: rel_path = os.path.relpath(ref_path, os.getcwd())
-        except ValueError: rel_path = ref_path
+        # Wrap in try...except block to handle potentially malformed responses, missing keys,
+        # or alternative LSP structures (like LocationLink) without crashing the scan.
+        try:
+            ref_uri = ref.get("uri") or ref.get("targetUri", "")
+            ref_path = url2pathname(urllib.parse.urlparse(ref_uri).path)
+            try: rel_path = os.path.relpath(ref_path, os.getcwd())
+            except ValueError: rel_path = ref_path
+                
+            range_obj = ref.get("range") or ref.get("targetSelectionRange") or ref.get("targetRange")
+            if not range_obj or "start" not in range_obj or "line" not in range_obj["start"]:
+                raise KeyError("range/start/line")
+            ref_line = range_obj["start"]["line"]
             
-        ref_line = ref["range"]["start"]["line"]
-        ref_code = "[Code Unavailable]"
-        if os.path.exists(rel_path):
-            lines = file_cache.get_lines(rel_path)
-            # Add a defensive bounds check to prevent IndexError if the file
-            # has been modified or if the LSP returned an out-of-bounds line number.
-            if 0 <= ref_line < len(lines):
-                ref_code = lines[ref_line].strip()
-        
-        if rel_path not in callers: callers[rel_path] = []
-        callers[rel_path].append({"line": ref_line + 1, "code": ref_code})
+            ref_code = "[Code Unavailable]"
+            if os.path.exists(rel_path):
+                lines = file_cache.get_lines(rel_path)
+                # Add a defensive bounds check to prevent IndexError if the file
+                # has been modified or if the LSP returned an out-of-bounds line number.
+                if 0 <= ref_line < len(lines):
+                    ref_code = lines[ref_line].strip()
+            
+            if rel_path not in callers: callers[rel_path] = []
+            callers[rel_path].append({"line": ref_line + 1, "code": ref_code})
+        except (KeyError, TypeError) as exc:
+            warn_once("lsp_ref_malformed", f"Skipping malformed LSP reference structure: {exc}")
 
     if not disable_pruning and total_refs > max_depth:
         callers["[Pruned Instances]"] = [{"line": 0, "code": f"// Omitted {total_refs - max_depth} additional interface implementations to preserve context window."}]

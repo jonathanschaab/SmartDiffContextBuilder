@@ -64,18 +64,22 @@ def parse_and_resolve_range(range_str):
         if not start_sha:
             raise ValueError(f"Could not resolve start commit: {start_ref}")
             
-        # Get chronological list of commits from start_sha to HEAD
-        commits_out = run_command(["git", "log", "--reverse", "--format=%H", f"{start_sha}..HEAD"])
-        commits = [c.strip() for c in commits_out.splitlines() if c.strip()]
-        if len(commits) < count:
-            default_branch = get_default_branch()
-            commits_out = run_command(["git", "log", "--reverse", "--format=%H", f"{start_sha}..{default_branch}"])
+        if count == 0:
+            # Defensive check: if count is 0, START+0 resolves to START itself
+            end_ref = start_ref
+        else:
+            # Get chronological list of commits from start_sha to HEAD
+            commits_out = run_command(["git", "log", "--reverse", "--format=%H", f"{start_sha}..HEAD"])
             commits = [c.strip() for c in commits_out.splitlines() if c.strip()]
-            
-        if len(commits) < count:
-            raise ValueError(f"Not enough commits after {start_ref} (requested +{count}, found {len(commits)})")
-            
-        end_ref = commits[count - 1]
+            if len(commits) < count:
+                default_branch = get_default_branch()
+                commits_out = run_command(["git", "log", "--reverse", "--format=%H", f"{start_sha}..{default_branch}"])
+                commits = [c.strip() for c in commits_out.splitlines() if c.strip()]
+                
+            if len(commits) < count:
+                raise ValueError(f"Not enough commits after {start_ref} (requested +{count}, found {len(commits)})")
+                
+            end_ref = commits[count - 1]
 
     # Format 1: START..END
     elif ".." in range_str:

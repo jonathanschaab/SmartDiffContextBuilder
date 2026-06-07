@@ -289,15 +289,16 @@ def split_massive_block_ast(source_text, file_path, max_lines):
                     if is_python and clean_line.rstrip().endswith(":"):
                         break
                 output_lines.extend(sig_lines)
-                indent = len(sig_lines[0]) - len(sig_lines[0].lstrip())
-                if is_python:
-                    # Provide indentation and pass to keep Python syntax valid
-                    output_lines.append(" " * (indent + 4) + "# ... [Inner Body Omitted for Context Preservation] ...")
-                    output_lines.append(" " * (indent + 4) + "pass")
-                else:
-                    if has_brace:
-                        output_lines.append(" " * (indent + 4) + "/* ... [Inner Body Omitted for Context Preservation] ... */")
-                        output_lines.append(" " * indent + "}") # Generic close
+                if sig_lines:
+                    indent = len(sig_lines[0]) - len(sig_lines[0].lstrip())
+                    if is_python:
+                        # Provide indentation and pass to keep Python syntax valid
+                        output_lines.append(" " * (indent + 4) + "# ... [Inner Body Omitted for Context Preservation] ...")
+                        output_lines.append(" " * (indent + 4) + "pass")
+                    else:
+                        if has_brace:
+                            output_lines.append(" " * (indent + 4) + "/* ... [Inner Body Omitted for Context Preservation] ... */")
+                            output_lines.append(" " * indent + "}") # Generic close
             else:
                 output_lines.extend(child_lines[:5])
                 if is_python:

@@ -432,3 +432,22 @@ class TestAstEngine(unittest.TestCase):
         # It should run without raising AttributeError due to capture_node.parent being None
         res = trace_lexical_dependencies_ast("my_func", ["test.py"], file_cache=cache)
         self.assertEqual(res, {})
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_split_massive_block_ast_empty_sig_lines(self, mock_ast_engine):
+        mock_parser = MagicMock()
+        mock_tree = MagicMock()
+        mock_child = MagicMock()
+        mock_child.type = "function_definition"
+        mock_child.start_point = (10, 0)
+        mock_child.end_point = (5, 0) # start > end, making sig_lines empty
+        
+        mock_tree.root_node.children = [mock_child]
+        mock_parser.parse.return_value = mock_tree
+        mock_ast_engine.parsers = {".py": mock_parser}
+        mock_ast_engine.is_supported.return_value = True
+        
+        source = "def foo():\n    pass\n"
+        # It should run successfully without raising an IndexError.
+        res = split_massive_block_ast(source, "test.py", max_lines=1)
+        self.assertEqual(len(res), 1)

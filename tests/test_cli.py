@@ -566,4 +566,15 @@ class TestCLI(unittest.TestCase):
         self.assertIn("cleanup_zombie_lsps", call_order)
         self.assertTrue(any("worktree remove" in s for s in call_order))
 
+    @patch("context_builder.cli.resolve_commit_ref")
+    def test_parse_and_resolve_range_start_plus_zero(self, mock_resolve):
+        from context_builder.cli import parse_and_resolve_range
+        
+        mock_resolve.side_effect = lambda ref: f"sha_{ref}"
+        
+        # HEAD+0 should resolve to ("sha_HEAD", "sha_HEAD")
+        start, end = parse_and_resolve_range("HEAD+0")
+        self.assertEqual(start, "sha_HEAD")
+        self.assertEqual(end, "sha_HEAD")
+
 
