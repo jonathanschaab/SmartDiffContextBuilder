@@ -424,3 +424,46 @@ class TestLspClient(unittest.TestCase):
         refs = client.get_references("file.py", 10, 0, timeout=1.0)
         self.assertEqual(refs, [])
 
+    @patch("context_builder.lsp_client.LanguageClient")
+    def test_run_coroutine_threadsafe_graceful_error_handling(self, mock_lc_class):
+        def mock_run_coroutine_threadsafe(coro, loop):
+            coro.close()
+            raise RuntimeError("Event loop closed")
+
+        with patch("asyncio.run_coroutine_threadsafe", side_effect=mock_run_coroutine_threadsafe):
+            client = MinimalLSPClient(["some_lsp_binary"])
+            
+            # 1. start() should return False
+            self.assertFalse(client.start())
+            
+            # 2. get_references() should return []
+            client.client = MagicMock()
+            client.client.stopped = False
+            self.assertEqual(client.get_references("file.py", 10, 0, 1.0), [])
+            
+            # 3. cleanup() should run without throwing any exceptions
+            try:
+                client.cleanup()
+            except Exception as e:
+                self.fail(f"cleanup raised exception: {e}")
+
+    @patch("context_builder.lsp_client.LanguageClient")
+    def test_cleanup_force_kills_subprocess_via_subprocess_attribute(self, mock_lc_class):
+        mock_client = MagicMock()
+        mock_lc_class.return_value = mock_client
+        mock_client.stopped = True
+        
+        mock_subproc = MagicMock()
+        mock_subproc.returncode = None
+        mock_client.subprocess = mock_subproc
+        mock_client._server = None
+        
+        client = MinimalLSPClient(["some_lsp_binary"])
+        client.client = mock_client
+        
+        client.cleanup()
+        
+        mock_subproc.kill.assert_called_once()
+        self.assertIsNone(client.client)
+
+

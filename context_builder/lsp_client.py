@@ -73,10 +73,12 @@ class MinimalLSPClient:
             self.client.initialized(types.InitializedParams())
             return True
 
-        fut = asyncio.run_coroutine_threadsafe(_async_start(), self.loop)
         try:
+            fut = asyncio.run_coroutine_threadsafe(_async_start(), self.loop)
             return fut.result(timeout=11.0)
         except Exception as e:
+            if 'fut' in locals():
+                fut.cancel()
             warn_once("lsp_fail", f"Failed to start LSP {self.cmd[0]}: {e}")
             self.cleanup()
             return False
@@ -138,11 +140,12 @@ class MinimalLSPClient:
                     serialized.append(res)
             return serialized
 
-        fut = asyncio.run_coroutine_threadsafe(_async_get_refs(), self.loop)
         try:
+            fut = asyncio.run_coroutine_threadsafe(_async_get_refs(), self.loop)
             return fut.result(timeout=timeout)
         except Exception as e:
-            fut.cancel()
+            if 'fut' in locals():
+                fut.cancel()
             warn_once("lsp_timeout", f"LSP query timed out after {timeout}s or failed: {e}")
             return []
 
@@ -187,18 +190,19 @@ class MinimalLSPClient:
                         pass
             
             # Force kill subprocess if still running
-            server = getattr(self.client, "_server", None)
+            server = getattr(self.client, "subprocess", None) or getattr(self.client, "_server", None)
             if server and server.returncode is None:
                 try:
                     server.kill()
                 except Exception:
                     pass
 
-        fut = asyncio.run_coroutine_threadsafe(_async_cleanup(), self.loop)
         try:
+            fut = asyncio.run_coroutine_threadsafe(_async_cleanup(), self.loop)
             fut.result(timeout=5.0)
         except Exception:
-            pass
+            if 'fut' in locals():
+                fut.cancel()
         self.client = None
 
 def cleanup_zombie_lsps():
