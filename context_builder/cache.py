@@ -19,6 +19,8 @@ class LRUFileCache:
         """
         self.cache = OrderedDict()
         limit_mb = max_size_mb if max_size_mb is not None else capacity
+        if limit_mb is None:
+            limit_mb = 200
         self.max_size_bytes = int(limit_mb * 1024 * 1024)
         self.current_size_bytes = 0
 
@@ -96,15 +98,17 @@ class LRUFileCache:
 _CACHE_HOLDER = {}
 
 
-def get_global_cache(max_size_mb=200):
+def get_global_cache(max_size_mb=None):
     """Get or create the global LRUFileCache singleton.
 
     Args:
-        max_size_mb (float): The maximum cumulative memory footprint in MB. Defaults to 200.
+        max_size_mb (float): The maximum cumulative memory footprint in MB.
+            Defaults to None, falling back internally to 200.
 
     Returns:
         LRUFileCache: The singleton file cache instance.
     """
     if "default" not in _CACHE_HOLDER:
-        _CACHE_HOLDER["default"] = LRUFileCache(max_size_mb)
+        limit = max_size_mb if max_size_mb is not None else 200
+        _CACHE_HOLDER["default"] = LRUFileCache(max_size_mb=limit)
     return _CACHE_HOLDER["default"]

@@ -64,3 +64,16 @@ class TestLRUFileCache(unittest.TestCase):
         self.assertEqual(cache.get_lines(bad_path), [])
         self.assertEqual(cache.get_content(bad_path), "")
         self.assertEqual(cache.get_bytes(bad_path), b"")
+
+    def test_defensive_initialization_none(self):
+        """Verify that passing None capacity and None max_size_mb defaults to 200 MB."""
+        cache = LRUFileCache(capacity=None, max_size_mb=None)
+        self.assertEqual(cache.max_size_bytes, 200 * 1024 * 1024)
+
+    def test_get_global_cache_none(self):
+        """Verify that calling get_global_cache with None defaults to 200 MB."""
+        from context_builder.cache import _CACHE_HOLDER, get_global_cache
+        _CACHE_HOLDER.clear()
+        cache = get_global_cache(None)
+        self.assertEqual(cache.max_size_bytes, 200 * 1024 * 1024)
+
