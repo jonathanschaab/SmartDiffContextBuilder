@@ -561,3 +561,119 @@ class TestAstEngine(unittest.TestCase):
         
         # Verify it completed almost instantly (e.g. well under 0.1 seconds)
         self.assertLess(elapsed, 0.1)
+
+    def test_lazy_initialization(self):
+        """Verify that the AstEngine is initialized lazily upon checking support."""
+        from context_builder.ast_engine import AstEngine, CONFIG, HAS_TREESITTER
+        engine = AstEngine()
+        self.assertFalse(engine._initialized)
+        
+        # Override bindings in CONFIG to test it's read
+        orig_bindings = CONFIG['bindings'].copy()
+        try:
+            CONFIG['bindings'] = {'.dummy': ('dummy_module', 'dummy_func')}
+            engine.is_supported('.dummy')
+            self.assertTrue(engine._initialized)
+            if HAS_TREESITTER:
+                self.assertIn('.dummy', engine.missing_bindings)
+        finally:
+            CONFIG['bindings'] = orig_bindings
+
+    def test_custom_regex_and_query_overrides(self):
+        """Verify that custom func_decl_pattern and callee_pattern configurations are respected."""
+        from context_builder.ast_engine import _get_func_decl_pattern, _get_callee_pattern, CONFIG
+        orig_decl = CONFIG['func_decl_pattern']
+        orig_callee = CONFIG['callee_pattern']
+        try:
+            CONFIG['func_decl_pattern'] = r'\bMY_SPECIAL_DECL\b'
+            CONFIG['callee_pattern'] = r'\bMY_SPECIAL_CALLEE\b'
+            
+            decl_re = _get_func_decl_pattern()
+            callee_re = _get_callee_pattern()
+            
+            self.assertIsNotNone(decl_re.search("MY_SPECIAL_DECL"))
+            self.assertIsNone(decl_re.search("def foo()"))
+            
+            self.assertIsNotNone(callee_re.search("MY_SPECIAL_CALLEE"))
+            self.assertIsNone(callee_re.search("foo()"))
+        finally:
+            CONFIG['func_decl_pattern'] = orig_decl
+            CONFIG['callee_pattern'] = orig_callee
+
+    def test_invalid_bindings_warning(self):
+        """Verify that warn_once is called if bindings are configured incorrectly."""
+        from context_builder.ast_engine import AstEngine, CONFIG
+        engine = AstEngine()
+        
+        orig_bindings = CONFIG['bindings'].copy()
+        try:
+            CONFIG['bindings'] = {'.dummy': 'invalid_string_instead_of_tuple'}
+            with patch("context_builder.ast_engine.warn_once") as mock_warn:
+                engine.initialize()
+                from context_builder.ast_engine import HAS_TREESITTER
+                if HAS_TREESITTER:
+                    mock_warn.assert_any_call("invalid_binding_.dummy", ANY)
+        finally:
+            CONFIG['bindings'] = orig_bindings
+
+    def test_quantifier_curly_braces_in_templates(self):
+        """Verify that curly brace quantifiers (e.g. {1,3}) in templates do not crash definitions or dependency tracing."""
+        from context_builder.ast_engine import trace_lexical_dependencies_ast, find_callee_definition, CONFIG
+        from context_builder.config import reset_config
+        reset_config()
+        
+        CONFIG['def_pattern_template'] = r'{lead_b}{escaped_callee}[a-z]{1,5}'
+        CONFIG['cpp_def_pattern_template'] = r'{lead_b}{escaped_callee}[a-z]{1,5}'
+        CONFIG['dependency_query_strings'] = {
+            '.cpp': '(call_expression function: [(identifier) @id] (#match? @id ".*({escaped_func_name}|[a-z]{1,3}).*"))'
+        }
+        
+        file_path = os.path.join(self.temp_dir.name, "quantifier.cpp")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write("void fooabc() {}\n")
+        
+        self.cache.get_content(file_path)
+        
+        res_file, res_line = find_callee_definition("foo", [file_path], file_cache=self.cache)
+        self.assertEqual(res_file, file_path)
+        
+        mock_lang = MagicMock()
+        mock_query = MagicMock()
+        mock_query.captures.return_value = []
+        mock_lang.query.return_value = mock_query
+        
+        mock_parser = MagicMock()
+        
+        from context_builder.ast_engine import AST_ENGINE
+        with patch.dict(AST_ENGINE.languages, {".cpp": mock_lang}), \
+             patch.dict(AST_ENGINE.parsers, {".cpp": mock_parser}), \
+             patch.object(AST_ENGINE, "is_supported", return_value=True):
+            trace_lexical_dependencies_ast("foo", [file_path], file_cache=self.cache)
+            mock_lang.query.assert_called_once()
+            query_arg = mock_lang.query.call_args[0][0]
+            self.assertIn("foo", query_arg)
+            self.assertIn("[a-z]{1,3}", query_arg)
+
+    def test_trace_lexical_dependencies_regex_strips_comments_and_strings(self):
+        """Verify that trace_lexical_dependencies_regex ignores matches inside comments and strings."""
+        file_path = os.path.join(self.temp_dir.name, "regex_strip.py")
+        content = (
+            "def test_func():\n"
+            "    # This is a comment calling target_func()\n"
+            "    x = 'target_func() in a string'\n"
+            "    y = target_func()  # Actual call\n"
+        )
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        self.cache.get_content(file_path)
+
+        callers = trace_lexical_dependencies_regex(
+            "target_func", [file_path], file_cache=self.cache
+        )
+        self.assertIn(file_path, callers)
+        # It should match only the actual call on line 4, not lines 2 and 3
+        occurrences = callers[file_path]
+        self.assertEqual(len(occurrences), 1)
+        self.assertEqual(occurrences[0]["line"], 4)
+        self.assertEqual(occurrences[0]["code"], "y = target_func()  # Actual call")
+

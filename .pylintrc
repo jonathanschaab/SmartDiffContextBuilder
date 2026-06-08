@@ -1,0 +1,13 @@
+[MASTER]
+
+[MESSAGES CONTROL]
+# Disable complexity metric warnings that would require major logic refactoring,
+# but keep all docstring, line length, type, naming, unused variables, and style warnings active.
+disable=
+    too-many-locals,
+    too-many-instance-attributes,
+    too-many-arguments,
+    too-many-positional-arguments
+
+[FORMAT]
+max-line-length=100

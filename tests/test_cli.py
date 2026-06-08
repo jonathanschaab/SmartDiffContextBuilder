@@ -2,7 +2,12 @@ import os
 import unittest
 from unittest.mock import patch, MagicMock, ANY
 import sys
+import argparse
 from context_builder.cli import main
+
+class CliNamespace(argparse.Namespace):
+    def __getattr__(self, name):
+        return None
 
 class TestCLI(unittest.TestCase):
     @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
@@ -16,7 +21,7 @@ class TestCLI(unittest.TestCase):
         self, mock_vm_cls, mock_get_lsp, mock_bounds, mock_run, mock_git_tracked, mock_git_diff, mock_parse_args
     ):
         # 1. Setup argparse mock options
-        mock_args = MagicMock()
+        mock_args = CliNamespace()
         mock_args.format = "md"
         mock_args.max_lines = 100
         mock_args.max_mb = 1.0
@@ -104,7 +109,7 @@ class TestCLI(unittest.TestCase):
     def test_cli_hunk_header_parsing(
         self, mock_vm_cls, mock_bounds, mock_run, mock_git_tracked, mock_git_diff, mock_parse_args
     ):
-        mock_args = MagicMock()
+        mock_args = CliNamespace()
         mock_args.format = "md"
         mock_args.max_lines = 100
         mock_args.max_mb = 1.0
@@ -171,7 +176,7 @@ class TestCLI(unittest.TestCase):
     def test_cli_callee_depth_bfs_traversal(
         self, mock_vm_cls, mock_find_def, mock_extract_callees, mock_bounds, mock_run, mock_git_tracked, mock_git_diff, mock_parse_args
     ):
-        mock_args = MagicMock()
+        mock_args = CliNamespace()
         mock_args.format = "md"
         mock_args.max_lines = 1000
         mock_args.max_mb = 1.0
@@ -263,7 +268,7 @@ class TestCLI(unittest.TestCase):
     def test_cli_decorator_and_multiline_parsing(
         self, mock_vm_cls, mock_bounds, mock_run, mock_git_tracked, mock_git_diff, mock_parse_args
     ):
-        mock_args = MagicMock()
+        mock_args = CliNamespace()
         mock_args.format = "md"
         mock_args.max_lines = 1000
         mock_args.max_mb = 1.0
@@ -338,7 +343,7 @@ class TestCLI(unittest.TestCase):
     def test_cli_function_name_extraction_comments_and_strings(
         self, mock_vm_cls, mock_bounds, mock_run, mock_git_tracked, mock_git_diff, mock_parse_args
     ):
-        mock_args = MagicMock()
+        mock_args = CliNamespace()
         mock_args.format = "md"
         mock_args.max_lines = 1000
         mock_args.max_mb = 1.0
@@ -390,7 +395,7 @@ class TestCLI(unittest.TestCase):
     def test_cli_robust_worktree_cleanup(
         self, mock_rmtree, mock_sub_run, mock_run_scan, mock_resolve_range, mock_parse_args
     ):
-        mock_args = MagicMock()
+        mock_args = CliNamespace()
         mock_args.commit_range = "-3"
         mock_parse_args.return_value = mock_args
         
@@ -436,7 +441,7 @@ class TestCLI(unittest.TestCase):
         the cleanup to fail.  This test records the order of all side-effectful
         calls and asserts that cleanup_zombie_lsps() precedes worktree removal.
         """
-        mock_args = MagicMock()
+        mock_args = CliNamespace()
         mock_args.commit_range = "-1"
         mock_parse_args.return_value = mock_args
         mock_resolve_range.return_value = ("sha_start", "sha_end")
@@ -537,7 +542,7 @@ class TestCLI(unittest.TestCase):
         self, mock_exists, mock_copy, mock_rmtree, mock_sub_run, mock_cleanup_lsps, mock_run_scan, mock_resolve_range, mock_parse_args
     ):
         """If shutil.copy raises an exception, the worktree must still be cleaned up."""
-        mock_args = MagicMock()
+        mock_args = CliNamespace()
         mock_args.commit_range = "-1"
         mock_parse_args.return_value = mock_args
         mock_resolve_range.return_value = ("sha_start", "sha_end")
@@ -589,7 +594,7 @@ class TestCLI(unittest.TestCase):
         self, mock_exists, mock_copy, mock_rmtree, mock_sub_run, mock_cleanup_lsps, mock_run_scan, mock_resolve_range, mock_parse_args
     ):
         """Verify that coverage.xml is copied to the temporary worktree if it exists in the original repo root."""
-        mock_args = MagicMock()
+        mock_args = CliNamespace()
         mock_args.commit_range = "-1"
         mock_parse_args.return_value = mock_args
         mock_resolve_range.return_value = ("sha_start", "sha_end")
@@ -623,7 +628,7 @@ class TestCLI(unittest.TestCase):
         self, mock_sub_run, mock_run_scan, mock_resolve_range, mock_parse_args
     ):
         """Verify that temporary worktree creation is bypassed if HEAD matches end_sha."""
-        mock_args = MagicMock()
+        mock_args = CliNamespace()
         mock_args.commit_range = "-1"
         mock_parse_args.return_value = mock_args
         
@@ -644,5 +649,247 @@ class TestCLI(unittest.TestCase):
             
         # Verify that run_scan was called directly
         mock_run_scan.assert_called_once_with(mock_args, start_ref="sha_start", end_ref="sha_end")
+
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    @patch("context_builder.cli.run_scan")
+    def test_cli_config_file_loading_and_merging(self, mock_run_scan, mock_parse_args):
+        """Verify that loading a config file updates CONFIG and merges keys correctly."""
+        from context_builder.config import CONFIG, reset_config
+        reset_config()
+        
+        # Create temp config file with comments
+        config_content = """
+        // custom test config
+        {
+            "max_lines": 4200,
+            "lang_map": {
+                ".custom": "custom_lang"
+            }
+        }
+        """
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as f:
+            f.write(config_content)
+            config_path = f.name
+            
+        try:
+            mock_args = CliNamespace()
+            mock_args.config = config_path
+            mock_parse_args.return_value = mock_args
+            
+            main()
+            
+            # Assert CONFIG is updated
+            self.assertEqual(CONFIG["max_lines"], 4200)
+            self.assertEqual(CONFIG["lang_map"][".custom"], "custom_lang")
+            
+            # Assert args namespace passed to run_scan is populated
+            passed_args = mock_run_scan.call_args[0][0]
+            self.assertEqual(passed_args.max_lines, 4200)
+            self.assertEqual(passed_args.lang_map[".custom"], "custom_lang")
+        finally:
+            os.remove(config_path)
+            reset_config()
+
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    @patch("context_builder.cli.run_scan")
+    def test_cli_argument_overrides(self, mock_run_scan, mock_parse_args):
+        """Verify that CLI overrides override config and merge JSON inputs correctly."""
+        from context_builder.config import CONFIG, reset_config
+        reset_config()
+        
+        mock_args = CliNamespace()
+        mock_args.max_lines = 3300
+        mock_args.lang_map = '{".overridden": "overridden_lang"}'
+        mock_parse_args.return_value = mock_args
+        
+        main()
+        
+        self.assertEqual(CONFIG["max_lines"], 3300)
+        self.assertEqual(CONFIG["lang_map"][".overridden"], "overridden_lang")
+        # Default keys should remain intact since dictionary merges are used
+        self.assertEqual(CONFIG["lang_map"][".py"], "python")
+        
+        passed_args = mock_run_scan.call_args[0][0]
+        self.assertEqual(passed_args.max_lines, 3300)
+        self.assertEqual(passed_args.lang_map[".overridden"], "overridden_lang")
+        reset_config()
+
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    def test_create_config_generation(self, mock_parse_args):
+        """Verify that --create-config generates a commented config file with overrides uncommented."""
+        from context_builder.config import reset_config
+        reset_config()
+        
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            temp_path = f.name
+            
+        try:
+            mock_args = CliNamespace()
+            mock_args.create_config = temp_path
+            mock_args.max_lines = 1234
+            mock_args.format = "json"
+            mock_parse_args.return_value = mock_args
+            
+            with self.assertRaises(SystemExit) as cm:
+                main()
+                
+            self.assertEqual(cm.exception.code, 0)
+            
+            # Read generated file
+            with open(temp_path, "r", encoding="utf-8") as f:
+                content = f.read()
+                
+            # Verify uncommented overrides
+            self.assertIn('"max_lines": 1234', content)
+            self.assertIn('"format": "json"', content)
+            # Verify commented out defaults
+            self.assertIn('// "max_mb": 2.0', content)
+            self.assertIn('// "base_name": "ContextLens"', content)
+        finally:
+            os.remove(temp_path)
+            reset_config()
+
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    @patch("context_builder.cli.run_scan")
+    def test_parse_cli_json_type_guard(self, mock_run_scan, mock_parse_args):
+        """Verify that parse_cli_json doesn't crash if passed a python dict or list directly."""
+        from context_builder.config import CONFIG, reset_config
+        reset_config()
+        
+        mock_args = CliNamespace()
+        mock_args.lang_map = {".direct": "direct_lang"}
+        mock_parse_args.return_value = mock_args
+        
+        main()
+        
+        self.assertEqual(CONFIG["lang_map"][".direct"], "direct_lang")
+        reset_config()
+
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    def test_cli_config_file_loading_non_list_for_list_key(self, mock_parse_args):
+        """Verify that loading a config file with a non-list value for a list key
+
+        exits with an error.
+        """
+        from context_builder.config import reset_config
+        import tempfile
+        import shutil
+        reset_config()
+
+        # Write invalid config to temp file
+        temp_dir = tempfile.mkdtemp()
+        temp_path = os.path.join(temp_dir, "invalid_config.json")
+        try:
+            with open(temp_path, "w", encoding="utf-8") as f:
+                f.write('{"callee_ignored_keywords": "not_a_list_string"}')
+
+            mock_args = CliNamespace()
+            mock_args.config = temp_path
+            mock_parse_args.return_value = mock_args
+
+            with self.assertRaises(SystemExit) as cm:
+                main()
+            self.assertEqual(cm.exception.code, 1)
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            reset_config()
+
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    def test_cli_json_override_non_list_for_list_key(self, mock_parse_args):
+        """Verify that a CLI override with a non-list JSON string for a list key
+
+        exits with an error.
+        """
+        from context_builder.config import reset_config
+        reset_config()
+
+        mock_args = CliNamespace()
+        mock_args.callee_ignored_keywords = '"not_a_list_string"'
+        mock_parse_args.return_value = mock_args
+
+        with self.assertRaises(SystemExit) as cm:
+            main()
+        self.assertEqual(cm.exception.code, 1)
+        reset_config()
+
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    @patch("context_builder.cli.run_scan")
+    def test_cli_partial_namespace_safety(self, mock_run_scan, mock_parse_args):
+        """Verify that main() executes safely when passed a partial namespace
+
+        missing several typical attributes (no AttributeError raised).
+        """
+        from context_builder.config import reset_config
+        reset_config()
+
+        # Create a raw namespace with only format defined, missing all other keys
+        mock_args = argparse.Namespace()
+        mock_args.format = "json"
+        mock_parse_args.return_value = mock_args
+
+        # Calling main should run fine because of getattr default fallbacks
+        try:
+            main()
+        except AttributeError as e:
+            self.fail(f"main() raised AttributeError: {e}")
+
+        reset_config()
+
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    def test_cli_config_file_loading_invalid_primitive_types(self, mock_parse_args):
+        """Verify that config overrides with mismatched primitive types cause error exits."""
+        from context_builder.config import reset_config
+        reset_config()
+
+        import tempfile
+        import shutil
+
+        temp_dir = tempfile.mkdtemp()
+        try:
+            # Test string instead of boolean
+            temp_path = os.path.join(temp_dir, "invalid_config_bool.json")
+            with open(temp_path, "w", encoding="utf-8") as f:
+                f.write('{"disable_pruning": "false"}')
+            mock_args = CliNamespace()
+            mock_args.config = temp_path
+            mock_parse_args.return_value = mock_args
+            with self.assertRaises(SystemExit) as cm:
+                main()
+            self.assertEqual(cm.exception.code, 1)
+
+            # Test boolean instead of integer
+            temp_path2 = os.path.join(temp_dir, "invalid_config_int.json")
+            with open(temp_path2, "w", encoding="utf-8") as f:
+                f.write('{"max_lines": true}')
+            mock_args = CliNamespace()
+            mock_args.config = temp_path2
+            mock_parse_args.return_value = mock_args
+            with self.assertRaises(SystemExit) as cm:
+                main()
+            self.assertEqual(cm.exception.code, 1)
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            reset_config()
+
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    def test_cli_json_override_invalid_primitive_types(self, mock_parse_args):
+        """Verify that CLI JSON overrides with mismatched types cause error exits."""
+        from context_builder.config import reset_config
+        reset_config()
+
+        # Test string instead of float (max_mb)
+        mock_args = CliNamespace()
+        mock_args.max_mb = '"not_a_float"'
+        mock_parse_args.return_value = mock_args
+        with self.assertRaises(SystemExit) as cm:
+            main()
+        self.assertEqual(cm.exception.code, 1)
+
+        reset_config()
+
+
+
 
 
