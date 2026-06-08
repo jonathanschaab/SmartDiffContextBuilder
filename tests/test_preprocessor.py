@@ -493,12 +493,9 @@ class TestPreprocessor(unittest.TestCase):
             with open("src/other.cpp", "w", encoding="utf-8") as f:
                 f.write(inc)
             
-            # Reset cache to force reload of file content
-            from context_builder.preprocessor import get_global_cache
-            get_global_cache().cache.clear()
-            get_global_cache().current_size_bytes = 0
-
-            callers = analyze_compile_commands("src/helper.h")
+            # Pass a fresh cache instance to force reload of file content
+            cache = LRUFileCache()
+            callers = analyze_compile_commands("src/helper.h", file_cache=cache)
             self.assertIn("src/other.cpp", callers, f"Failed to match: {inc.strip()}")
 
         # Test cases for non-matching includes
@@ -517,9 +514,6 @@ class TestPreprocessor(unittest.TestCase):
             with open("src/other.cpp", "w", encoding="utf-8") as f:
                 f.write(inc)
             
-            from context_builder.preprocessor import get_global_cache
-            get_global_cache().cache.clear()
-            get_global_cache().current_size_bytes = 0
-
-            callers = analyze_compile_commands("src/helper.h")
+            cache = LRUFileCache()
+            callers = analyze_compile_commands("src/helper.h", file_cache=cache)
             self.assertNotIn("src/other.cpp", callers, f"Incorrectly matched: {inc.strip()}")
