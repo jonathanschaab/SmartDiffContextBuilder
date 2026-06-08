@@ -37,7 +37,7 @@ from .sys_utils import (
 from .test_miner import get_coverage_data, mine_relevant_unit_tests
 from .volume_manager import VolumeManager
 from . import lsp_client
-from .graph_tracer import CallGraphTracer, _extract_function_name
+from .graph_tracer import CallGraphTracer, extract_function_name
 
 
 
@@ -169,7 +169,7 @@ def _process_single_diff_line(
         strip_strings_and_comments(line, is_python=is_py)
         for line in func_chunk.splitlines()
     )
-    func_name = _extract_function_name(cleaned_func_chunk, start, end)
+    func_name = extract_function_name(cleaned_func_chunk, start, end)
 
     span_signature = f"{file_path}::line_{start}_to_{end}"
     if span_signature in processed_spans:

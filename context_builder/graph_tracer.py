@@ -21,7 +21,7 @@ from .preprocessor import trace_ffi_callers, trace_macro_expansion
 from .sys_utils import is_in_repo
 
 
-def _extract_function_name(cleaned_chunk, start, end):
+def extract_function_name(cleaned_chunk, start, end):
     """Extracts a function name from a cleaned function chunk.
 
     First tries matching standard declaration keywords, then falls back to C-style function
@@ -81,7 +81,7 @@ class CallGraphTracer:
                 strip_strings_and_comments(line, is_python=is_py_ref)
                 for line in ref_chunk.splitlines()
             )
-            occ_func = _extract_function_name(cleaned_ref_chunk, start, end)
+            occ_func = extract_function_name(cleaned_ref_chunk, start, end)
 
             span_sig = f"{ref_path}::line_{start}_to_{end}"
             if span_sig not in processed_spans:
