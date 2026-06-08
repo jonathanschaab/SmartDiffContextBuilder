@@ -459,3 +459,62 @@ class TestPreprocessor(unittest.TestCase):
                 mock_warn.assert_any_call("ffi_pattern_non_string", ANY)
         finally:
             reset_config()
+
+    def test_analyze_compile_commands_include_with_directory_prefix(self):
+        """Verify that translation units are successfully linked to target files
+        when includes use relative, absolute, forward-slashed, or back-slashed
+        directory prefixes, while avoiding substring matching false positives."""
+        # Create compile_commands.json
+        db = [
+            {
+                "directory": ".",
+                "command": "clang++ -c src/other.cpp",
+                "file": "src/other.cpp"
+            }
+        ]
+        with open("compile_commands.json", "w") as f:
+            json.dump(db, f)
+
+        os.makedirs("src", exist_ok=True)
+
+        # Test cases for matching includes
+        matching_includes = [
+            '#include "utils/helper.h"\n',
+            '#include <common/helper.h>\n',
+            '#include "a/b/c/helper.h"\n',
+            '#include "/usr/include/helper.h"\n',
+            '#include "C:\\project\\src\\helper.h"\n',
+            '#include "helper.h"\n',
+            '#  include   <helper.h>\n',
+        ]
+
+        for inc in matching_includes:
+            # Write to src/other.cpp
+            with open("src/other.cpp", "w", encoding="utf-8") as f:
+                f.write(inc)
+            
+            # Reset cache to force reload of file content
+            from context_builder.preprocessor import get_global_cache
+            get_global_cache().cache.clear()
+            get_global_cache().current_size_bytes = 0
+
+            callers = analyze_compile_commands("src/helper.h")
+            self.assertIn("src/other.cpp", callers, f"Failed to match: {inc.strip()}")
+
+        # Test cases for non-matching includes
+        non_matching_includes = [
+            '#include "some_other_helper.h"\n',
+            '#include "helper.h/other.h"\n',
+            '#include "helper.h_suffix.h"\n',
+        ]
+
+        for inc in non_matching_includes:
+            with open("src/other.cpp", "w", encoding="utf-8") as f:
+                f.write(inc)
+            
+            from context_builder.preprocessor import get_global_cache
+            get_global_cache().cache.clear()
+            get_global_cache().current_size_bytes = 0
+
+            callers = analyze_compile_commands("src/helper.h")
+            self.assertNotIn("src/other.cpp", callers, f"Incorrectly matched: {inc.strip()}")

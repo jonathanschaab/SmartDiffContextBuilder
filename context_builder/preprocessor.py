@@ -213,9 +213,8 @@ def _process_compilation_entry(
 
     is_linked = False
     if os.path.exists(abs_ref_file):
-        # Check if the translation unit includes target_base
         content = file_cache.get_content(abs_ref_file)
-        pattern = rf'#\s*include\s*["<]{re.escape(target_base)}[">]'
+        pattern = rf'#\s*include\s*["<](?:[^">]*[/\\])?{re.escape(target_base)}[">]'
         if re.search(pattern, content):
             is_linked = True
 
