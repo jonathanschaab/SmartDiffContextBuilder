@@ -182,7 +182,7 @@ _COMPILE_COMMANDS_STATE = {"cache": None, "mtime": None}
 
 
 def _process_compilation_entry(
-    entry, target_name, target_base, abs_target_file, repo_root, callers, file_cache
+    entry, target_base, abs_target_file, repo_root, callers, file_cache
 ):
     """Process a single compilation command entry from compile_commands.json."""
     ref_file = entry.get("file")
@@ -211,14 +211,8 @@ def _process_compilation_entry(
     if abs_ref_file == abs_target_file:
         return
 
-    ref_base = os.path.basename(abs_ref_file)
-    ref_name = os.path.splitext(ref_base)[0]
-
     is_linked = False
-    # Check if base names match (e.g. foo.h and foo.cpp)
-    if ref_name == target_name:
-        is_linked = True
-    elif os.path.exists(abs_ref_file):
+    if os.path.exists(abs_ref_file):
         # Check if the translation unit includes target_base
         content = file_cache.get_content(abs_ref_file)
         pattern = rf'#\s*include\s*["<]{re.escape(target_base)}[">]'
@@ -264,13 +258,11 @@ def analyze_compile_commands(target_file, file_cache=None, repo_root=None):
             _COMPILE_COMMANDS_STATE["mtime"] = mtime
         db = _COMPILE_COMMANDS_STATE["cache"] or []
         target_base = os.path.basename(target_file)
-        target_name = os.path.splitext(target_base)[0]
         abs_target_file = os.path.abspath(target_file)
 
         for entry in db:
             _process_compilation_entry(
                 entry,
-                target_name,
                 target_base,
                 abs_target_file,
                 repo_root,

@@ -44,16 +44,23 @@ class TestPreprocessor(unittest.TestCase):
         with open("compile_commands.json", "w") as f:
             json.dump(db, f)
 
+        # Create main.cpp that includes main.h
+        with open("main.cpp", "w") as f:
+            f.write('#include "main.h"\n')
+
         # Create other.cpp that includes main.h
         with open("other.cpp", "w") as f:
             f.write('#include "main.h"\n')
 
         # Target file is main.h.
-        # It should link to main.cpp (base name match) and other.cpp (include match).
+        # It should link to main.cpp and other.cpp via include match.
         callers = analyze_compile_commands("main.h")
         self.assertIn("main.cpp", callers)
         self.assertIn("other.cpp", callers)
-        self.assertEqual(callers["main.cpp"][0]["code"], "// [Compilation Link via compile_commands.json]")
+        self.assertEqual(
+            callers["main.cpp"][0]["code"],
+            "// [Compilation Link via compile_commands.json]"
+        )
 
     def test_analyze_compile_commands_precise_include(self):
         # Create compile_commands.json
@@ -90,8 +97,12 @@ class TestPreprocessor(unittest.TestCase):
         with open("compile_commands.json", "w") as f:
             json.dump(db, f)
 
+        # Create src/main.cpp that includes main.h
+        with open("src/main.cpp", "w") as f:
+            f.write('#include "main.h"\n')
+
         # Target file is src/main.h. Since ../src/main.cpp resolves to src/main.cpp,
-        # it should link correctly by matching base name main.cpp to main.h.
+        # it should link correctly by checking include match.
         callers = analyze_compile_commands("src/main.h")
         self.assertIn("src/main.cpp", callers)
 
@@ -153,6 +164,11 @@ class TestPreprocessor(unittest.TestCase):
         abs_target = os.path.abspath("other_drive/main.h")
         abs_dir = os.path.abspath("project")
 
+        # Create other_drive/main.cpp containing `#include "main.h"`
+        os.makedirs(os.path.dirname(abs_ref), exist_ok=True)
+        with open(abs_ref, "w") as f:
+            f.write('#include "main.h"\n')
+
         db = [
             {
                 "directory": abs_dir,
@@ -164,11 +180,10 @@ class TestPreprocessor(unittest.TestCase):
             json.dump(db, f)
 
         # Since relpath raises ValueError, it should fall back to the absolute path.
-        with patch("os.path.exists", return_value=True):
-            callers = analyze_compile_commands(abs_target)
-            # Should fall back to the absolute path formatted with forward slashes
-            expected_key = abs_ref.replace("\\", "/")
-            self.assertIn(expected_key, callers)
+        callers = analyze_compile_commands(abs_target)
+        # Should fall back to the absolute path formatted with forward slashes
+        expected_key = abs_ref.replace("\\", "/")
+        self.assertIn(expected_key, callers)
 
     def test_trace_macro_expansion_relpath_drive_mismatch(self):
         """On Windows, clang linemarkers can reference absolute paths on a
@@ -219,7 +234,14 @@ class TestPreprocessor(unittest.TestCase):
             os.makedirs(src_dir, exist_ok=True)
             ref_cpp = os.path.join(src_dir, "other.cpp")
             with open(ref_cpp, "w") as f:
-                f.write("// other\n")
+                f.write('#include "other.h"\n')
+
+            # Create the corresponding source file in the worktree
+            wt_src_dir = os.path.join(worktree, "src")
+            os.makedirs(wt_src_dir, exist_ok=True)
+            wt_ref_cpp = os.path.join(wt_src_dir, "other.cpp")
+            with open(wt_ref_cpp, "w") as f:
+                f.write('#include "other.h"\n')
 
             # Create compile_commands.json in the *worktree* (it was copied there
             # by main() before chdir-ing into the worktree)
@@ -356,6 +378,10 @@ class TestPreprocessor(unittest.TestCase):
         ref_cpp = os.path.join(original_repo, "src", "main.cpp")
         target_h = os.path.join(original_repo, "src", "main.h")
 
+        # Create src/main.cpp containing `#include "main.h"`
+        with open(ref_cpp, "w") as f:
+            f.write('#include "main.h"\n')
+
         db = [
             {
                 "directory": os.path.join(original_repo, "src"),
@@ -366,11 +392,9 @@ class TestPreprocessor(unittest.TestCase):
         with open("compile_commands.json", "w") as f:
             json.dump(db, f)
 
-        # Passing repo_root, which normally attempts mapping but fails on relpath
-        with patch("os.path.exists", return_value=True):
-            callers = analyze_compile_commands(target_h, repo_root=original_repo)
-            # Since relpath raised ValueError, the file mapping should fall back gracefully
-            self.assertIsInstance(callers, dict)
+        callers = analyze_compile_commands(target_h, repo_root=original_repo)
+        # Since relpath raised ValueError, the file mapping should fall back gracefully
+        self.assertIsInstance(callers, dict)
 
     def test_custom_ffi_patterns(self):
         """Verify that build_ffi_registry respects custom ffi_rg_pattern and ffi_patterns in CONFIG."""
