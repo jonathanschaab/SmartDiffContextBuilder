@@ -212,7 +212,13 @@ def _process_compilation_entry(
         return
 
     content = file_cache.get_content(abs_ref_file)
-    is_linked = bool(content and include_pattern.search(content))
+    is_linked = False
+    if content:
+        target_base = os.path.basename(abs_target_file)
+        if "\\" not in content and target_base not in content:
+            is_linked = False
+        else:
+            is_linked = bool(include_pattern.search(content))
 
     if is_linked:
         # Compute a path relative to the active worktree root (CWD)
@@ -239,6 +245,11 @@ def analyze_compile_commands(target_file, file_cache=None, repo_root=None):
     if file_cache is None:
         file_cache = get_global_cache()
     callers = {}
+    if not target_file:
+        return callers
+    target_base = os.path.basename(target_file)
+    if not target_base:
+        return callers
     if not os.path.exists("compile_commands.json"):
         return callers
     try:

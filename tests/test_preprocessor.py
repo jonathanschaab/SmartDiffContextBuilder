@@ -543,3 +543,17 @@ include "helper.h"
             cache = LRUFileCache()
             callers = analyze_compile_commands("src/helper.h", file_cache=cache)
             self.assertNotIn("src/other.cpp", callers, f"Incorrectly matched: {inc.strip()}")
+
+    def test_analyze_compile_commands_invalid_target(self):
+        """Verify that analyze_compile_commands returns early and empty for invalid target files."""
+        # Empty target file
+        callers = analyze_compile_commands("")
+        self.assertEqual(callers, {})
+
+        # None target file
+        callers = analyze_compile_commands(None)
+        self.assertEqual(callers, {})
+
+        # Target file that has no basename (e.g. just a separator or root directory)
+        callers = analyze_compile_commands("/")
+        self.assertEqual(callers, {})
