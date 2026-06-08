@@ -212,3 +212,143 @@ class TestCallGraphTracer(unittest.TestCase):
         # Assert local_callees has been updated and mock_split was called with fallback limit 900
         self.assertEqual(len(vm.local_callees), 1)
         mock_split.assert_called_once_with(ANY, ANY, 900)
+
+    def test_extract_function_name_compiler_specifiers(self):
+        """Test extract_function_name ignores compiler specifiers and C++ keywords."""
+        from context_builder.graph_tracer import extract_function_name
+
+        # pure specifiers
+        self.assertEqual(
+            extract_function_name("__attribute__((always_inline))", 1, 10),
+            "block_lines_1_10",
+        )
+        self.assertEqual(
+            extract_function_name("__declspec(dllexport)", 2, 20),
+            "block_lines_2_20",
+        )
+
+        # specifiers followed by C-style function definitions
+        self.assertEqual(
+            extract_function_name("__declspec(dllexport) void foo()", 1, 10),
+            "foo",
+        )
+        self.assertEqual(
+            extract_function_name("alignas(16) int bar()", 1, 10),
+            "bar",
+        )
+        self.assertEqual(
+            extract_function_name("noexcept(true) void baz()", 1, 10),
+            "baz",
+        )
+        self.assertEqual(
+            extract_function_name("throw(exception) void qux()", 1, 10),
+            "qux",
+        )
+
+    def test_tracer_defensive_initialization(self):
+        """Test that CallGraphTracer defaults None collections to empty ones."""
+        file_cache = MagicMock()
+        vm = MagicMock()
+        args = MagicMock()
+
+        tracer = CallGraphTracer(
+            file_cache=file_cache,
+            all_repo_files=None,
+            ffi_exports=None,
+            cpp_linkages=None,
+            vm=vm,
+            args=args,
+        )
+
+        self.assertEqual(tracer.all_repo_files, [])
+        self.assertEqual(tracer.ffi_exports, set())
+        self.assertEqual(tracer.cpp_linkages, {})
+
+    def test_tracer_defensive_args_missing_or_none(self):
+        """Test that missing/None args default safely."""
+        file_cache = MagicMock()
+        vm = MagicMock()
+
+        # Test case: args is None
+        tracer = CallGraphTracer(
+            file_cache=file_cache,
+            all_repo_files=None,
+            ffi_exports=None,
+            cpp_linkages=None,
+            vm=vm,
+            args=None,
+        )
+
+        # Should not raise AttributeError when tracing callers/callees
+        queue = deque()
+        tracer.trace_callers(queue, set())  # Runs fine, returns immediately
+        callee_queue = deque()
+        tracer.trace_callees(callee_queue, set())  # Runs fine, returns immediately
+
+        # Test case: args has attributes but they are None or missing
+        class PartialArgs:
+            pass
+
+        args = PartialArgs()
+        args.caller_depth = None
+        args.callee_depth = None
+        args.max_lines = None
+
+        tracer_partial = CallGraphTracer(
+            file_cache=file_cache,
+            all_repo_files=None,
+            ffi_exports=None,
+            cpp_linkages=None,
+            vm=vm,
+            args=args,
+        )
+
+        tracer_partial.trace_callers(queue, set())
+        tracer_partial.trace_callees(callee_queue, set())
+
+    @patch("context_builder.graph_tracer.get_lsp_references")
+    def test_trace_callers_none_caller_depth(self, mock_lsp):
+        """Test trace_callers defaults None or missing caller_depth to 0."""
+        file_cache = MagicMock()
+        vm = MagicMock()
+        args = MagicMock()
+        args.caller_depth = None
+
+        tracer = CallGraphTracer(
+            file_cache=file_cache,
+            all_repo_files=None,
+            ffi_exports=None,
+            cpp_linkages=None,
+            vm=vm,
+            args=args,
+        )
+
+        queue = deque([("file1.py", 1, "foo", 0)])
+        tracer.trace_callers(queue, set())
+
+        # If caller_depth defaulted to 0, get_lsp_references should not be called
+        mock_lsp.assert_not_called()
+
+    @patch("context_builder.graph_tracer.extract_function_bounds")
+    def test_trace_callees_none_callee_depth(self, mock_bounds):
+        """Test trace_callees defaults None or missing callee_depth to 0."""
+        file_cache = MagicMock()
+        vm = MagicMock()
+        args = MagicMock()
+        args.callee_depth = None
+
+        tracer = CallGraphTracer(
+            file_cache=file_cache,
+            all_repo_files=None,
+            ffi_exports=None,
+            cpp_linkages=None,
+            vm=vm,
+            args=args,
+        )
+
+        callee_queue = deque([("file1.py", 1, "foo", 0)])
+        tracer.trace_callees(callee_queue, set())
+
+        # If callee_depth defaulted to 0, extract_function_bounds should not be called
+        mock_bounds.assert_not_called()
+

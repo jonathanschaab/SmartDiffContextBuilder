@@ -39,7 +39,9 @@ def extract_function_name(cleaned_chunk, start, end):
     for m in _C_STYLE_FUNC_PAT.finditer(cleaned_chunk):
         name = m.group(1)
         ignored = {
-            "if", "for", "while", "switch", "catch", "return", "sizeof", "sizeof_array"
+            "if", "for", "while", "switch", "catch", "return", "sizeof", "sizeof_array",
+            "__attribute__", "__declspec", "__pragma", "alignas", "alignof", "decltype",
+            "noexcept", "static_assert", "typeof", "__typeof__", "throw"
         }
         if name not in ignored:
             return name
@@ -52,9 +54,9 @@ class CallGraphTracer:
 
     def __init__(self, file_cache, all_repo_files, ffi_exports, cpp_linkages, vm, args):
         self.file_cache = file_cache
-        self.all_repo_files = all_repo_files
-        self.ffi_exports = ffi_exports
-        self.cpp_linkages = cpp_linkages
+        self.all_repo_files = all_repo_files if all_repo_files is not None else []
+        self.ffi_exports = ffi_exports if ffi_exports is not None else set()
+        self.cpp_linkages = cpp_linkages if cpp_linkages is not None else {}
         self.vm = vm
         self.args = args
 
@@ -173,10 +175,14 @@ class CallGraphTracer:
 
     def trace_callers(self, queue, processed_spans):
         """Perform BFS queue traversal for tracing function callers."""
+        caller_depth = getattr(self.args, "caller_depth", 0)
+        if caller_depth is None:
+            caller_depth = 0
+
         while queue:
             curr_file, curr_line, curr_func, depth = queue.popleft()
 
-            if depth < self.args.caller_depth:
+            if depth < caller_depth:
                 self._process_caller_depth_step(
                     curr_file, curr_line, curr_func, depth, processed_spans, queue
                 )
@@ -205,7 +211,9 @@ class CallGraphTracer:
             return
 
         func_chunk = "".join(ref_lines[def_start:def_end])
-        max_lines_val = self.args.max_lines if self.args.max_lines is not None else 1000
+        max_lines_val = getattr(self.args, "max_lines", 1000)
+        if max_lines_val is None:
+            max_lines_val = 1000
         subunits = split_massive_block_ast(
             func_chunk, def_file, max(1, max_lines_val - 100)
         )
@@ -222,10 +230,13 @@ class CallGraphTracer:
     def trace_callees(self, callee_queue, processed_spans):
         """Perform BFS queue traversal for tracing function callees."""
         processed_callee_spans = set(processed_spans)
+        callee_depth = getattr(self.args, "callee_depth", 0)
+        if callee_depth is None:
+            callee_depth = 0
 
         while callee_queue:
             curr_file, curr_line, _, depth = callee_queue.popleft()
-            if depth < self.args.callee_depth:
+            if depth < callee_depth:
                 start, end = extract_function_bounds(
                     curr_file, curr_line, file_cache=self.file_cache
                 )
