@@ -23,6 +23,11 @@ from .sys_utils import is_in_repo
 
 _FUNC_KEYWORD_PAT = re.compile(r"\b(?:fn|def|function|sub|func|class|macro)\s+([A-Za-z0-9_]+)")
 _C_STYLE_FUNC_PAT = re.compile(r'(~?\b[A-Za-z_][A-Za-z0-9_]*)\s*\(')
+_IGNORED_KEYWORDS = {
+    "if", "for", "while", "switch", "catch", "return", "sizeof", "sizeof_array",
+    "__attribute__", "__declspec", "__pragma", "alignas", "alignof", "decltype",
+    "noexcept", "static_assert", "typeof", "__typeof__", "throw"
+}
 
 
 def extract_function_name(cleaned_chunk, start, end):
@@ -38,12 +43,7 @@ def extract_function_name(cleaned_chunk, start, end):
     # We optionally capture a leading tilde (~) to correctly identify C++ destructors.
     for m in _C_STYLE_FUNC_PAT.finditer(cleaned_chunk):
         name = m.group(1)
-        ignored = {
-            "if", "for", "while", "switch", "catch", "return", "sizeof", "sizeof_array",
-            "__attribute__", "__declspec", "__pragma", "alignas", "alignof", "decltype",
-            "noexcept", "static_assert", "typeof", "__typeof__", "throw"
-        }
-        if name not in ignored:
+        if name not in _IGNORED_KEYWORDS:
             return name
 
     return f"block_lines_{start}_{end}"
@@ -95,13 +95,25 @@ class CallGraphTracer:
 
     def _resolve_references(self, curr_file, curr_line, curr_func):
         """Retrieve raw reference list from LSP, AST, or Regex fallback."""
+        lsp_timeout = getattr(self.args, "lsp_timeout", 45)
+        if lsp_timeout is None:
+            lsp_timeout = 45
+
+        max_interface_depth = getattr(self.args, "max_interface_depth", 15)
+        if max_interface_depth is None:
+            max_interface_depth = 15
+
+        disable_pruning = getattr(self.args, "disable_pruning", False)
+        if disable_pruning is None:
+            disable_pruning = False
+
         callers = get_lsp_references(
             curr_file,
             curr_line,
             curr_func,
-            self.args.lsp_timeout,
-            self.args.max_interface_depth,
-            self.args.disable_pruning,
+            lsp_timeout,
+            max_interface_depth,
+            disable_pruning,
             file_cache=self.file_cache,
         )
         if callers is None:
@@ -118,7 +130,11 @@ class CallGraphTracer:
 
     def _merge_macro_and_build_linkages(self, curr_file, curr_func, ext, callers):
         """Merge macro expansion and C++ build system compilation linkages into callers."""
-        if not self.args.skip_macro_expansion and ext in ['.c', '.cpp', '.hpp', '.h']:
+        skip_macro_expansion = getattr(self.args, "skip_macro_expansion", False)
+        if skip_macro_expansion is None:
+            skip_macro_expansion = False
+
+        if not skip_macro_expansion and ext in ['.c', '.cpp', '.hpp', '.h']:
             macro_results = trace_macro_expansion(
                 curr_func, self.all_repo_files, file_cache=self.file_cache
             )
@@ -156,7 +172,11 @@ class CallGraphTracer:
             distance=depth + 1,
         )
 
-        if not self.args.skip_ffi and curr_func in self.ffi_exports:
+        skip_ffi = getattr(self.args, "skip_ffi", False)
+        if skip_ffi is None:
+            skip_ffi = False
+
+        if not skip_ffi and curr_func in self.ffi_exports:
             ffi_callers = trace_ffi_callers(
                 curr_func,
                 self.all_repo_files,

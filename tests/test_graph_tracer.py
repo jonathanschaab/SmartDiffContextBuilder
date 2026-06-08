@@ -352,3 +352,72 @@ class TestCallGraphTracer(unittest.TestCase):
         # If callee_depth defaulted to 0, extract_function_bounds should not be called
         mock_bounds.assert_not_called()
 
+    @patch("context_builder.graph_tracer.trace_ffi_callers")
+    @patch("context_builder.graph_tracer.trace_macro_expansion")
+    @patch("context_builder.graph_tracer.get_lsp_references")
+    def test_trace_callers_defensive_getattr_fallbacks(
+        self, mock_lsp, mock_macro, mock_ffi
+    ):
+        """Test that trace_callers defaults missing/None configuration attributes."""
+        file_cache = MagicMock()
+        vm = MagicMock()
+        tracer = CallGraphTracer(
+            file_cache=file_cache,
+            all_repo_files=["file1.cpp"],
+            ffi_exports={"foo"},
+            cpp_linkages={},
+            vm=vm,
+            args=None,
+        )
+
+        mock_lsp.return_value = {}
+        mock_macro.return_value = {}
+        mock_ffi.return_value = {}
+
+        tracer._process_caller_depth_step("file1.cpp", 1, "foo", 0, set(), deque())
+
+        mock_lsp.assert_called_once_with(
+            "file1.cpp", 1, "foo", 45, 15, False, file_cache=file_cache
+        )
+        mock_macro.assert_called_once()
+        mock_ffi.assert_called_once()
+
+    @patch("context_builder.graph_tracer.trace_ffi_callers")
+    @patch("context_builder.graph_tracer.trace_macro_expansion")
+    @patch("context_builder.graph_tracer.get_lsp_references")
+    def test_trace_callers_defensive_getattr_explicit_none(
+        self, mock_lsp, mock_macro, mock_ffi
+    ):
+        """Test that trace_callers defaults explicit None configuration attributes."""
+        file_cache = MagicMock()
+        vm = MagicMock()
+
+        class MockArgs:
+            lsp_timeout = None
+            max_interface_depth = None
+            disable_pruning = None
+            skip_macro_expansion = None
+            skip_ffi = None
+
+        tracer = CallGraphTracer(
+            file_cache=file_cache,
+            all_repo_files=["file1.cpp"],
+            ffi_exports={"foo"},
+            cpp_linkages={},
+            vm=vm,
+            args=MockArgs(),
+        )
+
+        mock_lsp.return_value = {}
+        mock_macro.return_value = {}
+        mock_ffi.return_value = {}
+
+        tracer._process_caller_depth_step("file1.cpp", 1, "foo", 0, set(), deque())
+
+        mock_lsp.assert_called_once_with(
+            "file1.cpp", 1, "foo", 45, 15, False, file_cache=file_cache
+        )
+        mock_macro.assert_called_once()
+        mock_ffi.assert_called_once()
+
+
