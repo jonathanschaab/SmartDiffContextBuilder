@@ -76,7 +76,7 @@ class CallGraphTracer:
                 continue
 
             ref_chunk = "".join(ref_lines[start:end])
-            is_py_ref = ref_path.endswith(".py")
+            is_py_ref = ref_path.lower().endswith(".py")
             cleaned_ref_chunk = "\n".join(
                 strip_strings_and_comments(line, is_python=is_py_ref)
                 for line in ref_chunk.splitlines()
@@ -100,7 +100,7 @@ class CallGraphTracer:
             file_cache=self.file_cache,
         )
         if callers is None:
-            ext = os.path.splitext(curr_file)[1]
+            ext = os.path.splitext(curr_file)[1].lower()
             if AST_ENGINE.is_supported(ext):
                 callers = trace_lexical_dependencies_ast(
                     curr_func, self.all_repo_files, file_cache=self.file_cache
@@ -135,7 +135,7 @@ class CallGraphTracer:
     ):
         """Trace callers for a single queue item at the current depth step."""
         callers = self._resolve_references(curr_file, curr_line, curr_func)
-        ext = os.path.splitext(curr_file)[1]
+        ext = os.path.splitext(curr_file)[1].lower()
         self._merge_macro_and_build_linkages(curr_file, curr_func, ext, callers)
 
         filtered_callers = {}
