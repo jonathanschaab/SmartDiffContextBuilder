@@ -128,6 +128,21 @@ class TestPreprocessor(unittest.TestCase):
         self.assertIn(cpp_path, ffi_callers)
         self.assertEqual(ffi_callers[cpp_path][0]["line"], 1)
 
+        # Test case-insensitivity of FFI caller tracing extension check
+        # We pass source_ext=".RS" (uppercase) and check that lib.rs is still skipped,
+        # and caller.cpp is still searched (even if named CALLER.CPP)
+        caller_upper_path = "CALLER.CPP"
+        with open(caller_upper_path, "w", encoding="utf-8") as f:
+            f.write(cpp_code)
+        ffi_callers_upper = trace_ffi_callers(
+            "export_rust_func",
+            ["lib.rs", caller_upper_path],
+            source_ext=".RS",
+            file_cache=cache
+        )
+        self.assertNotIn("lib.rs", ffi_callers_upper)
+        self.assertIn(caller_upper_path, ffi_callers_upper)
+
     @patch("os.path.relpath")
     def test_analyze_compile_commands_drive_mismatch(self, mock_relpath):
         # Mock relpath to raise ValueError (e.g. drive mismatch on Windows)
@@ -273,6 +288,22 @@ class TestPreprocessor(unittest.TestCase):
             
         self.assertIn("my_header.h", result)
         self.assertEqual(result["my_header.h"][0]["code"], "// [Macro Expansion Link] #define MY_MACRO 10")
+
+        # Test case-insensitivity of macro expansion
+        header_path_upper = "MY_HEADER.H"
+        with open(header_path_upper, "w") as f:
+            f.write("#define MY_MACRO 10\n")
+            
+        expanded_upper = (
+            f'# 1 "{header_path_upper}"\n'
+            "void my_func() {}\n"
+        )
+        
+        with patch("context_builder.preprocessor.run_command", return_value=expanded_upper), \
+             patch("context_builder.preprocessor.os.path.exists", return_value=True):
+            result_upper = trace_macro_expansion("my_func", [header_path_upper], file_cache=mock_cache)
+            
+        self.assertIn("MY_HEADER.H", result_upper)
 
     def test_analyze_compile_commands_worktree_mapping(self):
         """Verify that when repo_root is passed, absolute paths in compile_commands.json

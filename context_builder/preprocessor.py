@@ -45,7 +45,7 @@ def _map_expanded_line_to_source(expanded_lines, idx, callers, file_cache):
 
 def _process_single_macro_file(f, func_pattern, callers, file_cache):
     """Process a single file for macro expansion mapping."""
-    ext = os.path.splitext(f)[1]
+    ext = os.path.splitext(f)[1].lower()
     if ext not in [".c", ".cpp", ".hpp", ".h"]:
         return
 
@@ -160,8 +160,8 @@ def trace_ffi_callers(func_name, repo_files, source_ext, file_cache=None):
     func_pattern = re.compile(lead_b + re.escape(func_name) + trail_b)
 
     for f in fast_files:
-        ext = os.path.splitext(f)[1]
-        if ext == source_ext:
+        ext = os.path.splitext(f)[1].lower()
+        if ext == source_ext.lower():
             continue
         lines = file_cache.get_lines(f)
         for idx, line in enumerate(lines):
