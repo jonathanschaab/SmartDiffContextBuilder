@@ -506,6 +506,11 @@ class TestPreprocessor(unittest.TestCase):
             '#include "some_other_helper.h"\n',
             '#include "helper.h/other.h"\n',
             '#include "helper.h_suffix.h"\n',
+            '// #include "helper.h"\n',
+            '// #include <helper.h>\n',
+            '  // #include "helper.h"\n',
+            '/* #include "helper.h" */\n',
+            'int x = 0; #include "helper.h"\n',
         ]
 
         for inc in non_matching_includes:

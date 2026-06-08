@@ -211,11 +211,8 @@ def _process_compilation_entry(
     if abs_ref_file == abs_target_file:
         return
 
-    is_linked = False
-    if os.path.exists(abs_ref_file):
-        content = file_cache.get_content(abs_ref_file)
-        if include_pattern.search(content):
-            is_linked = True
+    content = file_cache.get_content(abs_ref_file)
+    is_linked = bool(content and include_pattern.search(content))
 
     if is_linked:
         # Compute a path relative to the active worktree root (CWD)
@@ -256,8 +253,8 @@ def analyze_compile_commands(target_file, file_cache=None, repo_root=None):
             _COMPILE_COMMANDS_STATE["mtime"] = mtime
         db = _COMPILE_COMMANDS_STATE["cache"] or []
         target_base = os.path.basename(target_file)
-        pattern = rf'#\s*include\s*["<](?:[^">]*[/\\])?{re.escape(target_base)}[">]'
-        include_pattern = re.compile(pattern)
+        pattern = rf'^\s*#\s*include\s*["<](?:[^">]*[/\\])?{re.escape(target_base)}[">]'
+        include_pattern = re.compile(pattern, re.M)
         abs_target_file = os.path.abspath(target_file)
 
         for entry in db:
