@@ -28,7 +28,7 @@ class TestCLI(unittest.TestCase):
         mock_args.max_lines = 100
         mock_args.max_mb = 1.0
         mock_args.base_name = "ContextLens"
-        mock_args.max_cache_size = 100
+        mock_args.max_cache_size_mb = 200
         mock_args.max_interface_depth = 15
         mock_args.disable_pruning = False
         mock_args.lsp_timeout = 5
@@ -117,7 +117,7 @@ class TestCLI(unittest.TestCase):
         mock_args.max_lines = 100
         mock_args.max_mb = 1.0
         mock_args.base_name = "ContextLens"
-        mock_args.max_cache_size = 100
+        mock_args.max_cache_size_mb = 200
         mock_args.max_interface_depth = 15
         mock_args.disable_pruning = False
         mock_args.lsp_timeout = 5
@@ -187,7 +187,7 @@ class TestCLI(unittest.TestCase):
         mock_args.max_lines = 1000
         mock_args.max_mb = 1.0
         mock_args.base_name = "ContextLens"
-        mock_args.max_cache_size = 100
+        mock_args.max_cache_size_mb = 200
         mock_args.max_interface_depth = 15
         mock_args.disable_pruning = False
         mock_args.lsp_timeout = 5
@@ -282,7 +282,7 @@ class TestCLI(unittest.TestCase):
         mock_args.max_lines = 1000
         mock_args.max_mb = 1.0
         mock_args.base_name = "ContextLens"
-        mock_args.max_cache_size = 100
+        mock_args.max_cache_size_mb = 200
         mock_args.max_interface_depth = 15
         mock_args.disable_pruning = False
         mock_args.lsp_timeout = 5
@@ -358,7 +358,7 @@ class TestCLI(unittest.TestCase):
         mock_args.max_lines = 1000
         mock_args.max_mb = 1.0
         mock_args.base_name = "ContextLens"
-        mock_args.max_cache_size = 100
+        mock_args.max_cache_size_mb = 200
         mock_args.max_interface_depth = 15
         mock_args.disable_pruning = False
         mock_args.lsp_timeout = 5

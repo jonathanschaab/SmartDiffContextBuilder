@@ -10,14 +10,17 @@ from collections import OrderedDict
 class LRUFileCache:
     """A Least Recently Used (LRU) file cache for storing file lines, contents, and bytes."""
 
-    def __init__(self, capacity):
-        """Initialize the LRU cache with a specific capacity limit.
+    def __init__(self, capacity=200, max_size_mb=None):
+        """Initialize the LRU cache with a specific limit in MB.
 
         Args:
-            capacity (int): The maximum number of files to cache.
+            capacity (float): The limit in MB (positional/keyword). Defaults to 200.
+            max_size_mb (float): Optional explicit limit in MB.
         """
         self.cache = OrderedDict()
-        self.capacity = capacity
+        limit_mb = max_size_mb if max_size_mb is not None else capacity
+        self.max_size_bytes = int(limit_mb * 1024 * 1024)
+        self.current_size_bytes = 0
 
     def _load(self, file_path):
         """Load the file from disk if not cached, and move it to the end of the LRU.
@@ -47,8 +50,12 @@ class LRUFileCache:
         entry = {"lines": lines, "content": content, "bytes": bytes_content}
         self.cache[file_path] = entry
         self.cache.move_to_end(file_path)
-        if len(self.cache) > self.capacity:
-            self.cache.popitem(last=False)
+        self.current_size_bytes += len(bytes_content)
+
+        while self.cache and self.current_size_bytes > self.max_size_bytes:
+            _, popped_entry = self.cache.popitem(last=False)
+            self.current_size_bytes -= len(popped_entry["bytes"])
+
         return entry
 
     def get_lines(self, file_path):
@@ -89,15 +96,15 @@ class LRUFileCache:
 _CACHE_HOLDER = {}
 
 
-def get_global_cache(capacity=100):
+def get_global_cache(max_size_mb=200):
     """Get or create the global LRUFileCache singleton.
 
     Args:
-        capacity (int): The capacity of the cache. Defaults to 100.
+        max_size_mb (float): The maximum cumulative memory footprint in MB. Defaults to 200.
 
     Returns:
         LRUFileCache: The singleton file cache instance.
     """
     if "default" not in _CACHE_HOLDER:
-        _CACHE_HOLDER["default"] = LRUFileCache(capacity)
+        _CACHE_HOLDER["default"] = LRUFileCache(max_size_mb)
     return _CACHE_HOLDER["default"]
