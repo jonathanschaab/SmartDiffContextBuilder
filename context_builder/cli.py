@@ -217,7 +217,7 @@ def _process_diff_files(
 
 def run_scan(args, start_ref=None, end_ref=None, output_dir=".", repo_root=None):
     """Execute the context scan."""
-    file_cache = get_global_cache(args.max_cache_size)
+    file_cache = get_global_cache(args.max_cache_size_mb)
     lsp_client.USE_LSP = not args.no_language_server
 
     print(f"\n[ContextLens] Scanning Git Diff Workspace [Format: {args.format.upper()}]")
@@ -375,7 +375,7 @@ def _merge_cli_mappings(args, active_overrides):
         "max_lines": "max_lines",
         "max_mb": "max_mb",
         "base_name": "base_name",
-        "max_cache_size": "max_cache_size",
+        "max_cache_size_mb": "max_cache_size_mb",
         "max_interface_depth": "max_interface_depth",
         "disable_pruning": "disable_pruning",
         "lsp_timeout": "lsp_timeout",
@@ -605,7 +605,7 @@ def main():
     parser.add_argument("--max-lines", type=int, default=None)
     parser.add_argument("--max-mb", type=float, default=None)
     parser.add_argument("--base-name", type=str, default=None)
-    parser.add_argument("--max-cache-size", type=int, default=None)
+    parser.add_argument("--max-cache-size-mb", type=float, default=None)
 
     parser.add_argument("--max-interface-depth", type=int, default=None)
     parser.add_argument("--disable-pruning", action="store_true", default=None)

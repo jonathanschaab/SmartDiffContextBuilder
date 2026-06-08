@@ -125,7 +125,7 @@ def reset_config():
         'max_lines': 1500,
         'max_mb': 2.0,
         'base_name': 'ContextLens',
-        'max_cache_size': 100,
+        'max_cache_size_mb': 200.0,
         'max_interface_depth': 15,
         'disable_pruning': False,
         'lsp_timeout': 45,
@@ -179,7 +179,7 @@ def generate_commented_config(active_options):
     lines = ["{"]
     groups = {
         "General Settings": [
-            'format', 'max_lines', 'max_mb', 'base_name', 'max_cache_size',
+            'format', 'max_lines', 'max_mb', 'base_name', 'max_cache_size_mb',
             'max_interface_depth', 'disable_pruning', 'lsp_timeout',
             'no_language_server', 'skip_ffi', 'skip_macro_expansion',
             'caller_depth', 'callee_depth', 'commit_range'

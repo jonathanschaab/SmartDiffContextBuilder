@@ -10,14 +10,20 @@ from collections import OrderedDict
 class LRUFileCache:
     """A Least Recently Used (LRU) file cache for storing file lines, contents, and bytes."""
 
-    def __init__(self, capacity):
-        """Initialize the LRU cache with a specific capacity limit.
+    def __init__(self, max_size_mb=200.0, capacity=None):
+        """Initialize the LRU cache with a specific limit in MB.
 
         Args:
-            capacity (int): The maximum number of files to cache.
+            max_size_mb (float): The maximum cumulative memory footprint in MB. Defaults to 200.0.
+            capacity (float): Deprecated alias for max_size_mb. Used for
+                backward compatibility.
         """
         self.cache = OrderedDict()
-        self.capacity = capacity
+        limit = capacity if capacity is not None else max_size_mb
+        if limit is None or limit <= 0:
+            limit = 200.0
+        self.max_size_bytes = int(limit * 1024 * 1024)
+        self.current_size_bytes = 0
 
     def _load(self, file_path):
         """Load the file from disk if not cached, and move it to the end of the LRU.
@@ -47,9 +53,26 @@ class LRUFileCache:
         entry = {"lines": lines, "content": content, "bytes": bytes_content}
         self.cache[file_path] = entry
         self.cache.move_to_end(file_path)
-        if len(self.cache) > self.capacity:
-            self.cache.popitem(last=False)
+        self.current_size_bytes += len(bytes_content)
+        self.evict_to_limit()
         return entry
+
+    def evict_to_limit(self):
+        """Evict oldest cache entries if total memory footprint exceeds the threshold."""
+        while self.cache and self.current_size_bytes > self.max_size_bytes:
+            _, popped_entry = self.cache.popitem(last=False)
+            self.current_size_bytes -= len(popped_entry["bytes"])
+
+    def resize(self, max_size_mb):
+        """Resize the cache limit in MB, performing validation and immediate evictions.
+
+        Args:
+            max_size_mb (float): The new maximum cumulative memory footprint in MB.
+        """
+        if max_size_mb is None or max_size_mb <= 0:
+            max_size_mb = 200.0
+        self.max_size_bytes = int(max_size_mb * 1024 * 1024)
+        self.evict_to_limit()
 
     def get_lines(self, file_path):
         """Retrieve lines of the file.
@@ -89,15 +112,19 @@ class LRUFileCache:
 _CACHE_HOLDER = {}
 
 
-def get_global_cache(capacity=100):
+def get_global_cache(max_size_mb=None):
     """Get or create the global LRUFileCache singleton.
 
     Args:
-        capacity (int): The capacity of the cache. Defaults to 100.
+        max_size_mb (float): The maximum cumulative memory footprint in MB.
+            Defaults to None, falling back internally to 200.
 
     Returns:
         LRUFileCache: The singleton file cache instance.
     """
     if "default" not in _CACHE_HOLDER:
-        _CACHE_HOLDER["default"] = LRUFileCache(capacity)
+        limit = max_size_mb if max_size_mb is not None else 200.0
+        _CACHE_HOLDER["default"] = LRUFileCache(max_size_mb=limit)
+    elif max_size_mb is not None:
+        _CACHE_HOLDER["default"].resize(max_size_mb)
     return _CACHE_HOLDER["default"]

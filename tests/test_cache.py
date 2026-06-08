@@ -3,7 +3,9 @@ import tempfile
 import unittest
 from context_builder.cache import LRUFileCache
 
+
 class TestLRUFileCache(unittest.TestCase):
+
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.file_path = os.path.join(self.temp_dir.name, "test.txt")
@@ -15,38 +17,111 @@ class TestLRUFileCache(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_cache_hit_and_eviction(self):
-        cache = LRUFileCache(capacity=2)
-        
-        # Load first file
+        # Set cache size limit to 20 bytes
+        limit_mb = 20 / (1024 * 1024)
+        cache = LRUFileCache(max_size_mb=limit_mb)
+
+        # Load first file (14 bytes)
         lines1 = cache.get_lines(self.file_path)
         self.assertEqual(lines1, ["line 1\n", "line 2\n"])
         self.assertIn(self.file_path, cache.cache)
+        self.assertEqual(cache.current_size_bytes, 14)
 
-        # Create more files to force eviction
+        # Create a second file (5 bytes)
         f2 = os.path.join(self.temp_dir.name, "test2.txt")
-        f3 = os.path.join(self.temp_dir.name, "test3.txt")
-        with open(f2, "w", newline="\n", encoding="utf-8") as f: f.write("2")
-        with open(f3, "w", newline="\n", encoding="utf-8") as f: f.write("3")
+        with open(f2, "w", newline="\n", encoding="utf-8") as f:
+            f.write("12345")
 
         cache.get_lines(f2)
-        cache.get_lines(f3)
+        self.assertIn(self.file_path, cache.cache)
+        self.assertIn(f2, cache.cache)
+        self.assertEqual(cache.current_size_bytes, 19)
 
-        # First file should be evicted
+        # Create a third file (2 bytes) to exceed 20 bytes threshold
+        f3 = os.path.join(self.temp_dir.name, "test3.txt")
+        with open(f3, "w", newline="\n", encoding="utf-8") as f:
+            f.write("12")
+
+        cache.get_lines(f3)
+        # Total would be 14 + 5 + 2 = 21 bytes.
+        # First file (14 bytes) must be evicted, leaving f2 and f3 (5 + 2 = 7 bytes)
         self.assertNotIn(self.file_path, cache.cache)
         self.assertIn(f2, cache.cache)
         self.assertIn(f3, cache.cache)
+        self.assertEqual(cache.current_size_bytes, 7)
 
     def test_get_content_and_bytes(self):
-        cache = LRUFileCache(capacity=5)
+        cache = LRUFileCache(max_size_mb=5)
         content = cache.get_content(self.file_path)
         self.assertEqual(content, "line 1\nline 2\n")
-        
+
         bytes_val = cache.get_bytes(self.file_path)
         self.assertEqual(bytes_val, b"line 1\nline 2\n")
 
     def test_nonexistent_file(self):
-        cache = LRUFileCache(capacity=5)
+        cache = LRUFileCache(max_size_mb=5)
         bad_path = os.path.join(self.temp_dir.name, "doesnotexist.txt")
         self.assertEqual(cache.get_lines(bad_path), [])
         self.assertEqual(cache.get_content(bad_path), "")
         self.assertEqual(cache.get_bytes(bad_path), b"")
+
+    def test_defensive_initialization_none(self):
+        """Verify that passing None capacity and None max_size_mb defaults to 200 MB."""
+        cache = LRUFileCache(capacity=None, max_size_mb=None)
+        self.assertEqual(cache.max_size_bytes, 200 * 1024 * 1024)
+
+    def test_get_global_cache_none(self):
+        """Verify that calling get_global_cache with None defaults to 200 MB."""
+        from context_builder.cache import _CACHE_HOLDER, get_global_cache
+        _CACHE_HOLDER.clear()
+        cache = get_global_cache(None)
+        self.assertEqual(cache.max_size_bytes, 200 * 1024 * 1024)
+
+    def test_get_global_cache_resize(self):
+        """Verify that calling get_global_cache with a new limit resizes the cache
+
+        and triggers immediate eviction if the new limit is smaller.
+        """
+        from context_builder.cache import _CACHE_HOLDER, get_global_cache
+        _CACHE_HOLDER.clear()
+
+        # 1. Initialize global cache with 5 MB
+        cache = get_global_cache(5.0)
+        self.assertEqual(cache.max_size_bytes, 5 * 1024 * 1024)
+
+        # 2. Add an item (14 bytes)
+        cache.get_lines(self.file_path)
+        self.assertIn(self.file_path, cache.cache)
+
+        # 3. Resize global cache to 10 bytes (10 / (1024 * 1024) MB)
+        limit_mb = 10 / (1024 * 1024)
+        get_global_cache(limit_mb)
+
+        # The item should be immediately evicted because 14 bytes > 10 bytes limit
+        self.assertNotIn(self.file_path, cache.cache)
+        self.assertEqual(cache.current_size_bytes, 0)
+
+    def test_defensive_initialization_invalid(self):
+        """Verify that negative/zero/None limits default defensively to 200 MB."""
+        cache = LRUFileCache(max_size_mb=-5.0)
+        self.assertEqual(cache.max_size_bytes, 200 * 1024 * 1024)
+
+        cache2 = LRUFileCache(capacity=0.0)
+        self.assertEqual(cache2.max_size_bytes, 200 * 1024 * 1024)
+
+    def test_resize_method_direct(self):
+        """Verify the resize method validates and updates limit correctly."""
+        cache = LRUFileCache(max_size_mb=10.0)
+        self.assertEqual(cache.max_size_bytes, 10 * 1024 * 1024)
+
+        cache.resize(5.0)
+        self.assertEqual(cache.max_size_bytes, 5 * 1024 * 1024)
+
+        cache.resize(0.0)
+        self.assertEqual(cache.max_size_bytes, 200 * 1024 * 1024)
+
+        cache.resize(-1.0)
+        self.assertEqual(cache.max_size_bytes, 200 * 1024 * 1024)
+
+
+
