@@ -53,12 +53,14 @@ class LRUFileCache:
         self.cache[file_path] = entry
         self.cache.move_to_end(file_path)
         self.current_size_bytes += len(bytes_content)
+        self.evict_to_limit()
+        return entry
 
+    def evict_to_limit(self):
+        """Evict oldest cache entries if total memory footprint exceeds the threshold."""
         while self.cache and self.current_size_bytes > self.max_size_bytes:
             _, popped_entry = self.cache.popitem(last=False)
             self.current_size_bytes -= len(popped_entry["bytes"])
-
-        return entry
 
     def get_lines(self, file_path):
         """Retrieve lines of the file.
@@ -114,7 +116,5 @@ def get_global_cache(max_size_mb=None):
     elif max_size_mb is not None:
         cache = _CACHE_HOLDER["default"]
         cache.max_size_bytes = int(max_size_mb * 1024 * 1024)
-        while cache.cache and cache.current_size_bytes > cache.max_size_bytes:
-            _, popped_entry = cache.cache.popitem(last=False)
-            cache.current_size_bytes -= len(popped_entry["bytes"])
+        cache.evict_to_limit()
     return _CACHE_HOLDER["default"]
