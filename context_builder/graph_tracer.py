@@ -21,19 +21,22 @@ from .preprocessor import trace_ffi_callers, trace_macro_expansion
 from .sys_utils import is_in_repo
 
 
+_FUNC_KEYWORD_PAT = re.compile(r"\b(?:fn|def|function|sub|func|class|macro)\s+([A-Za-z0-9_]+)")
+_C_STYLE_FUNC_PAT = re.compile(r'(~?\b[A-Za-z_][A-Za-z0-9_]*)\s*\(')
+
+
 def extract_function_name(cleaned_chunk, start, end):
     """Extracts a function name from a cleaned function chunk.
 
     First tries matching standard declaration keywords, then falls back to C-style function
     names (identifier followed by parenthesis) excluding control flow keywords.
     """
-    pat = r"\b(?:fn|def|function|sub|func|class|macro)\s+([A-Za-z0-9_]+)"
-    if name_match := re.search(pat, cleaned_chunk):
+    if name_match := _FUNC_KEYWORD_PAT.search(cleaned_chunk):
         return name_match.group(1)
 
     # Fallback to C-style: identifier followed by '('
     # We optionally capture a leading tilde (~) to correctly identify C++ destructors.
-    for m in re.finditer(r'(~?\b[A-Za-z_][A-Za-z0-9_]*)\s*\(', cleaned_chunk):
+    for m in _C_STYLE_FUNC_PAT.finditer(cleaned_chunk):
         name = m.group(1)
         ignored = {
             "if", "for", "while", "switch", "catch", "return", "sizeof", "sizeof_array"
@@ -202,8 +205,9 @@ class CallGraphTracer:
             return
 
         func_chunk = "".join(ref_lines[def_start:def_end])
+        max_lines_val = self.args.max_lines if self.args.max_lines is not None else 1000
         subunits = split_massive_block_ast(
-            func_chunk, def_file, max(1, self.args.max_lines - 100)
+            func_chunk, def_file, max(1, max_lines_val - 100)
         )
         for sub in subunits:
             self.vm.local_callees.append({

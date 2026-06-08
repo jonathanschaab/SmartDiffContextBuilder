@@ -1,7 +1,7 @@
 """Unit tests for CallGraphTracer."""
 
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, ANY
 from collections import deque
 from context_builder.graph_tracer import CallGraphTracer
 
@@ -173,3 +173,42 @@ class TestCallGraphTracer(unittest.TestCase):
 
         # 2. Verify trace_macro_expansion was called for FILE2.CPP despite uppercase extension
         mock_macro.assert_called_once()
+
+    @patch("context_builder.graph_tracer.extract_callees")
+    @patch("context_builder.graph_tracer.extract_function_bounds")
+    @patch("context_builder.graph_tracer.find_callee_definition")
+    @patch("context_builder.graph_tracer.split_massive_block_ast")
+    def test_trace_callees_bfs_none_max_lines(
+        self, mock_split, mock_find_def, mock_bounds, mock_callees
+    ):
+        """Test trace_callees method when max_lines is None."""
+        file_cache = MagicMock()
+        file_cache.get_lines.return_value = ["def callee():\n"] * 10
+        vm = MagicMock()
+        vm.local_callees = []
+        args = MagicMock()
+        args.callee_depth = 2
+        args.max_lines = None
+
+        tracer = CallGraphTracer(
+            file_cache=file_cache,
+            all_repo_files=["file1.py", "file2.py"],
+            ffi_exports=set(),
+            cpp_linkages={},
+            vm=vm,
+            args=args,
+        )
+
+        mock_bounds.return_value = (0, 5)
+        mock_callees.return_value = ["bar"]
+        mock_find_def.return_value = ("file2.py", 1)
+        mock_split.return_value = [{"suffix": "", "text": "def bar():\n    pass"}]
+
+        callee_queue = deque([("file1.py", 1, "foo", 0)])
+        processed_spans = set()
+
+        tracer.trace_callees(callee_queue, processed_spans)
+
+        # Assert local_callees has been updated and mock_split was called with fallback limit 900
+        self.assertEqual(len(vm.local_callees), 1)
+        mock_split.assert_called_once_with(ANY, ANY, 900)
