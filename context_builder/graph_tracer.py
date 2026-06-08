@@ -26,7 +26,7 @@ _C_STYLE_FUNC_PAT = re.compile(r'(~?\b[A-Za-z_][A-Za-z0-9_]*)\s*\(')
 _IGNORED_KEYWORDS = {
     "if", "for", "while", "switch", "catch", "return", "sizeof", "sizeof_array",
     "__attribute__", "__declspec", "__pragma", "alignas", "alignof", "decltype",
-    "noexcept", "static_assert", "typeof", "__typeof__", "throw"
+    "noexcept", "static_assert", "typeof", "__typeof__", "throw", "typeid"
 }
 
 

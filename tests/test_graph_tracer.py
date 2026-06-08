@@ -244,6 +244,14 @@ class TestCallGraphTracer(unittest.TestCase):
             extract_function_name("throw(exception) void qux()", 1, 10),
             "qux",
         )
+        self.assertEqual(
+            extract_function_name("typeid(obj) void fn()", 1, 10),
+            "fn",
+        )
+        self.assertEqual(
+            extract_function_name("typeid(int)", 1, 10),
+            "block_lines_1_10",
+        )
 
     def test_tracer_defensive_initialization(self):
         """Test that CallGraphTracer defaults None collections to empty ones."""
