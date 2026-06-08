@@ -605,7 +605,7 @@ def main():
     parser.add_argument("--max-lines", type=int, default=None)
     parser.add_argument("--max-mb", type=float, default=None)
     parser.add_argument("--base-name", type=str, default=None)
-    parser.add_argument("--max-cache-size-mb", type=int, default=None)
+    parser.add_argument("--max-cache-size-mb", type=float, default=None)
 
     parser.add_argument("--max-interface-depth", type=int, default=None)
     parser.add_argument("--disable-pruning", action="store_true", default=None)

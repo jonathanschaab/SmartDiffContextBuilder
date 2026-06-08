@@ -899,7 +899,21 @@ class TestCLI(unittest.TestCase):
 
         reset_config()
 
+    def test_validate_config_type_max_cache_size_mb(self):
+        """Verify that _validate_config_type accepts both float and int for max_cache_size_mb."""
+        from context_builder.cli import _validate_config_type
+        from context_builder.config import reset_config
+        reset_config()
 
+        # Should not raise SystemExit
+        _validate_config_type("max_cache_size_mb", 200)
+        _validate_config_type("max_cache_size_mb", 1.5)
 
+        # Should raise SystemExit on invalid type (like bool or string)
+        with self.assertRaises(SystemExit) as cm:
+            _validate_config_type("max_cache_size_mb", "not_a_float")
+        self.assertEqual(cm.exception.code, 1)
 
-
+        with self.assertRaises(SystemExit) as cm2:
+            _validate_config_type("max_cache_size_mb", True)
+        self.assertEqual(cm2.exception.code, 1)

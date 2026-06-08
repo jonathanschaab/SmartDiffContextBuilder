@@ -109,6 +109,12 @@ def get_global_cache(max_size_mb=None):
         LRUFileCache: The singleton file cache instance.
     """
     if "default" not in _CACHE_HOLDER:
-        limit = max_size_mb if max_size_mb is not None else 200
+        limit = max_size_mb if max_size_mb is not None else 200.0
         _CACHE_HOLDER["default"] = LRUFileCache(max_size_mb=limit)
+    elif max_size_mb is not None:
+        cache = _CACHE_HOLDER["default"]
+        cache.max_size_bytes = int(max_size_mb * 1024 * 1024)
+        while cache.cache and cache.current_size_bytes > cache.max_size_bytes:
+            _, popped_entry = cache.cache.popitem(last=False)
+            cache.current_size_bytes -= len(popped_entry["bytes"])
     return _CACHE_HOLDER["default"]

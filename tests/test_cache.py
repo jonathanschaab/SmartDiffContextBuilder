@@ -77,3 +77,28 @@ class TestLRUFileCache(unittest.TestCase):
         cache = get_global_cache(None)
         self.assertEqual(cache.max_size_bytes, 200 * 1024 * 1024)
 
+    def test_get_global_cache_resize(self):
+        """Verify that calling get_global_cache with a new limit resizes the cache
+
+        and triggers immediate eviction if the new limit is smaller.
+        """
+        from context_builder.cache import _CACHE_HOLDER, get_global_cache
+        _CACHE_HOLDER.clear()
+
+        # 1. Initialize global cache with 5 MB
+        cache = get_global_cache(5.0)
+        self.assertEqual(cache.max_size_bytes, 5 * 1024 * 1024)
+
+        # 2. Add an item (14 bytes)
+        cache.get_lines(self.file_path)
+        self.assertIn(self.file_path, cache.cache)
+
+        # 3. Resize global cache to 10 bytes (10 / (1024 * 1024) MB)
+        limit_mb = 10 / (1024 * 1024)
+        get_global_cache(limit_mb)
+
+        # The item should be immediately evicted because 14 bytes > 10 bytes limit
+        self.assertNotIn(self.file_path, cache.cache)
+        self.assertEqual(cache.current_size_bytes, 0)
+
+

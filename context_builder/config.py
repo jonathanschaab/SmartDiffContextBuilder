@@ -125,7 +125,7 @@ def reset_config():
         'max_lines': 1500,
         'max_mb': 2.0,
         'base_name': 'ContextLens',
-        'max_cache_size_mb': 200,
+        'max_cache_size_mb': 200.0,
         'max_interface_depth': 15,
         'disable_pruning': False,
         'lsp_timeout': 45,
