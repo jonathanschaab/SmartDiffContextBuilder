@@ -15,10 +15,12 @@ class TestCLI(unittest.TestCase):
     @patch("context_builder.cli.get_git_tracked_files")
     @patch("context_builder.cli.run_command")
     @patch("context_builder.cli.extract_function_bounds")
-    @patch("context_builder.cli.get_lsp_references")
+    @patch("context_builder.graph_tracer.extract_function_bounds")
+    @patch("context_builder.graph_tracer.get_lsp_references")
     @patch("context_builder.cli.VolumeManager")
     def test_cli_bfs_traversal(
-        self, mock_vm_cls, mock_get_lsp, mock_bounds, mock_run, mock_git_tracked, mock_git_diff, mock_parse_args
+        self, mock_vm_cls, mock_get_lsp, mock_tracer_bounds, mock_cli_bounds,
+        mock_run, mock_git_tracked, mock_git_diff, mock_parse_args
     ):
         # 1. Setup argparse mock options
         mock_args = CliNamespace()
@@ -52,7 +54,8 @@ class TestCLI(unittest.TestCase):
             elif file_path == "file2.py":
                 return 4, 8
             return None, None
-        mock_bounds.side_effect = mock_bounds_fn
+        mock_cli_bounds.side_effect = mock_bounds_fn
+        mock_tracer_bounds.side_effect = mock_bounds_fn
 
         # Mock cache lines
         mock_cache = MagicMock()
@@ -170,11 +173,14 @@ class TestCLI(unittest.TestCase):
     @patch("context_builder.cli.get_git_tracked_files")
     @patch("context_builder.cli.run_command")
     @patch("context_builder.cli.extract_function_bounds")
-    @patch("context_builder.cli.extract_callees")
-    @patch("context_builder.cli.find_callee_definition")
+    @patch("context_builder.graph_tracer.extract_function_bounds")
+    @patch("context_builder.graph_tracer.extract_callees")
+    @patch("context_builder.graph_tracer.find_callee_definition")
     @patch("context_builder.cli.VolumeManager")
     def test_cli_callee_depth_bfs_traversal(
-        self, mock_vm_cls, mock_find_def, mock_extract_callees, mock_bounds, mock_run, mock_git_tracked, mock_git_diff, mock_parse_args
+        self, mock_vm_cls, mock_find_def, mock_extract_callees,
+        mock_tracer_bounds, mock_cli_bounds, mock_run, mock_git_tracked,
+        mock_git_diff, mock_parse_args
     ):
         mock_args = CliNamespace()
         mock_args.format = "md"
@@ -209,7 +215,8 @@ class TestCLI(unittest.TestCase):
             elif file_path == "callee2.py":
                 return 2, 6
             return None, None
-        mock_bounds.side_effect = mock_bounds_fn
+        mock_cli_bounds.side_effect = mock_bounds_fn
+        mock_tracer_bounds.side_effect = mock_bounds_fn
 
         # Setup callees mock:
         # root.py -> calls "bar"
@@ -264,9 +271,11 @@ class TestCLI(unittest.TestCase):
     @patch("context_builder.cli.get_git_tracked_files")
     @patch("context_builder.cli.run_command")
     @patch("context_builder.cli.extract_function_bounds")
+    @patch("context_builder.graph_tracer.extract_function_bounds")
     @patch("context_builder.cli.VolumeManager")
     def test_cli_decorator_and_multiline_parsing(
-        self, mock_vm_cls, mock_bounds, mock_run, mock_git_tracked, mock_git_diff, mock_parse_args
+        self, mock_vm_cls, mock_tracer_bounds, mock_cli_bounds, mock_run,
+        mock_git_tracked, mock_git_diff, mock_parse_args
     ):
         mock_args = CliNamespace()
         mock_args.format = "md"
@@ -294,7 +303,8 @@ class TestCLI(unittest.TestCase):
         # caller.py bounds: start=0, end=5
         def mock_bounds_fn(file_path, line_num, file_cache=None):
             return 0, 5
-        mock_bounds.side_effect = mock_bounds_fn
+        mock_cli_bounds.side_effect = mock_bounds_fn
+        mock_tracer_bounds.side_effect = mock_bounds_fn
 
         # Mock cache lines
         mock_cache = MagicMock()
@@ -314,7 +324,7 @@ class TestCLI(unittest.TestCase):
         ]
 
         # LSP returns a caller in caller.py
-        with patch("context_builder.cli.get_lsp_references") as mock_get_lsp:
+        with patch("context_builder.graph_tracer.get_lsp_references") as mock_get_lsp:
             mock_get_lsp.return_value = {"caller.py": [{"line": 5, "code": "foo(a)"}]}
             
             mock_vm = MagicMock()
