@@ -486,10 +486,19 @@ class TestPreprocessor(unittest.TestCase):
             '#include "C:\\project\\src\\helper.h"\n',
             '#include "helper.h"\n',
             '#  include   <helper.h>\n',
-            '#include \\\n"utils/helper.h"\n',
-            '#include "utils/\\\nhelper.h"\n',
-            '#\\\ninclude "helper.h"\n',
-            '#include "hel\\\nper.h"\n',
+            r"""#include \
+"utils/helper.h"
+""",
+            r"""#include "utils/\
+helper.h"
+""",
+            r"""#\
+include "helper.h"
+""",
+            r"""#include "hel\
+per.h"
+""",
+            # Test Windows-style line continuation explicitly
             '#include \\\r\n"helper.h"\n',
         ]
 
@@ -513,10 +522,18 @@ class TestPreprocessor(unittest.TestCase):
             '  // #include "helper.h"\n',
             '/* #include "helper.h" */\n',
             'int x = 0; #include "helper.h"\n',
-            '#include \n"utils/helper.h"\n',
-            '#include "utils/\nhelper.h"\n',
-            '#include "helper.h\n"\n',
-            '#\ninclude "helper.h"\n',
+            """#include 
+"utils/helper.h"
+""",
+            """#include "utils/
+helper.h"
+""",
+            """#include "helper.h
+"
+""",
+            """#
+include "helper.h"
+""",
         ]
 
         for inc in non_matching_includes:
