@@ -486,11 +486,16 @@ class TestPreprocessor(unittest.TestCase):
             '#include "C:\\project\\src\\helper.h"\n',
             '#include "helper.h"\n',
             '#  include   <helper.h>\n',
+            '#include \\\n"utils/helper.h"\n',
+            '#include "utils/\\\nhelper.h"\n',
+            '#\\\ninclude "helper.h"\n',
+            '#include "hel\\\nper.h"\n',
+            '#include \\\r\n"helper.h"\n',
         ]
 
         for inc in matching_includes:
             # Write to src/other.cpp
-            with open("src/other.cpp", "w", encoding="utf-8") as f:
+            with open("src/other.cpp", "w", encoding="utf-8", newline="") as f:
                 f.write(inc)
             
             # Pass a fresh cache instance to force reload of file content
@@ -508,10 +513,14 @@ class TestPreprocessor(unittest.TestCase):
             '  // #include "helper.h"\n',
             '/* #include "helper.h" */\n',
             'int x = 0; #include "helper.h"\n',
+            '#include \n"utils/helper.h"\n',
+            '#include "utils/\nhelper.h"\n',
+            '#include "helper.h\n"\n',
+            '#\ninclude "helper.h"\n',
         ]
 
         for inc in non_matching_includes:
-            with open("src/other.cpp", "w", encoding="utf-8") as f:
+            with open("src/other.cpp", "w", encoding="utf-8", newline="") as f:
                 f.write(inc)
             
             cache = LRUFileCache()

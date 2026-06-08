@@ -253,8 +253,52 @@ def analyze_compile_commands(target_file, file_cache=None, repo_root=None):
             _COMPILE_COMMANDS_STATE["mtime"] = mtime
         db = _COMPILE_COMMANDS_STATE["cache"] or []
         target_base = os.path.basename(target_file)
-        pattern = rf'^\s*#\s*include\s*["<](?:[^">]*[/\\])?{re.escape(target_base)}[">]'
-        include_pattern = re.compile(pattern, re.M)
+        # Build target pattern to allow line continuations between any characters
+        # of the target base name. E.g. 'helper.h' -> 'h(?:\\\r?\n)?e...'
+        target_chars = [re.escape(c) for c in target_base]
+        target_pattern = r'(?:\\\r?\n)?'.join(target_chars)
+
+        # Construct a regex that matches include directives, restricting raw
+        # newlines but allowing line continuations. We use re.VERBOSE (re.X)
+        # to allow clean formatting and comments. Changing [^">] to [^"\n>\\]
+        # ensures we do not match across lines unless there is a proper
+        # backslash line-continuation ('\').
+        pattern = rf"""
+            ^                                      # Start of a line
+            [ \t]* (?: \\\r?\n [ \t]* )*           # Spaces and line continuations before '#'
+            \#                                     # Preprocessor hash symbol
+            [ \t]* (?: \\\r?\n [ \t]* )*           # Spaces and line continuations before 'include'
+            include                                # 'include' keyword
+            [ \t]* (?: \\\r?\n [ \t]* )*           # Spaces and line continuations before opening delim
+            (?:
+                "                                  # Double quoted include
+                (?: [^"\n>\\] | \\\r?\n | \\. )*   # Preceding path chars (no raw newline)
+                (?: [/\\] | \\\r?\n )              # Directory separator
+                (?: [^"\n>\\] | \\\r?\n | \\. )*   # Remaining path chars
+                {target_pattern}                   # Target base name
+                (?: \\\r?\n )*                     # Line continuations before closing quote
+                "                                  # Closing double quote
+            |
+                <                                  # Angle bracketed include
+                (?: [^"\n>\\] | \\\r?\n | \\. )*   # Preceding path chars
+                (?: [/\\] | \\\r?\n )              # Directory separator
+                (?: [^"\n>\\] | \\\r?\n | \\. )*   # Remaining path chars
+                {target_pattern}                   # Target base name
+                (?: \\\r?\n )*                     # Line continuations before closing bracket
+                >                                  # Closing angle bracket
+            |
+                "                                  # Directly quoted include
+                {target_pattern}
+                (?: \\\r?\n )*
+                "
+            |
+                <                                  # Directly bracketed include
+                {target_pattern}
+                (?: \\\r?\n )*
+                >
+            )
+        """
+        include_pattern = re.compile(pattern, re.M | re.X)
         abs_target_file = os.path.abspath(target_file)
 
         for entry in db:
