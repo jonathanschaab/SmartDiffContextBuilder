@@ -10,18 +10,19 @@ from collections import OrderedDict
 class LRUFileCache:
     """A Least Recently Used (LRU) file cache for storing file lines, contents, and bytes."""
 
-    def __init__(self, capacity=200, max_size_mb=None):
+    def __init__(self, max_size_mb=200.0, capacity=None):
         """Initialize the LRU cache with a specific limit in MB.
 
         Args:
-            capacity (float): The limit in MB (positional/keyword). Defaults to 200.
-            max_size_mb (float): Optional explicit limit in MB.
+            max_size_mb (float): The maximum cumulative memory footprint in MB. Defaults to 200.0.
+            capacity (float): Deprecated alias for max_size_mb. Used for
+                backward compatibility.
         """
         self.cache = OrderedDict()
-        limit_mb = max_size_mb if max_size_mb is not None else capacity
-        if limit_mb is None:
-            limit_mb = 200
-        self.max_size_bytes = int(limit_mb * 1024 * 1024)
+        limit = capacity if capacity is not None else max_size_mb
+        if limit is None or limit <= 0:
+            limit = 200.0
+        self.max_size_bytes = int(limit * 1024 * 1024)
         self.current_size_bytes = 0
 
     def _load(self, file_path):
@@ -61,6 +62,17 @@ class LRUFileCache:
         while self.cache and self.current_size_bytes > self.max_size_bytes:
             _, popped_entry = self.cache.popitem(last=False)
             self.current_size_bytes -= len(popped_entry["bytes"])
+
+    def resize(self, max_size_mb):
+        """Resize the cache limit in MB, performing validation and immediate evictions.
+
+        Args:
+            max_size_mb (float): The new maximum cumulative memory footprint in MB.
+        """
+        if max_size_mb is None or max_size_mb <= 0:
+            max_size_mb = 200.0
+        self.max_size_bytes = int(max_size_mb * 1024 * 1024)
+        self.evict_to_limit()
 
     def get_lines(self, file_path):
         """Retrieve lines of the file.
@@ -114,7 +126,5 @@ def get_global_cache(max_size_mb=None):
         limit = max_size_mb if max_size_mb is not None else 200.0
         _CACHE_HOLDER["default"] = LRUFileCache(max_size_mb=limit)
     elif max_size_mb is not None:
-        cache = _CACHE_HOLDER["default"]
-        cache.max_size_bytes = int(max_size_mb * 1024 * 1024)
-        cache.evict_to_limit()
+        _CACHE_HOLDER["default"].resize(max_size_mb)
     return _CACHE_HOLDER["default"]

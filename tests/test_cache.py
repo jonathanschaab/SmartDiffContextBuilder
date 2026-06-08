@@ -101,4 +101,27 @@ class TestLRUFileCache(unittest.TestCase):
         self.assertNotIn(self.file_path, cache.cache)
         self.assertEqual(cache.current_size_bytes, 0)
 
+    def test_defensive_initialization_invalid(self):
+        """Verify that negative/zero/None limits default defensively to 200 MB."""
+        cache = LRUFileCache(max_size_mb=-5.0)
+        self.assertEqual(cache.max_size_bytes, 200 * 1024 * 1024)
+
+        cache2 = LRUFileCache(capacity=0.0)
+        self.assertEqual(cache2.max_size_bytes, 200 * 1024 * 1024)
+
+    def test_resize_method_direct(self):
+        """Verify the resize method validates and updates limit correctly."""
+        cache = LRUFileCache(max_size_mb=10.0)
+        self.assertEqual(cache.max_size_bytes, 10 * 1024 * 1024)
+
+        cache.resize(5.0)
+        self.assertEqual(cache.max_size_bytes, 5 * 1024 * 1024)
+
+        cache.resize(0.0)
+        self.assertEqual(cache.max_size_bytes, 200 * 1024 * 1024)
+
+        cache.resize(-1.0)
+        self.assertEqual(cache.max_size_bytes, 200 * 1024 * 1024)
+
+
 
