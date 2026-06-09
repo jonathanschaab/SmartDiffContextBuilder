@@ -314,6 +314,12 @@ class MinimalLSPClient:
                     server.kill()
             except Exception:  # pylint: disable=broad-exception-caught
                 pass
+            for method in ["shutdown_async", "shutdown", "exit"]:
+                if hasattr(client, method):
+                    try:
+                        delattr(client, method)
+                    except AttributeError:
+                        pass
 
         async def _async_cleanup():
             is_stopped = getattr(client, "stopped", False)

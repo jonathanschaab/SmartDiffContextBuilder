@@ -307,7 +307,8 @@ class TestLspClient(unittest.TestCase):
             raise asyncio.TimeoutError()
             
         mock_client.initialize_async = mock_initialize_timeout
-        mock_client.shutdown_async = AsyncMock()
+        mock_shutdown = AsyncMock()
+        mock_client.shutdown_async = mock_shutdown
         mock_client.stop = AsyncMock()
         mock_client.stopped = False
         
@@ -316,7 +317,7 @@ class TestLspClient(unittest.TestCase):
             
         self.assertFalse(success)
         self.assertIsNone(client.client)
-        mock_client.shutdown_async.assert_called_once_with()
+        mock_shutdown.assert_not_called()
         mock_client.stop.assert_called_once()
 
     @patch("context_builder.lsp_client.USE_LSP", True)
@@ -725,11 +726,8 @@ class TestLspClient(unittest.TestCase):
         mock_subproc.kill.side_effect = lambda: setattr(mock_subproc, 'returncode', -9)
         mock_client.subprocess = mock_subproc
         
-        async def mock_shutdown_async(*args, **kwargs):
-            # Verify subprocess was ALREADY killed before this async call
-            self.assertTrue(mock_subproc.kill.called)
-            
-        mock_client.shutdown_async = mock_shutdown_async
+        mock_shutdown = AsyncMock()
+        mock_client.shutdown_async = mock_shutdown
         mock_client.stop = AsyncMock()
         
         client = MinimalLSPClient(["some_lsp_binary"])
@@ -738,6 +736,8 @@ class TestLspClient(unittest.TestCase):
         client.cleanup(force_kill=True)
         
         mock_subproc.kill.assert_called_once()
+        mock_shutdown.assert_not_called()
+        mock_client.stop.assert_called_once()
         self.assertIsNone(client.client)
 
     @patch("context_builder.lsp_client.LanguageClient")
