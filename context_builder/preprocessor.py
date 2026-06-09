@@ -178,7 +178,7 @@ def trace_ffi_callers(func_name, repo_files, source_ext, file_cache=None):
 
 
 # State container to avoid 'global' keyword warning in analyze_compile_commands
-_COMPILE_COMMANDS_STATE = {"cache": None, "mtime": None}
+_COMPILE_COMMANDS_STATE = {"cache": None, "mtime": None, "path": None}
 
 
 def _process_compilation_entry(
@@ -219,12 +219,11 @@ def _process_compilation_entry(
         return
 
     content = file_cache.get_content(abs_ref_file)
-    is_linked = False
-    if content:
-        if "\\" not in content and target_base not in content:
-            is_linked = False
-        else:
-            is_linked = bool(include_pattern.search(content))
+    is_linked = bool(
+        content
+        and ("\\" in content or target_base in content)
+        and include_pattern.search(content)
+    )
 
     if is_linked:
         # Compute a path relative to the active worktree root (CWD)
@@ -260,14 +259,17 @@ def analyze_compile_commands(target_file, file_cache=None, repo_root=None):
         return callers
     try:
         # Cache the parsed database to avoid repeatedly reading/parsing it in a loop.
+        abs_db_path = os.path.abspath("compile_commands.json")
         mtime = os.path.getmtime("compile_commands.json")
         if (
             _COMPILE_COMMANDS_STATE["cache"] is None
+            or _COMPILE_COMMANDS_STATE["path"] != abs_db_path
             or _COMPILE_COMMANDS_STATE["mtime"] != mtime
         ):
             with open("compile_commands.json", "r", encoding="utf-8") as f:
                 _COMPILE_COMMANDS_STATE["cache"] = json.load(f)
             _COMPILE_COMMANDS_STATE["mtime"] = mtime
+            _COMPILE_COMMANDS_STATE["path"] = abs_db_path
         db = _COMPILE_COMMANDS_STATE["cache"] or []
         # Build target pattern to allow line continuations between any characters
         # of the target base name. E.g. 'helper.h' -> 'h(?:\\\r?\n)?e...'

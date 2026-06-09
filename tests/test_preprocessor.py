@@ -19,9 +19,10 @@ class TestPreprocessor(unittest.TestCase):
         os.chdir(self.temp_dir.name)
         # Reset the module-level compile_commands.json cache so each test
         # starts with a clean state and cannot be contaminated by a previous
-        # test's cached mtime/content.
-        _preprocessor_mod._COMPILE_COMMANDS_CACHE = None
-        _preprocessor_mod._COMPILE_COMMANDS_MTIME = None
+        # test's cached mtime/content/path.
+        _preprocessor_mod._COMPILE_COMMANDS_STATE["cache"] = None
+        _preprocessor_mod._COMPILE_COMMANDS_STATE["mtime"] = None
+        _preprocessor_mod._COMPILE_COMMANDS_STATE["path"] = None
 
     def tearDown(self):
         os.chdir(self.old_cwd)
@@ -593,3 +594,57 @@ helper.h"
         cache = LRUFileCache()
         callers = analyze_compile_commands("src/my helper.h", file_cache=cache)
         self.assertNotIn("src/other.cpp", callers)
+
+    def test_analyze_compile_commands_cache_invalidation_on_directory_change(self):
+        """Verify that cache invalidates correctly when the directory of compile_commands.json changes,
+        even if the modification times (mtime) are identical."""
+        # 1. Create dir1 with compile_commands.json
+        dir1 = os.path.join(self.temp_dir.name, "dir1")
+        os.makedirs(os.path.join(dir1, "src"), exist_ok=True)
+        db1 = [
+            {
+                "directory": dir1,
+                "command": "clang++ -c src/file1.cpp",
+                "file": "src/file1.cpp"
+            }
+        ]
+        db1_path = os.path.join(dir1, "compile_commands.json")
+        with open(db1_path, "w") as f:
+            json.dump(db1, f)
+        with open(os.path.join(dir1, "src/file1.cpp"), "w") as f:
+            f.write('#include "helper.h"\n')
+
+        # 2. Create dir2 with different compile_commands.json
+        dir2 = os.path.join(self.temp_dir.name, "dir2")
+        os.makedirs(os.path.join(dir2, "src"), exist_ok=True)
+        db2 = [
+            {
+                "directory": dir2,
+                "command": "clang++ -c src/file2.cpp",
+                "file": "src/file2.cpp"
+            }
+        ]
+        db2_path = os.path.join(dir2, "compile_commands.json")
+        with open(db2_path, "w") as f:
+            json.dump(db2, f)
+        with open(os.path.join(dir2, "src/file2.cpp"), "w") as f:
+            f.write('#include "helper.h"\n')
+
+        # Set the same mtime on both files to simulate the cache collision condition
+        mtime = 123456789.0
+        os.utime(db1_path, (mtime, mtime))
+        os.utime(db2_path, (mtime, mtime))
+
+        # 3. Change directory to dir1 and run analysis
+        os.chdir(dir1)
+        cache1 = LRUFileCache()
+        callers1 = analyze_compile_commands("src/helper.h", file_cache=cache1)
+        self.assertIn("src/file1.cpp", callers1)
+        self.assertNotIn("src/file2.cpp", callers1)
+
+        # 4. Change directory to dir2 and run analysis (should invalidate path and load dir2's database)
+        os.chdir(dir2)
+        cache2 = LRUFileCache()
+        callers2 = analyze_compile_commands("src/helper.h", file_cache=cache2)
+        self.assertIn("src/file2.cpp", callers2)
+        self.assertNotIn("src/file1.cpp", callers2)
