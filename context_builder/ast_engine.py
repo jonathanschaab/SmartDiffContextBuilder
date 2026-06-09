@@ -396,6 +396,11 @@ def _collect_children_info(tree, lines, is_python):
                     min_lines.append("# ... [Data Structure Omitted] ...")
                 else:
                     min_lines.append("/* ... [Data Structure Omitted] ... */")
+
+        # Ensure min_lines is never larger than child_lines to avoid wasting budget
+        if len(min_lines) >= len(child_lines):
+            min_lines = list(child_lines)
+
         children_info.append({
             "full_lines": child_lines,
             "min_lines": min_lines
@@ -410,12 +415,16 @@ def _allocate_budget_and_build(children_info, max_lines):
 
     if total_min_lines > max_lines:
         # We don't even have budget for all signatures.
-        # Print min_lines for as many children as possible in full.
+        # Print min_lines for as many children as possible, slicing the final one to fit budget.
         budget = max_lines
         for info in children_info:
             min_len = len(info["min_lines"])
-            output_lines.extend(info["min_lines"])
-            budget -= min_len
+            if min_len <= budget:
+                output_lines.extend(info["min_lines"])
+                budget -= min_len
+            else:
+                output_lines.extend(info["min_lines"][:budget])
+                budget = 0
             if budget <= 0:
                 break
     else:
