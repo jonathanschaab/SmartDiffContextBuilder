@@ -317,7 +317,7 @@ class MinimalLSPClient:
             for method in ["shutdown_async", "shutdown", "exit"]:
                 if hasattr(client, method):
                     try:
-                        delattr(client, method)
+                        setattr(client, method, lambda *args, **kwargs: None)
                     except AttributeError:
                         pass
 
