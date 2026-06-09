@@ -538,6 +538,8 @@ include "helper.h"
             r"""#include "utils\
 helper.h"
 """,
+            '#include "utils/some_other_helper.h"\n',
+            '#include <common/some_other_helper.h>\n',
         ]
 
         for inc in non_matching_includes:

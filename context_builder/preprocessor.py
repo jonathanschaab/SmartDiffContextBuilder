@@ -296,7 +296,7 @@ def analyze_compile_commands(target_file, file_cache=None, repo_root=None):
                 "                                  # Double quoted include
                 (?: [^"\n>\\] | \\\r?\n | \\. )*   # Preceding path chars (no raw newline)
                 [/\\]                              # Directory separator
-                (?: [^"\n>\\] | \\\r?\n | \\. )*   # Remaining path chars
+                (?: \\\r?\n )*                     # Only line continuations allowed here
                 {target_pattern}                   # Target base name
                 (?: \\\r?\n )*                     # Line continuations before closing quote
                 "                                  # Closing double quote
@@ -304,7 +304,7 @@ def analyze_compile_commands(target_file, file_cache=None, repo_root=None):
                 <                                  # Angle bracketed include
                 (?: [^"\n>\\] | \\\r?\n | \\. )*   # Preceding path chars
                 [/\\]                              # Directory separator
-                (?: [^"\n>\\] | \\\r?\n | \\. )*   # Remaining path chars
+                (?: \\\r?\n )*                     # Only line continuations allowed here
                 {target_pattern}                   # Target base name
                 (?: \\\r?\n )*                     # Line continuations before closing bracket
                 >                                  # Closing angle bracket
