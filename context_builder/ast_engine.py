@@ -383,7 +383,8 @@ def _collect_children_info(tree, lines, is_python):
     definition_types = {
         'function_definition', 'class_definition', 'function_item', 'impl_item',
         'method_definition', 'function_declaration', 'generator_function',
-        'generator_function_declaration', 'arrow_function'
+        'generator_function_declaration', 'arrow_function',
+        'decorated_definition', 'class_declaration', 'export_statement'
     }
     for child in tree.root_node.children:
         child_lines = lines[child.start_point[0]:child.end_point[0] + 1]
@@ -408,43 +409,58 @@ def _collect_children_info(tree, lines, is_python):
     return children_info
 
 
-def _allocate_budget_and_build(children_info, max_lines):
+def _build_with_omissions(children_info, max_lines, is_python):
+    """Build list of lines when total minimum lines exceeds budget, showing omissions."""
+    output_lines = []
+    budget = max_lines
+    for info in children_info:
+        min_len = len(info["min_lines"])
+        if min_len <= budget:
+            output_lines.extend(info["min_lines"])
+            budget -= min_len
+        else:
+            output_lines.extend(info["min_lines"][:budget])
+            budget = 0
+        if budget <= 0:
+            break
+
+    omission_comment = (
+        "# ... [Remaining Methods Omitted] ..."
+        if is_python
+        else "/* ... [Remaining Methods Omitted] ... */"
+    )
+    if output_lines:
+        output_lines[-1] = omission_comment
+    else:
+        output_lines.append(omission_comment)
+    return output_lines
+
+
+def _build_upgraded(children_info, max_lines, total_min_lines):
+    """Build list of lines by upgrading signatures to full bodies where budget allows."""
+    remaining_budget = max_lines - total_min_lines
+    upgraded = [False] * len(children_info)
+    for i, info in enumerate(children_info):
+        upgrade_cost = len(info["full_lines"]) - len(info["min_lines"])
+        if upgrade_cost <= remaining_budget:
+            upgraded[i] = True
+            remaining_budget -= upgrade_cost
+
+    output_lines = []
+    for i, info in enumerate(children_info):
+        if upgraded[i]:
+            output_lines.extend(info["full_lines"])
+        else:
+            output_lines.extend(info["min_lines"])
+    return output_lines
+
+
+def _allocate_budget_and_build(children_info, max_lines, is_python):
     """Allocate budget and build final pruned line list."""
     total_min_lines = sum(len(info["min_lines"]) for info in children_info)
-    output_lines = []
-
     if total_min_lines > max_lines:
-        # We don't even have budget for all signatures.
-        # Print min_lines for as many children as possible, slicing the final one to fit budget.
-        budget = max_lines
-        for info in children_info:
-            min_len = len(info["min_lines"])
-            if min_len <= budget:
-                output_lines.extend(info["min_lines"])
-                budget -= min_len
-            else:
-                output_lines.extend(info["min_lines"][:budget])
-                budget = 0
-            if budget <= 0:
-                break
-    else:
-        # We can fit all signatures!
-        # Upgrade as many children as possible from min_lines to full_lines sequentially.
-        remaining_budget = max_lines - total_min_lines
-        upgraded = [False] * len(children_info)
-        for i, info in enumerate(children_info):
-            upgrade_cost = len(info["full_lines"]) - len(info["min_lines"])
-            if upgrade_cost <= remaining_budget:
-                upgraded[i] = True
-                remaining_budget -= upgrade_cost
-
-        # Build the final output
-        for i, info in enumerate(children_info):
-            if upgraded[i]:
-                output_lines.extend(info["full_lines"])
-            else:
-                output_lines.extend(info["min_lines"])
-    return output_lines
+        return _build_with_omissions(children_info, max_lines, is_python)
+    return _build_upgraded(children_info, max_lines, total_min_lines)
 
 
 def split_massive_block_ast(source_text, file_path, max_lines):
@@ -463,7 +479,11 @@ def split_massive_block_ast(source_text, file_path, max_lines):
 
     tree = AST_ENGINE.parsers[ext].parse(source_text.encode('utf-8'))
     children_info = _collect_children_info(tree, lines, is_python)
-    output_lines = _allocate_budget_and_build(children_info, max_lines)
+    if not children_info:
+        fallback_text = _get_fallback_truncated_text(lines, max_lines, is_python)
+        return [{"suffix": " (Truncated)", "text": fallback_text}]
+
+    output_lines = _allocate_budget_and_build(children_info, max_lines, is_python)
 
     return [{"suffix": " (AST Semantically Pruned)", "text": "\n".join(output_lines)}]
 
