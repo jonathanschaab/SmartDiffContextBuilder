@@ -534,6 +534,10 @@ helper.h"
             """#
 include "helper.h"
 """,
+            # Line continuation acting as directory separator should not match
+            r"""#include "utils\
+helper.h"
+""",
         ]
 
         for inc in non_matching_includes:

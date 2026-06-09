@@ -182,7 +182,15 @@ _COMPILE_COMMANDS_STATE = {"cache": None, "mtime": None}
 
 
 def _process_compilation_entry(
-    entry, include_pattern, abs_target_file, repo_root, callers, file_cache
+    entry,
+    include_pattern,
+    abs_target_file,
+    target_base,
+    repo_root,
+    norm_root,
+    cwd,
+    callers,
+    file_cache,
 ):
     """Process a single compilation command entry from compile_commands.json."""
     ref_file = entry.get("file")
@@ -197,14 +205,13 @@ def _process_compilation_entry(
     abs_ref_file = os.path.abspath(ref_file)
 
     # If repo_root is provided, we are running inside a temporary worktree.
-    if repo_root:
+    if repo_root and norm_root:
         norm_ref = abs_ref_file.replace("\\", "/").lower()
-        norm_root = os.path.abspath(repo_root).replace("\\", "/").lower()
         if norm_ref.startswith(norm_root):
             try:
                 rel_to_root = os.path.relpath(abs_ref_file, repo_root)
                 # Map to the current temporary worktree CWD
-                abs_ref_file = os.path.abspath(os.path.join(os.getcwd(), rel_to_root))
+                abs_ref_file = os.path.abspath(os.path.join(cwd, rel_to_root))
             except ValueError:
                 pass
 
@@ -214,7 +221,6 @@ def _process_compilation_entry(
     content = file_cache.get_content(abs_ref_file)
     is_linked = False
     if content:
-        target_base = os.path.basename(abs_target_file)
         if "\\" not in content and target_base not in content:
             is_linked = False
         else:
@@ -223,7 +229,7 @@ def _process_compilation_entry(
     if is_linked:
         # Compute a path relative to the active worktree root (CWD)
         try:
-            rel_ref_file = os.path.relpath(abs_ref_file, os.getcwd()).replace("\\", "/")
+            rel_ref_file = os.path.relpath(abs_ref_file, cwd).replace("\\", "/")
         except ValueError:
             rel_ref_file = abs_ref_file.replace("\\", "/")
         if rel_ref_file not in callers:
@@ -284,7 +290,7 @@ def analyze_compile_commands(target_file, file_cache=None, repo_root=None):
             (?:
                 "                                  # Double quoted include
                 (?: [^"\n>\\] | \\\r?\n | \\. )*   # Preceding path chars (no raw newline)
-                (?: [/\\] | \\\r?\n )              # Directory separator
+                [/\\]                              # Directory separator
                 (?: [^"\n>\\] | \\\r?\n | \\. )*   # Remaining path chars
                 {target_pattern}                   # Target base name
                 (?: \\\r?\n )*                     # Line continuations before closing quote
@@ -292,7 +298,7 @@ def analyze_compile_commands(target_file, file_cache=None, repo_root=None):
             |
                 <                                  # Angle bracketed include
                 (?: [^"\n>\\] | \\\r?\n | \\. )*   # Preceding path chars
-                (?: [/\\] | \\\r?\n )              # Directory separator
+                [/\\]                              # Directory separator
                 (?: [^"\n>\\] | \\\r?\n | \\. )*   # Remaining path chars
                 {target_pattern}                   # Target base name
                 (?: \\\r?\n )*                     # Line continuations before closing bracket
@@ -311,13 +317,18 @@ def analyze_compile_commands(target_file, file_cache=None, repo_root=None):
         """
         include_pattern = re.compile(pattern, re.M | re.X)
         abs_target_file = os.path.abspath(target_file)
+        norm_root = os.path.abspath(repo_root).replace("\\", "/").lower() if repo_root else None
+        cwd = os.getcwd()
 
         for entry in db:
             _process_compilation_entry(
                 entry,
                 include_pattern,
                 abs_target_file,
+                target_base,
                 repo_root,
+                norm_root,
+                cwd,
                 callers,
                 file_cache,
             )
