@@ -377,33 +377,76 @@ def _get_fallback_truncated_text(lines, max_lines, is_python):
     return "\n".join(lines[:max_lines]) + "\n/* ... [Lines Omitted due to size] ... */"
 
 
-def _collect_children_info(tree, lines, is_python):
-    """Collect full and minimum representation lines for each child node."""
-    children_info = []
+def _get_group_min_lines(group, lines, is_python):
+    """Get the minimum representation lines for a group of children."""
+    start_line = group["start_line"]
+    end_line = group["end_line"]
+    group_children = group["children"]
+
     definition_types = {
         'function_definition', 'class_definition', 'function_item', 'impl_item',
         'method_definition', 'function_declaration', 'generator_function',
         'generator_function_declaration', 'arrow_function',
         'decorated_definition', 'class_declaration', 'export_statement'
     }
-    for child in tree.root_node.children:
-        child_lines = lines[child.start_point[0]:child.end_point[0] + 1]
-        if child.type in definition_types:
-            min_lines = _semantically_truncate_child(child, lines, is_python)
-        else:
-            min_lines = list(child_lines[:5])
-            if len(child_lines) > 5:
-                if is_python:
-                    min_lines.append("# ... [Data Structure Omitted] ...")
-                else:
-                    min_lines.append("/* ... [Data Structure Omitted] ... */")
 
-        # Ensure min_lines is never larger than child_lines to avoid wasting budget
-        if len(min_lines) >= len(child_lines):
-            min_lines = list(child_lines)
+    # Find all children in the group that are definition types
+    defs = [c for c in group_children if c.type in definition_types]
+
+    if not defs:
+        # No definition in the group, fallback to default truncation of the group's lines
+        group_lines = lines[start_line:end_line + 1]
+        min_lines = list(group_lines[:5])
+        if len(group_lines) > 5:
+            if is_python:
+                min_lines.append("# ... [Data Structure Omitted] ...")
+            else:
+                min_lines.append("/* ... [Data Structure Omitted] ... */")
+        return min_lines
+
+    # If there are definitions, we want to semantically truncate each definition
+    # inside the group's line range.
+    # We sort defs by start_line desc to replace slices from end to start safely.
+    defs_sorted = sorted(defs, key=lambda c: c.start_point[0], reverse=True)
+    group_lines = list(lines[start_line:end_line + 1])
+
+    for d in defs_sorted:
+        d_start = d.start_point[0] - start_line
+        d_end = d.end_point[0] - start_line
+        truncated_def = _semantically_truncate_child(d, lines, is_python)
+        group_lines[d_start:d_end + 1] = truncated_def
+
+    return group_lines
+
+
+def _collect_children_info(tree, lines, is_python):
+    """Collect full and minimum representation lines for each child node,
+    merging overlapping ranges."""
+    groups = []
+    for child in tree.root_node.children:
+        c_start = child.start_point[0]
+        c_end = child.end_point[0]
+
+        if groups and c_start <= groups[-1]["end_line"]:
+            groups[-1]["end_line"] = max(groups[-1]["end_line"], c_end)
+            groups[-1]["children"].append(child)
+        else:
+            groups.append({
+                "start_line": c_start,
+                "end_line": c_end,
+                "children": [child]
+            })
+
+    children_info = []
+    for group in groups:
+        full_lines = lines[group["start_line"]:group["end_line"] + 1]
+        min_lines = _get_group_min_lines(group, lines, is_python)
+
+        if len(min_lines) >= len(full_lines):
+            min_lines = list(full_lines)
 
         children_info.append({
-            "full_lines": child_lines,
+            "full_lines": full_lines,
             "min_lines": min_lines
         })
     return children_info

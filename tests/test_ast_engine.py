@@ -982,3 +982,53 @@ class TestAstEngine(unittest.TestCase):
         self.assertEqual(lines[2], "    pass")
         self.assertEqual(lines[3], "    # ... [Remaining Methods Omitted] ...")
 
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_split_massive_block_ast_sibling_no_duplicate_lines(self, mock_ast_engine):
+        # Sibling nodes sharing same line range (e.g. statement + trailing comment or multiple inline statements)
+        source = (
+            "import os; import sys  # inline imports\n"
+            "def foo():\n"
+            "    pass\n"
+        )
+        mock_parser = MagicMock()
+        mock_tree = MagicMock()
+        
+        # Sibling 1: import os (line 0)
+        mock_child1 = MagicMock()
+        mock_child1.type = "import_statement"
+        mock_child1.start_point = (0, 0)
+        mock_child1.end_point = (0, 9)
+        
+        # Sibling 2: import sys (line 0)
+        mock_child2 = MagicMock()
+        mock_child2.type = "import_statement"
+        mock_child2.start_point = (0, 11)
+        mock_child2.end_point = (0, 21)
+        
+        # Sibling 3: trailing comment (line 0)
+        mock_child3 = MagicMock()
+        mock_child3.type = "comment"
+        mock_child3.start_point = (0, 23)
+        mock_child3.end_point = (0, 39)
+        
+        # Sibling 4: function definition (lines 1-2)
+        mock_child4 = MagicMock()
+        mock_child4.type = "function_definition"
+        mock_child4.start_point = (1, 0)
+        mock_child4.end_point = (2, 8)
+        
+        mock_tree.root_node.children = [mock_child1, mock_child2, mock_child3, mock_child4]
+        mock_parser.parse.return_value = mock_tree
+        mock_ast_engine.parsers = {".py": mock_parser}
+        mock_ast_engine.is_supported.return_value = True
+        
+        # Truncating with budget of 3. They should fit without duplication or omission comments.
+        res = split_massive_block_ast(source, "test.py", max_lines=3)
+        self.assertEqual(len(res), 1)
+        text = res[0]["text"]
+        lines = text.splitlines()
+        self.assertEqual(len(lines), 3)
+        self.assertEqual(lines[0], "import os; import sys  # inline imports")
+        self.assertEqual(lines[1], "def foo():")
+        self.assertEqual(lines[2], "    pass")
+
