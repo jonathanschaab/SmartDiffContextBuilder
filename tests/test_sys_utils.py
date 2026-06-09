@@ -250,15 +250,43 @@ class TestSysUtils(unittest.TestCase):
 
     @patch("subprocess.run")
     @patch("context_builder.sys_utils.warn_once")
-    def test_ripgrep_filter_missing_binary_silence(self, mock_warn, mock_run):
+    def test_ripgrep_filter_missing_binary_warning(self, mock_warn, mock_run):
         # When ripgrep is not installed on the system (FileNotFoundError),
-        # it should fail silently and fallback to manual scanning.
+        # it should warn once suggesting to install it, and fallback to manual scanning.
         mock_run.side_effect = FileNotFoundError()
         
         files = ["file1.py", "file2.py"]
         filtered = ripgrep_filter(files, "query")
         
         self.assertEqual(filtered, files)
-        # Verify no warning was issued
-        self.assertFalse(mock_warn.called)
+        # Verify the install suggestion warning was issued once
+        mock_warn.assert_any_call(
+            "ripgrep_missing",
+            unittest.mock.ANY
+        )
+        warn_msg = [c[0][1] for c in mock_warn.call_args_list if c[0][0] == "ripgrep_missing"][0]
+        self.assertIn("please install ripgrep", warn_msg)
 
+    @patch("context_builder.sys_utils.run_command")
+    @patch("context_builder.sys_utils.warn_once")
+    def test_has_rg_checker_missing(self, mock_warn, mock_run):
+        """Verify that when ripgrep is missing, HAS_RG evaluates to False and warns."""
+        # Force re-evaluation by resetting cached value
+        from context_builder.sys_utils import HAS_RG  # pylint: disable=import-outside-toplevel
+        HAS_RG._has_rg = None  # pylint: disable=protected-access
+        mock_run.return_value = ""  # rg not found/executable failed
+
+        self.assertFalse(bool(HAS_RG))
+        mock_warn.assert_called_once_with("ripgrep_missing", unittest.mock.ANY)
+
+    @patch("context_builder.sys_utils.run_command")
+    @patch("context_builder.sys_utils.warn_once")
+    def test_has_rg_checker_present(self, mock_warn, mock_run):
+        """Verify that when ripgrep is present, HAS_RG evaluates to True and does not warn."""
+        # Force re-evaluation by resetting cached value
+        from context_builder.sys_utils import HAS_RG  # pylint: disable=import-outside-toplevel
+        HAS_RG._has_rg = None  # pylint: disable=protected-access
+        mock_run.return_value = "ripgrep 14.1.0"
+
+        self.assertTrue(bool(HAS_RG))
+        mock_warn.assert_not_called()

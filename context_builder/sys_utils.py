@@ -86,8 +86,27 @@ def get_git_tracked_files():
     return [l.strip() for l in stdout.splitlines() if l.strip()]
 
 
-HAS_RG = bool(run_command(["rg", "--version"]))
+class RipgrepChecker:  # pylint: disable=too-few-public-methods
+    """Helper class to lazily check if ripgrep (rg) is installed on the system."""
 
+    def __init__(self):
+        """Initialize the checker with cached result set to None."""
+        self._has_rg = None
+
+    def __bool__(self):
+        """Evaluate truthiness by checking if rg is present, warning once if missing."""
+        if self._has_rg is None:
+            self._has_rg = bool(run_command(["rg", "--version"]))
+            if not self._has_rg:
+                warn_once(
+                    "ripgrep_missing",
+                    "ripgrep is not installed on the system. For significantly faster context "
+                    "construction in large repositories, please install ripgrep (rg)."
+                )
+        return self._has_rg
+
+
+HAS_RG = RipgrepChecker()
 
 def ripgrep_filter(files, token, fixed_strings=True):
     """Filter list of files to only those containing the given token using ripgrep.
@@ -138,7 +157,11 @@ def ripgrep_filter(files, token, fixed_strings=True):
                 f"ripgrep exited with an error code 2. Stderr: {res.stderr.strip()}"
             )
     except FileNotFoundError:
-        pass
+        warn_once(
+            "ripgrep_missing",
+            "ripgrep is not installed on the system. For significantly faster context "
+            "construction in large repositories, please install ripgrep (rg)."
+        )
     except subprocess.TimeoutExpired:
         warn_once(
             "ripgrep_timeout",
