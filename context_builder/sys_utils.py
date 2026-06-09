@@ -162,12 +162,6 @@ def ripgrep_filter(files, token, fixed_strings=True):
                 "ripgrep_error",
                 f"ripgrep exited with an error code 2. Stderr: {res.stderr.strip()}"
             )
-    except FileNotFoundError:
-        warn_once(
-            "ripgrep_missing",
-            "ripgrep is not installed on the system. For significantly faster context "
-            "construction in large repositories, please install ripgrep (rg)."
-        )
     except subprocess.TimeoutExpired:
         warn_once(
             "ripgrep_timeout",

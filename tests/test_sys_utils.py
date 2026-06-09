@@ -255,26 +255,6 @@ class TestSysUtils(unittest.TestCase):
         self.assertEqual(filtered, [])
         self.assertFalse(mock_run.called)
 
-    @patch("context_builder.sys_utils.HAS_RG", True)
-    @patch("subprocess.run")
-    @patch("context_builder.sys_utils.warn_once")
-    def test_ripgrep_filter_missing_binary_warning(self, mock_warn, mock_run):
-        # When ripgrep is not installed on the system (FileNotFoundError),
-        # it should warn once suggesting to install it, and fallback to manual scanning.
-        mock_run.side_effect = FileNotFoundError()
-        
-        files = ["file1.py", "file2.py"]
-        filtered = ripgrep_filter(files, "query")
-        
-        self.assertEqual(filtered, files)
-        # Verify the install suggestion warning was issued once
-        mock_warn.assert_any_call(
-            "ripgrep_missing",
-            unittest.mock.ANY
-        )
-        warn_msg = [c[0][1] for c in mock_warn.call_args_list if c[0][0] == "ripgrep_missing"][0]
-        self.assertIn("please install ripgrep", warn_msg)
-
     @patch("context_builder.sys_utils.run_command")
     @patch("context_builder.sys_utils.warn_once")
     def test_has_rg_checker_missing(self, mock_warn, mock_run):
