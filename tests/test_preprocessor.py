@@ -19,9 +19,10 @@ class TestPreprocessor(unittest.TestCase):
         os.chdir(self.temp_dir.name)
         # Reset the module-level compile_commands.json cache so each test
         # starts with a clean state and cannot be contaminated by a previous
-        # test's cached mtime/content.
-        _preprocessor_mod._COMPILE_COMMANDS_CACHE = None
-        _preprocessor_mod._COMPILE_COMMANDS_MTIME = None
+        # test's cached mtime/content/path.
+        _preprocessor_mod._COMPILE_COMMANDS_STATE["cache"] = None
+        _preprocessor_mod._COMPILE_COMMANDS_STATE["mtime"] = None
+        _preprocessor_mod._COMPILE_COMMANDS_STATE["path"] = None
 
     def tearDown(self):
         os.chdir(self.old_cwd)
@@ -44,16 +45,23 @@ class TestPreprocessor(unittest.TestCase):
         with open("compile_commands.json", "w") as f:
             json.dump(db, f)
 
+        # Create main.cpp that includes main.h
+        with open("main.cpp", "w") as f:
+            f.write('#include "main.h"\n')
+
         # Create other.cpp that includes main.h
         with open("other.cpp", "w") as f:
             f.write('#include "main.h"\n')
 
         # Target file is main.h.
-        # It should link to main.cpp (base name match) and other.cpp (include match).
+        # It should link to main.cpp and other.cpp via include match.
         callers = analyze_compile_commands("main.h")
         self.assertIn("main.cpp", callers)
         self.assertIn("other.cpp", callers)
-        self.assertEqual(callers["main.cpp"][0]["code"], "// [Compilation Link via compile_commands.json]")
+        self.assertEqual(
+            callers["main.cpp"][0]["code"],
+            "// [Compilation Link via compile_commands.json]"
+        )
 
     def test_analyze_compile_commands_precise_include(self):
         # Create compile_commands.json
@@ -90,8 +98,12 @@ class TestPreprocessor(unittest.TestCase):
         with open("compile_commands.json", "w") as f:
             json.dump(db, f)
 
+        # Create src/main.cpp that includes main.h
+        with open("src/main.cpp", "w") as f:
+            f.write('#include "main.h"\n')
+
         # Target file is src/main.h. Since ../src/main.cpp resolves to src/main.cpp,
-        # it should link correctly by matching base name main.cpp to main.h.
+        # it should link correctly by checking include match.
         callers = analyze_compile_commands("src/main.h")
         self.assertIn("src/main.cpp", callers)
 
@@ -153,6 +165,11 @@ class TestPreprocessor(unittest.TestCase):
         abs_target = os.path.abspath("other_drive/main.h")
         abs_dir = os.path.abspath("project")
 
+        # Create other_drive/main.cpp containing `#include "main.h"`
+        os.makedirs(os.path.dirname(abs_ref), exist_ok=True)
+        with open(abs_ref, "w") as f:
+            f.write('#include "main.h"\n')
+
         db = [
             {
                 "directory": abs_dir,
@@ -164,11 +181,10 @@ class TestPreprocessor(unittest.TestCase):
             json.dump(db, f)
 
         # Since relpath raises ValueError, it should fall back to the absolute path.
-        with patch("os.path.exists", return_value=True):
-            callers = analyze_compile_commands(abs_target)
-            # Should fall back to the absolute path formatted with forward slashes
-            expected_key = abs_ref.replace("\\", "/")
-            self.assertIn(expected_key, callers)
+        callers = analyze_compile_commands(abs_target)
+        # Should fall back to the absolute path formatted with forward slashes
+        expected_key = abs_ref.replace("\\", "/")
+        self.assertIn(expected_key, callers)
 
     def test_trace_macro_expansion_relpath_drive_mismatch(self):
         """On Windows, clang linemarkers can reference absolute paths on a
@@ -219,7 +235,14 @@ class TestPreprocessor(unittest.TestCase):
             os.makedirs(src_dir, exist_ok=True)
             ref_cpp = os.path.join(src_dir, "other.cpp")
             with open(ref_cpp, "w") as f:
-                f.write("// other\n")
+                f.write('#include "other.h"\n')
+
+            # Create the corresponding source file in the worktree
+            wt_src_dir = os.path.join(worktree, "src")
+            os.makedirs(wt_src_dir, exist_ok=True)
+            wt_ref_cpp = os.path.join(wt_src_dir, "other.cpp")
+            with open(wt_ref_cpp, "w") as f:
+                f.write('#include "other.h"\n')
 
             # Create compile_commands.json in the *worktree* (it was copied there
             # by main() before chdir-ing into the worktree)
@@ -356,6 +379,10 @@ class TestPreprocessor(unittest.TestCase):
         ref_cpp = os.path.join(original_repo, "src", "main.cpp")
         target_h = os.path.join(original_repo, "src", "main.h")
 
+        # Create src/main.cpp containing `#include "main.h"`
+        with open(ref_cpp, "w") as f:
+            f.write('#include "main.h"\n')
+
         db = [
             {
                 "directory": os.path.join(original_repo, "src"),
@@ -366,11 +393,9 @@ class TestPreprocessor(unittest.TestCase):
         with open("compile_commands.json", "w") as f:
             json.dump(db, f)
 
-        # Passing repo_root, which normally attempts mapping but fails on relpath
-        with patch("os.path.exists", return_value=True):
-            callers = analyze_compile_commands(target_h, repo_root=original_repo)
-            # Since relpath raised ValueError, the file mapping should fall back gracefully
-            self.assertIsInstance(callers, dict)
+        callers = analyze_compile_commands(target_h, repo_root=original_repo)
+        # Since relpath raised ValueError, the file mapping should fall back gracefully
+        self.assertIsInstance(callers, dict)
 
     def test_custom_ffi_patterns(self):
         """Verify that build_ffi_registry respects custom ffi_rg_pattern and ffi_patterns in CONFIG."""
@@ -435,3 +460,223 @@ class TestPreprocessor(unittest.TestCase):
                 mock_warn.assert_any_call("ffi_pattern_non_string", ANY)
         finally:
             reset_config()
+
+    def test_analyze_compile_commands_include_with_directory_prefix(self):
+        """Verify that translation units are successfully linked to target files
+        when includes use relative, absolute, forward-slashed, or back-slashed
+        directory prefixes, while avoiding substring matching false positives."""
+        # Create compile_commands.json
+        db = [
+            {
+                "directory": ".",
+                "command": "clang++ -c src/other.cpp",
+                "file": "src/other.cpp"
+            }
+        ]
+        with open("compile_commands.json", "w") as f:
+            json.dump(db, f)
+
+        os.makedirs("src", exist_ok=True)
+
+        # Test cases for matching includes
+        matching_includes = [
+            '#include "utils/helper.h"\n',
+            '#include <common/helper.h>\n',
+            '#include "a/b/c/helper.h"\n',
+            '#include "/usr/include/helper.h"\n',
+            '#include "C:\\project\\src\\helper.h"\n',
+            '#include "helper.h"\n',
+            '#  include   <helper.h>\n',
+            r"""#include \
+"utils/helper.h"
+""",
+            r"""#include "utils/\
+helper.h"
+""",
+            r"""#\
+include "helper.h"
+""",
+            r"""#include "hel\
+per.h"
+""",
+            # Test Windows-style line continuation explicitly
+            '#include \\\r\n"helper.h"\n',
+        ]
+
+        for inc in matching_includes:
+            # Write to src/other.cpp
+            with open("src/other.cpp", "w", encoding="utf-8", newline="") as f:
+                f.write(inc)
+            
+            # Pass a fresh cache instance to force reload of file content
+            cache = LRUFileCache()
+            callers = analyze_compile_commands("src/helper.h", file_cache=cache)
+            self.assertIn("src/other.cpp", callers, f"Failed to match: {inc.strip()}")
+
+        # Test cases for non-matching includes
+        non_matching_includes = [
+            '#include "some_other_helper.h"\n',
+            '#include "helper.h/other.h"\n',
+            '#include "helper.h_suffix.h"\n',
+            '// #include "helper.h"\n',
+            '// #include <helper.h>\n',
+            '  // #include "helper.h"\n',
+            '/* #include "helper.h" */\n',
+            'int x = 0; #include "helper.h"\n',
+            """#include 
+"utils/helper.h"
+""",
+            """#include "utils/
+helper.h"
+""",
+            """#include "helper.h
+"
+""",
+            """#
+include "helper.h"
+""",
+            # Line continuation acting as directory separator should not match
+            r"""#include "utils\
+helper.h"
+""",
+            '#include "utils/some_other_helper.h"\n',
+            '#include <common/some_other_helper.h>\n',
+        ]
+
+        for inc in non_matching_includes:
+            with open("src/other.cpp", "w", encoding="utf-8", newline="") as f:
+                f.write(inc)
+            
+            cache = LRUFileCache()
+            callers = analyze_compile_commands("src/helper.h", file_cache=cache)
+            self.assertNotIn("src/other.cpp", callers, f"Incorrectly matched: {inc.strip()}")
+
+    def test_analyze_compile_commands_invalid_target(self):
+        """Verify that analyze_compile_commands returns early and empty for invalid target files."""
+        # Empty target file
+        callers = analyze_compile_commands("")
+        self.assertEqual(callers, {})
+
+        # None target file
+        callers = analyze_compile_commands(None)
+        self.assertEqual(callers, {})
+
+        # Target file that has no basename (e.g. just a separator or root directory)
+        callers = analyze_compile_commands("/")
+        self.assertEqual(callers, {})
+
+    def test_analyze_compile_commands_target_with_spaces(self):
+        """Verify that targets containing space characters are matched correctly."""
+        db = [
+            {
+                "directory": ".",
+                "command": "clang++ -c src/other.cpp",
+                "file": "src/other.cpp"
+            }
+        ]
+        with open("compile_commands.json", "w") as f:
+            json.dump(db, f)
+
+        os.makedirs("src", exist_ok=True)
+
+        # 1. Matching case: include contains a space matching the target
+        with open("src/other.cpp", "w", encoding="utf-8", newline="") as f:
+            f.write('#include "my helper.h"\n')
+        
+        cache = LRUFileCache()
+        callers = analyze_compile_commands("src/my helper.h", file_cache=cache)
+        self.assertIn("src/other.cpp", callers)
+
+        # 2. Non-matching case: include does not contain the space (un-spaced filename)
+        with open("src/other.cpp", "w", encoding="utf-8", newline="") as f:
+            f.write('#include "myhelper.h"\n')
+        
+        cache = LRUFileCache()
+        callers = analyze_compile_commands("src/my helper.h", file_cache=cache)
+        self.assertNotIn("src/other.cpp", callers)
+
+    def test_analyze_compile_commands_cache_invalidation_on_directory_change(self):
+        """Verify that cache invalidates correctly when the directory of compile_commands.json changes,
+        even if the modification times (mtime) are identical."""
+        # 1. Create dir1 with compile_commands.json
+        dir1 = os.path.join(self.temp_dir.name, "dir1")
+        os.makedirs(os.path.join(dir1, "src"), exist_ok=True)
+        db1 = [
+            {
+                "directory": dir1,
+                "command": "clang++ -c src/file1.cpp",
+                "file": "src/file1.cpp"
+            }
+        ]
+        db1_path = os.path.join(dir1, "compile_commands.json")
+        with open(db1_path, "w") as f:
+            json.dump(db1, f)
+        with open(os.path.join(dir1, "src/file1.cpp"), "w") as f:
+            f.write('#include "helper.h"\n')
+
+        # 2. Create dir2 with different compile_commands.json
+        dir2 = os.path.join(self.temp_dir.name, "dir2")
+        os.makedirs(os.path.join(dir2, "src"), exist_ok=True)
+        db2 = [
+            {
+                "directory": dir2,
+                "command": "clang++ -c src/file2.cpp",
+                "file": "src/file2.cpp"
+            }
+        ]
+        db2_path = os.path.join(dir2, "compile_commands.json")
+        with open(db2_path, "w") as f:
+            json.dump(db2, f)
+        with open(os.path.join(dir2, "src/file2.cpp"), "w") as f:
+            f.write('#include "helper.h"\n')
+
+        # Set the same mtime on both files to simulate the cache collision condition
+        mtime = 123456789.0
+        os.utime(db1_path, (mtime, mtime))
+        os.utime(db2_path, (mtime, mtime))
+
+        # 3. Change directory to dir1 and run analysis
+        os.chdir(dir1)
+        cache1 = LRUFileCache()
+        callers1 = analyze_compile_commands("src/helper.h", file_cache=cache1)
+        self.assertIn("src/file1.cpp", callers1)
+        self.assertNotIn("src/file2.cpp", callers1)
+
+        # 4. Change directory to dir2 and run analysis (should invalidate path and load dir2's database)
+        os.chdir(dir2)
+        cache2 = LRUFileCache()
+        callers2 = analyze_compile_commands("src/helper.h", file_cache=cache2)
+        self.assertIn("src/file2.cpp", callers2)
+        self.assertNotIn("src/file1.cpp", callers2)
+
+    @patch("os.path.relpath")
+    def test_analyze_compile_commands_worktree_repo_root_prefix_bug(self, mock_relpath):
+        """Verify that files in sibling directories sharing a prefix with repo_root
+        are not incorrectly matched and processed by the worktree mapping logic."""
+        # Setup a dummy compile commands database pointing to a file in a sibling directory
+        db = [
+            {
+                "directory": ".",
+                "command": "clang++ -c /path/to/repo_addon/src/other.cpp",
+                "file": "/path/to/repo_addon/src/other.cpp"
+            }
+        ]
+        with open("compile_commands.json", "w", encoding="utf-8") as f:
+            json.dump(db, f)
+
+        # Set up a side effect for mock_relpath to behave normally for other calls
+        # (e.g. relpath calls when computing return values), but we want to make sure
+        # it is not called with the sibling directory path relative to the repo_root.
+        mock_relpath.side_effect = os.path.relpath
+
+        # Run analysis looking for helper.h, with repo_root=/path/to/repo
+        # Since /path/to/repo_addon does not start with /path/to/repo/ (with trailing slash),
+        # it should NOT trigger the worktree mapping logic.
+        cache = LRUFileCache()
+        analyze_compile_commands("src/helper.h", repo_root="/path/to/repo", file_cache=cache)
+
+        # Assert that relpath was never called to map /path/to/repo_addon relative to /path/to/repo
+        for call_args in mock_relpath.call_args_list:
+            args = call_args[0]
+            if len(args) >= 2:
+                self.assertNotEqual(args[1], "/path/to/repo")

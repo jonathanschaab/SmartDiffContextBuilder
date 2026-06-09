@@ -178,11 +178,19 @@ def trace_ffi_callers(func_name, repo_files, source_ext, file_cache=None):
 
 
 # State container to avoid 'global' keyword warning in analyze_compile_commands
-_COMPILE_COMMANDS_STATE = {"cache": None, "mtime": None}
+_COMPILE_COMMANDS_STATE = {"cache": None, "mtime": None, "path": None}
 
 
 def _process_compilation_entry(
-    entry, target_name, target_base, abs_target_file, repo_root, callers, file_cache
+    entry,
+    include_pattern,
+    abs_target_file,
+    target_base,
+    repo_root,
+    norm_root,
+    cwd,
+    callers,
+    file_cache,
 ):
     """Process a single compilation command entry from compile_commands.json."""
     ref_file = entry.get("file")
@@ -197,38 +205,30 @@ def _process_compilation_entry(
     abs_ref_file = os.path.abspath(ref_file)
 
     # If repo_root is provided, we are running inside a temporary worktree.
-    if repo_root:
+    if repo_root and norm_root:
         norm_ref = abs_ref_file.replace("\\", "/").lower()
-        norm_root = os.path.abspath(repo_root).replace("\\", "/").lower()
         if norm_ref.startswith(norm_root):
             try:
                 rel_to_root = os.path.relpath(abs_ref_file, repo_root)
                 # Map to the current temporary worktree CWD
-                abs_ref_file = os.path.abspath(os.path.join(os.getcwd(), rel_to_root))
+                abs_ref_file = os.path.abspath(os.path.join(cwd, rel_to_root))
             except ValueError:
                 pass
 
     if abs_ref_file == abs_target_file:
         return
 
-    ref_base = os.path.basename(abs_ref_file)
-    ref_name = os.path.splitext(ref_base)[0]
-
-    is_linked = False
-    # Check if base names match (e.g. foo.h and foo.cpp)
-    if ref_name == target_name:
-        is_linked = True
-    elif os.path.exists(abs_ref_file):
-        # Check if the translation unit includes target_base
-        content = file_cache.get_content(abs_ref_file)
-        pattern = rf'#\s*include\s*["<]{re.escape(target_base)}[">]'
-        if re.search(pattern, content):
-            is_linked = True
+    content = file_cache.get_content(abs_ref_file)
+    is_linked = bool(
+        content
+        and ("\\" in content or target_base in content)
+        and include_pattern.search(content)
+    )
 
     if is_linked:
         # Compute a path relative to the active worktree root (CWD)
         try:
-            rel_ref_file = os.path.relpath(abs_ref_file, os.getcwd()).replace("\\", "/")
+            rel_ref_file = os.path.relpath(abs_ref_file, cwd).replace("\\", "/")
         except ValueError:
             rel_ref_file = abs_ref_file.replace("\\", "/")
         if rel_ref_file not in callers:
@@ -250,30 +250,96 @@ def analyze_compile_commands(target_file, file_cache=None, repo_root=None):
     if file_cache is None:
         file_cache = get_global_cache()
     callers = {}
+    if not target_file:
+        return callers
+    target_base = os.path.basename(target_file)
+    if not target_base:
+        return callers
     if not os.path.exists("compile_commands.json"):
         return callers
     try:
         # Cache the parsed database to avoid repeatedly reading/parsing it in a loop.
+        abs_db_path = os.path.abspath("compile_commands.json")
         mtime = os.path.getmtime("compile_commands.json")
         if (
             _COMPILE_COMMANDS_STATE["cache"] is None
+            or _COMPILE_COMMANDS_STATE["path"] != abs_db_path
             or _COMPILE_COMMANDS_STATE["mtime"] != mtime
         ):
             with open("compile_commands.json", "r", encoding="utf-8") as f:
                 _COMPILE_COMMANDS_STATE["cache"] = json.load(f)
             _COMPILE_COMMANDS_STATE["mtime"] = mtime
+            _COMPILE_COMMANDS_STATE["path"] = abs_db_path
         db = _COMPILE_COMMANDS_STATE["cache"] or []
-        target_base = os.path.basename(target_file)
-        target_name = os.path.splitext(target_base)[0]
+        # Build target pattern to allow line continuations between any characters
+        # of the target base name. E.g. 'helper.h' -> 'h(?:\\\r?\n)?e...'
+        # Space character is explicitly escaped because re.VERBOSE ignores unescaped space.
+        target_chars = []
+        for c in target_base:
+            escaped = re.escape(c)
+            if c.isspace() and escaped == c:
+                escaped = "\\" + c
+            target_chars.append(escaped)
+        target_pattern = r'(?:\\\r?\n)?'.join(target_chars)
+
+        # Construct a regex that matches include directives, restricting raw
+        # newlines but allowing line continuations. We use re.VERBOSE (re.X)
+        # to allow clean formatting and comments. Changing [^">] to [^"\n>\\]
+        # ensures we do not match across lines unless there is a proper
+        # backslash line-continuation ('\').
+        pattern = rf"""
+            ^                                      # Start of a line
+            [ \t]* (?: \\\r?\n [ \t]* )*           # Spaces and line continuations before '#'
+            \#                                     # Preprocessor hash symbol
+            [ \t]* (?: \\\r?\n [ \t]* )*           # Spaces and line continuations before 'include'
+            include                                # 'include' keyword
+            [ \t]* (?: \\\r?\n [ \t]* )*           # Spaces and line continuations before opening delim
+            (?:
+                "                                  # Double quoted include
+                (?: [^"\n>\\] | \\\r?\n | \\. )*   # Preceding path chars (no raw newline)
+                [/\\]                              # Directory separator
+                (?: \\\r?\n )*                     # Only line continuations allowed here
+                {target_pattern}                   # Target base name
+                (?: \\\r?\n )*                     # Line continuations before closing quote
+                "                                  # Closing double quote
+            |
+                <                                  # Angle bracketed include
+                (?: [^"\n>\\] | \\\r?\n | \\. )*   # Preceding path chars
+                [/\\]                              # Directory separator
+                (?: \\\r?\n )*                     # Only line continuations allowed here
+                {target_pattern}                   # Target base name
+                (?: \\\r?\n )*                     # Line continuations before closing bracket
+                >                                  # Closing angle bracket
+            |
+                "                                  # Directly quoted include
+                {target_pattern}
+                (?: \\\r?\n )*
+                "
+            |
+                <                                  # Directly bracketed include
+                {target_pattern}
+                (?: \\\r?\n )*
+                >
+            )
+        """
+        include_pattern = re.compile(pattern, re.M | re.X)
         abs_target_file = os.path.abspath(target_file)
+        norm_root = None
+        if repo_root:
+            norm_root = os.path.abspath(repo_root).replace("\\", "/").lower()
+            if not norm_root.endswith("/"):
+                norm_root += "/"
+        cwd = os.getcwd()
 
         for entry in db:
             _process_compilation_entry(
                 entry,
-                target_name,
-                target_base,
+                include_pattern,
                 abs_target_file,
+                target_base,
                 repo_root,
+                norm_root,
+                cwd,
                 callers,
                 file_cache,
             )
