@@ -150,3 +150,60 @@ class TestSysUtils(unittest.TestCase):
         cmd_args = mock_run.call_args[0][0]
         self.assertNotIn("-F", cmd_args)
 
+    @patch("subprocess.run")
+    @patch("context_builder.sys_utils.warn_once")
+    def test_ripgrep_filter_timeout_warning(self, mock_warn, mock_run):
+        import subprocess
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd=["rg"], timeout=5)
+
+        files = ["file1.py", "file2.py"]
+        filtered = ripgrep_filter(files, "query")
+
+        # Must fall back to returning all input files
+        self.assertEqual(filtered, files)
+        # Verify warning was issued
+        mock_warn.assert_any_call(
+            "ripgrep_timeout",
+            unittest.mock.ANY
+        )
+        # Verify the warning contains the word "timed out" and adjustment options
+        warn_msg = [c[0][1] for c in mock_warn.call_args_list if c[0][0] == "ripgrep_timeout"][0]
+        self.assertIn("timed out", warn_msg)
+        self.assertIn("--ripgrep-timeout", warn_msg)
+
+    @patch("subprocess.run")
+    @patch("context_builder.sys_utils.warn_once")
+    def test_ripgrep_filter_unexpected_fail_warning(self, mock_warn, mock_run):
+        mock_run.side_effect = RuntimeError("Something bad happened")
+
+        files = ["file1.py", "file2.py"]
+        filtered = ripgrep_filter(files, "query")
+
+        # Must fall back to returning all input files
+        self.assertEqual(filtered, files)
+        # Verify warning was issued
+        mock_warn.assert_any_call(
+            "ripgrep_fail",
+            unittest.mock.ANY
+        )
+
+    @patch("subprocess.run")
+    def test_ripgrep_filter_respects_configured_timeout(self, mock_run):
+        from context_builder.config import CONFIG
+        mock_res = MagicMock()
+        mock_res.returncode = 0
+        mock_res.stdout = ""
+        mock_run.return_value = mock_res
+
+        # Save and set config timeout
+        old_timeout = CONFIG.get("ripgrep_timeout", 10)
+        CONFIG["ripgrep_timeout"] = 25
+        try:
+            ripgrep_filter(["file1.py"], "query")
+            # Verify subprocess.run was called with timeout=25
+            self.assertTrue(mock_run.called)
+            kwargs = mock_run.call_args[1]
+            self.assertEqual(kwargs.get("timeout"), 25)
+        finally:
+            CONFIG["ripgrep_timeout"] = old_timeout
+

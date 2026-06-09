@@ -100,6 +100,8 @@ def ripgrep_filter(files, token, fixed_strings=True):
     Returns:
         list: Filtered list of files.
     """
+    from .config import CONFIG  # pylint: disable=import-outside-toplevel
+    timeout = CONFIG.get("ripgrep_timeout", 10)
     try:
         cmd = ["rg", "-l"]
         if fixed_strings:
@@ -112,7 +114,7 @@ def ripgrep_filter(files, token, fixed_strings=True):
             stderr=subprocess.PIPE,
             text=True,
             check=False,
-            timeout=10,
+            timeout=timeout,
         )
         # rg exits with 0 if matches are found, 1 if no matches are found, and 2 if an error occurs.
         if res.returncode == 0:
@@ -121,8 +123,23 @@ def ripgrep_filter(files, token, fixed_strings=True):
             return [f for f in files if f.replace("\\", "/") in rg_files]
         if res.returncode == 1:
             return []
-    except Exception:  # pylint: disable=broad-exception-caught
-        pass
+        if res.returncode == 2:
+            warn_once(
+                "ripgrep_error",
+                f"ripgrep exited with an error code 2. Stderr: {res.stderr.strip()}"
+            )
+    except subprocess.TimeoutExpired:
+        warn_once(
+            "ripgrep_timeout",
+            f"ripgrep search timed out after {timeout} seconds. "
+            "You can increase this limit by using the --ripgrep-timeout option "
+            "or by setting 'ripgrep_timeout' in your config file."
+        )
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        warn_once(
+            "ripgrep_fail",
+            f"ripgrep failed unexpectedly: {e}. Falling back to manual scanning."
+        )
     # Fallback to scanning all files if ripgrep execution fails unexpectedly
     return files
 
