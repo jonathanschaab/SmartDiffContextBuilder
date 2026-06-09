@@ -207,3 +207,25 @@ class TestSysUtils(unittest.TestCase):
         finally:
             CONFIG["ripgrep_timeout"] = old_timeout
 
+    @patch("subprocess.run")
+    @patch("context_builder.sys_utils.warn_once")
+    def test_ripgrep_filter_invalid_timeout_fallback(self, mock_warn, mock_run):
+        from context_builder.config import CONFIG
+        mock_res = MagicMock()
+        mock_res.returncode = 0
+        mock_res.stdout = ""
+        mock_run.return_value = mock_res
+
+        old_timeout = CONFIG.get("ripgrep_timeout", 10)
+        # Test negative timeout
+        CONFIG["ripgrep_timeout"] = -5
+        try:
+            ripgrep_filter(["file1.py"], "query")
+            self.assertTrue(mock_run.called)
+            kwargs = mock_run.call_args[1]
+            # Verify it fell back to 10 seconds
+            self.assertEqual(kwargs.get("timeout"), 10)
+            mock_warn.assert_any_call("ripgrep_timeout_invalid", unittest.mock.ANY)
+        finally:
+            CONFIG["ripgrep_timeout"] = old_timeout
+

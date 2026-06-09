@@ -102,6 +102,13 @@ def ripgrep_filter(files, token, fixed_strings=True):
     """
     from .config import CONFIG  # pylint: disable=import-outside-toplevel
     timeout = CONFIG.get("ripgrep_timeout", 10)
+    if not isinstance(timeout, (int, float)) or timeout <= 0:
+        warn_once(
+            "ripgrep_timeout_invalid",
+            f"Configured ripgrep_timeout ({timeout}) must be a positive number. "
+            "Falling back to default (10 seconds)."
+        )
+        timeout = 10
     try:
         cmd = ["rg", "-l"]
         if fixed_strings:
