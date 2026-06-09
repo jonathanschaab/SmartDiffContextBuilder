@@ -293,3 +293,27 @@ class TestSysUtils(unittest.TestCase):
         self.assertFalse(bool(HAS_RG))
         mock_warn.assert_called_once_with("ripgrep_missing", unittest.mock.ANY)
 
+    @patch("context_builder.sys_utils.HAS_RG", True)
+    @patch("subprocess.run")
+    @patch("context_builder.sys_utils.warn_once")
+    def test_ripgrep_filter_unexpected_exit_code_warning(self, mock_warn, mock_run):
+        """Verify that any non-zero/non-one return code triggers the ripgrep_error warning."""
+        mock_res = MagicMock()
+        mock_res.returncode = 2
+        mock_res.stderr = "Some internal rg error"
+        mock_run.return_value = mock_res
+
+        files = ["file1.py", "file2.py"]
+        filtered = ripgrep_filter(files, "query")
+
+        # Must fall back to returning all input files
+        self.assertEqual(filtered, files)
+        mock_warn.assert_any_call(
+            "ripgrep_error",
+            unittest.mock.ANY
+        )
+        warn_msg = [c[0][1] for c in mock_warn.call_args_list if c[0][0] == "ripgrep_error"][0]
+        self.assertIn("unexpected return code 2", warn_msg)
+        self.assertIn("Some internal rg error", warn_msg)
+
+

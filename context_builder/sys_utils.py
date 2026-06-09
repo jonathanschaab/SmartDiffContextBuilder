@@ -157,11 +157,12 @@ def ripgrep_filter(files, token, fixed_strings=True):
             return [f for f in files if f.replace("\\", "/") in rg_files]
         if res.returncode == 1:
             return []
-        if res.returncode == 2:
-            warn_once(
-                "ripgrep_error",
-                f"ripgrep exited with an error code 2. Stderr: {res.stderr.strip()}"
-            )
+        warn_once(
+            "ripgrep_error",
+            f"ripgrep exited with an unexpected return code {res.returncode}. "
+            f"Stderr: {res.stderr.strip()}"
+        )
+
     except subprocess.TimeoutExpired:
         warn_once(
             "ripgrep_timeout",
