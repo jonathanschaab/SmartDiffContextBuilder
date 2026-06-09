@@ -370,6 +370,151 @@ def _semantically_truncate_child(child, lines, is_python):
     return truncated_lines
 
 
+def _get_fallback_truncated_text(lines, max_lines, is_python):
+    """Get fallback plain truncation when AST parsing is not supported."""
+    if is_python:
+        return "\n".join(lines[:max_lines]) + "\n# ... [Lines Omitted due to size] ..."
+    return "\n".join(lines[:max_lines]) + "\n/* ... [Lines Omitted due to size] ... */"
+
+
+def _get_group_min_lines(group, lines, is_python):
+    """Get the minimum representation lines for a group of children."""
+    start_line = group["start_line"]
+    end_line = group["end_line"]
+    group_children = group["children"]
+
+    definition_types = {
+        'function_definition', 'class_definition', 'function_item', 'impl_item',
+        'method_definition', 'function_declaration', 'generator_function',
+        'generator_function_declaration', 'arrow_function',
+        'decorated_definition', 'class_declaration', 'export_statement'
+    }
+
+    # Find all children in the group that are definition types
+    defs = [c for c in group_children if c.type in definition_types]
+
+    if not defs:
+        # No definition in the group, fallback to default truncation of the group's lines
+        group_lines = lines[start_line:end_line + 1]
+        min_lines = list(group_lines[:5])
+        if len(group_lines) > 5:
+            indent = 0
+            if min_lines:
+                last_line = min_lines[-1]
+                indent = len(last_line) - len(last_line.lstrip())
+            indent_str = " " * indent
+            if is_python:
+                min_lines.append(indent_str + "# ... [Data Structure Omitted] ...")
+            else:
+                min_lines.append(indent_str + "/* ... [Data Structure Omitted] ... */")
+        return min_lines
+
+    # If there are definitions, we want to semantically truncate each definition
+    # inside the group's line range.
+    # We sort defs by start_line desc to replace slices from end to start safely.
+    defs_sorted = sorted(defs, key=lambda c: c.start_point[0], reverse=True)
+    group_lines = list(lines[start_line:end_line + 1])
+
+    for d in defs_sorted:
+        d_start = d.start_point[0] - start_line
+        d_end = d.end_point[0] - start_line
+        truncated_def = _semantically_truncate_child(d, lines, is_python)
+        group_lines[d_start:d_end + 1] = truncated_def
+
+    return group_lines
+
+
+def _collect_children_info(tree, lines, is_python):
+    """Collect full and minimum representation lines for each child node,
+    merging overlapping ranges."""
+    groups = []
+    for child in tree.root_node.children:
+        c_start = child.start_point[0]
+        c_end = child.end_point[0]
+
+        if groups and c_start <= groups[-1]["end_line"]:
+            groups[-1]["end_line"] = max(groups[-1]["end_line"], c_end)
+            groups[-1]["children"].append(child)
+        else:
+            groups.append({
+                "start_line": c_start,
+                "end_line": c_end,
+                "children": [child]
+            })
+
+    children_info = []
+    for group in groups:
+        full_lines = lines[group["start_line"]:group["end_line"] + 1]
+        min_lines = _get_group_min_lines(group, lines, is_python)
+
+        if len(min_lines) >= len(full_lines):
+            min_lines = list(full_lines)
+
+        children_info.append({
+            "full_lines": full_lines,
+            "min_lines": min_lines
+        })
+    return children_info
+
+
+def _build_with_omissions(children_info, max_lines, is_python):
+    """Build list of lines when total minimum lines exceeds budget, showing omissions."""
+    output_lines = []
+    # Reserve 1 line for omission comment
+    budget = max(0, max_lines - 1)
+    for info in children_info:
+        min_len = len(info["min_lines"])
+        if min_len <= budget:
+            output_lines.extend(info["min_lines"])
+            budget -= min_len
+        else:
+            output_lines.extend(info["min_lines"][:budget])
+            budget = 0
+        if budget <= 0:
+            break
+
+    # Determine indentation of the last line in output_lines
+    indent = 0
+    if output_lines:
+        last_line = output_lines[-1]
+        indent = len(last_line) - len(last_line.lstrip())
+
+    omission_comment = (
+        "# ... [Remaining Methods Omitted] ..."
+        if is_python
+        else "/* ... [Remaining Methods Omitted] ... */"
+    )
+    output_lines.append(" " * indent + omission_comment)
+    return output_lines
+
+
+def _build_upgraded(children_info, max_lines, total_min_lines):
+    """Build list of lines by upgrading signatures to full bodies where budget allows."""
+    remaining_budget = max_lines - total_min_lines
+    upgraded = [False] * len(children_info)
+    for i, info in enumerate(children_info):
+        upgrade_cost = len(info["full_lines"]) - len(info["min_lines"])
+        if upgrade_cost <= remaining_budget:
+            upgraded[i] = True
+            remaining_budget -= upgrade_cost
+
+    output_lines = []
+    for i, info in enumerate(children_info):
+        if upgraded[i]:
+            output_lines.extend(info["full_lines"])
+        else:
+            output_lines.extend(info["min_lines"])
+    return output_lines
+
+
+def _allocate_budget_and_build(children_info, max_lines, is_python):
+    """Allocate budget and build final pruned line list."""
+    total_min_lines = sum(len(info["min_lines"]) for info in children_info)
+    if total_min_lines > max_lines:
+        return _build_with_omissions(children_info, max_lines, is_python)
+    return _build_upgraded(children_info, max_lines, total_min_lines)
+
+
 def split_massive_block_ast(source_text, file_path, max_lines):
     """Truncate and omit large AST definition blocks to preserve context budgets."""
     max_lines = max(1, max_lines)
@@ -381,40 +526,16 @@ def split_massive_block_ast(source_text, file_path, max_lines):
     is_python = ext == '.py'
 
     if not AST_ENGINE.is_supported(ext):
-        if is_python:
-            fallback_text = "\n".join(lines[:max_lines]) + "\n# ... [Lines Omitted due to size] ..."
-        else:
-            fallback_text = (
-                "\n".join(lines[:max_lines]) + "\n/* ... [Lines Omitted due to size] ... */"
-            )
+        fallback_text = _get_fallback_truncated_text(lines, max_lines, is_python)
         return [{"suffix": " (Truncated)", "text": fallback_text}]
 
     tree = AST_ENGINE.parsers[ext].parse(source_text.encode('utf-8'))
-    output_lines = []
-    budget = max_lines
+    children_info = _collect_children_info(tree, lines, is_python)
+    if not children_info:
+        fallback_text = _get_fallback_truncated_text(lines, max_lines, is_python)
+        return [{"suffix": " (Truncated)", "text": fallback_text}]
 
-    for child in tree.root_node.children:
-        child_lines = lines[child.start_point[0]:child.end_point[0] + 1]
-        if len(child_lines) < budget:
-            output_lines.extend(child_lines)
-            budget -= len(child_lines)
-        else:
-            if child.type in [
-                'function_definition', 'class_definition', 'function_item', 'impl_item',
-                'method_definition', 'function_declaration', 'generator_function',
-                'generator_function_declaration', 'arrow_function'
-            ]:
-                truncated = _semantically_truncate_child(child, lines, is_python)
-                output_lines.extend(truncated)
-            else:
-                output_lines.extend(child_lines[:5])
-                if is_python:
-                    output_lines.append("# ... [Data Structure Omitted] ...")
-                else:
-                    output_lines.append("/* ... [Data Structure Omitted] ... */")
-            budget -= 3
-            if budget <= 0:
-                break
+    output_lines = _allocate_budget_and_build(children_info, max_lines, is_python)
 
     return [{"suffix": " (AST Semantically Pruned)", "text": "\n".join(output_lines)}]
 

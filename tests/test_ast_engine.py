@@ -184,6 +184,11 @@ class TestAstEngine(unittest.TestCase):
             "    y\n"
             "):\n"
             "    # body starts here\n"
+            "    # line 1\n"
+            "    # line 2\n"
+            "    # line 3\n"
+            "    # line 4\n"
+            "    # line 5\n"
             "    pass\n"
         )
         
@@ -194,14 +199,14 @@ class TestAstEngine(unittest.TestCase):
         mock_tree.root_node.children = [mock_child]
         mock_child.type = "function_definition"
         mock_child.start_point = (0, 0)
-        mock_child.end_point = (6, 0)
+        mock_child.end_point = (11, 0)
         
         mock_parser.parse.return_value = mock_tree
         mock_ast_engine.parsers = {".py": mock_parser}
         mock_ast_engine.is_supported.return_value = True
         
-        # We truncate with max_lines=4. The body is larger (7 lines), so it should be semantically truncated.
-        res = split_massive_block_ast(source, "test.py", max_lines=4)
+        # We truncate with max_lines=7. The body is larger (12 lines), so it should be semantically truncated.
+        res = split_massive_block_ast(source, "test.py", max_lines=7)
         
         self.assertEqual(len(res), 1)
         truncated_text = res[0]["text"]
@@ -219,6 +224,11 @@ class TestAstEngine(unittest.TestCase):
             "    y: str = 'hello'\n"
             ") -> bool:\n"
             "    # body starts here\n"
+            "    # line 1\n"
+            "    # line 2\n"
+            "    # line 3\n"
+            "    # line 4\n"
+            "    # line 5\n"
             "    pass\n"
         )
         
@@ -229,13 +239,13 @@ class TestAstEngine(unittest.TestCase):
         mock_tree.root_node.children = [mock_child]
         mock_child.type = "function_definition"
         mock_child.start_point = (0, 0)
-        mock_child.end_point = (5, 0)
+        mock_child.end_point = (11, 0)
         
         mock_parser.parse.return_value = mock_tree
         mock_ast_engine.parsers = {".py": mock_parser}
         mock_ast_engine.is_supported.return_value = True
         
-        res = split_massive_block_ast(source, "test.py", max_lines=3)
+        res = split_massive_block_ast(source, "test.py", max_lines=6)
         
         self.assertEqual(len(res), 1)
         truncated_text = res[0]["text"]
@@ -251,6 +261,8 @@ class TestAstEngine(unittest.TestCase):
         source = (
             "    myMethod(x) {\n"
             "        console.log(x);\n"
+            "        console.log(x);\n"
+            "        console.log(x);\n"
             "    }\n"
         )
         
@@ -261,13 +273,13 @@ class TestAstEngine(unittest.TestCase):
         mock_tree.root_node.children = [mock_child]
         mock_child.type = "method_definition"
         mock_child.start_point = (0, 0)
-        mock_child.end_point = (2, 0)
+        mock_child.end_point = (4, 0)
         
         mock_parser.parse.return_value = mock_tree
         mock_ast_engine.parsers = {".js": mock_parser}
         mock_ast_engine.is_supported.return_value = True
         
-        res = split_massive_block_ast(source, "test.js", max_lines=2)
+        res = split_massive_block_ast(source, "test.js", max_lines=3)
         self.assertEqual(len(res), 1)
         truncated_text = res[0]["text"]
         self.assertIn("myMethod(x) {", truncated_text)
@@ -676,4 +688,378 @@ class TestAstEngine(unittest.TestCase):
         self.assertEqual(len(occurrences), 1)
         self.assertEqual(occurrences[0]["line"], 4)
         self.assertEqual(occurrences[0]["code"], "y = target_func()  # Actual call")
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_split_massive_block_ast_two_pass_prioritizes_signatures(self, mock_ast_engine):
+        source = (
+            "def method_one():\n"
+            "    # body line 1\n"
+            "    # body line 2\n"
+            "    # body line 3\n"
+            "    # body line 4\n"
+            "    # body line 5\n"
+            "    # body line 6\n"
+            "    # body line 7\n"
+            "    # body line 8\n"
+            "    # body line 9\n"
+            "    pass\n"
+            "def method_two():\n"
+            "    # body 1\n"
+            "    # body 2\n"
+            "    # body 3\n"
+            "    pass\n"
+            "def method_three():\n"
+            "    # unique body 1\n"
+            "    # unique body 2\n"
+            "    # unique body 3\n"
+            "    pass\n"
+        )
+        
+        mock_parser = MagicMock()
+        mock_tree = MagicMock()
+        
+        mock_child1 = MagicMock()
+        mock_child1.type = "function_definition"
+        mock_child1.start_point = (0, 0)
+        mock_child1.end_point = (10, 0)
+        
+        mock_child2 = MagicMock()
+        mock_child2.type = "function_definition"
+        mock_child2.start_point = (11, 0)
+        mock_child2.end_point = (15, 0)
+        
+        mock_child3 = MagicMock()
+        mock_child3.type = "function_definition"
+        mock_child3.start_point = (16, 0)
+        mock_child3.end_point = (20, 0)
+        
+        mock_tree.root_node.children = [mock_child1, mock_child2, mock_child3]
+        mock_parser.parse.return_value = mock_tree
+        mock_ast_engine.parsers = {".py": mock_parser}
+        mock_ast_engine.is_supported.return_value = True
+        
+        # Call split_massive_block_ast with max_lines=11.
+        # total_min_lines is 3 + 3 + 3 = 9. remaining_budget = 2.
+        # method_one upgrade cost is 8 -> does not upgrade.
+        # method_two upgrade cost is 2 -> upgrades.
+        # method_three upgrade cost is 2 -> does not upgrade.
+        res = split_massive_block_ast(source, "test.py", max_lines=11)
+        
+        self.assertEqual(len(res), 1)
+        text = res[0]["text"]
+        
+        # Verify method_one is truncated to its signature
+        self.assertIn("def method_one():", text)
+        self.assertIn("# ... [Inner Body Omitted for Context Preservation] ...", text)
+        self.assertNotIn("# body line 1", text)
+        
+        # Verify method_two has its full body printed
+        self.assertIn("def method_two():", text)
+        self.assertIn("# body 1", text)
+        self.assertIn("# body 2", text)
+        self.assertIn("# body 3", text)
+        
+        # Verify method_three is truncated to its signature
+        self.assertIn("def method_three():", text)
+        self.assertNotIn("# unique body 1", text)
+        
+        # Verify both methods' signatures exist (so they are not omitted completely)
+        self.assertTrue(text.count("def method_two():") == 1)
+        self.assertTrue(text.count("def method_three():") == 1)
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_split_massive_block_ast_min_lines_not_larger_than_full_lines(self, mock_ast_engine):
+        source = (
+            "def foo():\n"
+            "    pass\n"
+            "def bar():\n"
+            "    pass\n"
+        )
+        mock_parser = MagicMock()
+        mock_tree = MagicMock()
+        
+        mock_child1 = MagicMock()
+        mock_child1.type = "function_definition"
+        mock_child1.start_point = (0, 0)
+        mock_child1.end_point = (1, 0)
+        
+        mock_child2 = MagicMock()
+        mock_child2.type = "function_definition"
+        mock_child2.start_point = (2, 0)
+        mock_child2.end_point = (3, 0)
+        
+        mock_tree.root_node.children = [mock_child1, mock_child2]
+        mock_parser.parse.return_value = mock_tree
+        mock_ast_engine.parsers = {".py": mock_parser}
+        mock_ast_engine.is_supported.return_value = True
+        
+        res = split_massive_block_ast(source, "test.py", max_lines=3)
+        self.assertEqual(len(res), 1)
+        text = res[0]["text"]
+        
+        # Verify that the output was sliced to exactly 3 lines
+        self.assertEqual(len(text.splitlines()), 3)
+        # Verify no inner body omission comments exist (since min_lines was optimized to the full body)
+        self.assertNotIn("Inner Body Omitted", text)
+        self.assertEqual(text, "def foo():\n    pass\n    # ... [Remaining Methods Omitted] ...")
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_split_massive_block_ast_new_definition_types(self, mock_ast_engine):
+        # Verify decorated_definition, class_declaration, and export_statement are recognized as definitions.
+        source_py = (
+            "@my_decorator\n"
+            "def my_func():\n"
+            "    # line 1\n"
+            "    # line 2\n"
+            "    # line 3\n"
+            "    # line 4\n"
+            "    # line 5\n"
+            "    pass\n"
+        )
+        mock_parser = MagicMock()
+        mock_tree = MagicMock()
+        mock_child = MagicMock()
+        mock_child.type = "decorated_definition"
+        mock_child.start_point = (0, 0)
+        mock_child.end_point = (7, 0)
+        
+        mock_tree.root_node.children = [mock_child]
+        mock_parser.parse.return_value = mock_tree
+        mock_ast_engine.parsers = {".py": mock_parser}
+        mock_ast_engine.is_supported.return_value = True
+        
+        # Using a budget of 5 lines. Since it is recognized as a definition,
+        # it should get semantically truncated (signature + omission comment).
+        res = split_massive_block_ast(source_py, "test.py", max_lines=5)
+        self.assertEqual(len(res), 1)
+        text = res[0]["text"]
+        self.assertIn("@my_decorator", text)
+        self.assertIn("Inner Body Omitted", text)
+
+        # Verify class_declaration
+        source_js = (
+            "class MyClass {\n"
+            "    constructor() {\n"
+            "        // line 1\n"
+            "        // line 2\n"
+            "        // line 3\n"
+            "        // line 4\n"
+            "        // line 5\n"
+            "    }\n"
+            "}\n"
+        )
+        mock_child_js = MagicMock()
+        mock_child_js.type = "class_declaration"
+        mock_child_js.start_point = (0, 0)
+        mock_child_js.end_point = (8, 0)
+
+        mock_tree.root_node.children = [mock_child_js]
+        mock_ast_engine.parsers = {".js": mock_parser}
+        
+        res = split_massive_block_ast(source_js, "test.js", max_lines=4)
+        self.assertEqual(len(res), 1)
+        text_js = res[0]["text"]
+        self.assertIn("class MyClass {", text_js)
+        self.assertIn("Inner Body Omitted", text_js)
+
+        # Verify export_statement
+        source_js2 = (
+            "export const myFunc = () => {\n"
+            "    // line 1\n"
+            "    // line 2\n"
+            "    // line 3\n"
+            "    // line 4\n"
+            "    // line 5\n"
+            "};\n"
+        )
+        mock_child_js2 = MagicMock()
+        mock_child_js2.type = "export_statement"
+        mock_child_js2.start_point = (0, 0)
+        mock_child_js2.end_point = (6, 0)
+
+        mock_tree.root_node.children = [mock_child_js2]
+        
+        res = split_massive_block_ast(source_js2, "test.js", max_lines=4)
+        self.assertEqual(len(res), 1)
+        text_js2 = res[0]["text"]
+        self.assertIn("export const myFunc = () => {", text_js2)
+        self.assertIn("Inner Body Omitted", text_js2)
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_split_massive_block_ast_empty_children_fallback(self, mock_ast_engine):
+        # Whitespace-only file with no AST children parsed
+        source = "   \n  \n\t\n"
+        mock_parser = MagicMock()
+        mock_tree = MagicMock()
+        mock_tree.root_node.children = []
+        mock_parser.parse.return_value = mock_tree
+        mock_ast_engine.parsers = {".py": mock_parser}
+        mock_ast_engine.is_supported.return_value = True
+        
+        # It should fall back to plain truncation instead of returning empty string
+        res = split_massive_block_ast(source, "test.py", max_lines=2)
+        self.assertEqual(len(res), 1)
+        self.assertIn("Omitted", res[0]["text"])
+        self.assertIn("Truncated", res[0]["suffix"])
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_split_massive_block_ast_remaining_omitted_indicator(self, mock_ast_engine):
+        # Total minimum lines is 3 + 3 = 6. max_lines = 4.
+        # So child2 is skipped entirely. Verify the omission comment is appended.
+        source = (
+            "def foo():\n"
+            "    # long body\n"
+            "    # long body\n"
+            "    # long body\n"
+            "    pass\n"
+            "def bar():\n"
+            "    # long body\n"
+            "    # long body\n"
+            "    # long body\n"
+            "    pass\n"
+        )
+        mock_parser = MagicMock()
+        mock_tree = MagicMock()
+        
+        mock_child1 = MagicMock()
+        mock_child1.type = "function_definition"
+        mock_child1.start_point = (0, 0)
+        mock_child1.end_point = (4, 0)
+        
+        mock_child2 = MagicMock()
+        mock_child2.type = "function_definition"
+        mock_child2.start_point = (5, 0)
+        mock_child2.end_point = (9, 0)
+        
+        mock_tree.root_node.children = [mock_child1, mock_child2]
+        mock_parser.parse.return_value = mock_tree
+        mock_ast_engine.parsers = {".py": mock_parser}
+        mock_ast_engine.is_supported.return_value = True
+        
+        res = split_massive_block_ast(source, "test.py", max_lines=4)
+        self.assertEqual(len(res), 1)
+        text = res[0]["text"]
+        
+        # Verify the omission comment replaced the last line to respect budget of 4
+        lines = text.splitlines()
+        self.assertEqual(len(lines), 4)
+        self.assertEqual(lines[-1], "    # ... [Remaining Methods Omitted] ...")
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_split_massive_block_ast_omission_preserves_last_line_and_indentation(self, mock_ast_engine):
+        source = (
+            "def foo():\n"
+            "    # line 1\n"
+            "    # line 2\n"
+            "    # line 3\n"
+            "    pass\n"
+            "def bar():\n"
+            "    pass\n"
+        )
+        mock_parser = MagicMock()
+        mock_tree = MagicMock()
+        
+        mock_child1 = MagicMock()
+        mock_child1.type = "function_definition"
+        mock_child1.start_point = (0, 0)
+        mock_child1.end_point = (4, 0)
+        
+        mock_child2 = MagicMock()
+        mock_child2.type = "function_definition"
+        mock_child2.start_point = (5, 0)
+        mock_child2.end_point = (6, 0)
+        
+        mock_tree.root_node.children = [mock_child1, mock_child2]
+        mock_parser.parse.return_value = mock_tree
+        mock_ast_engine.parsers = {".py": mock_parser}
+        mock_ast_engine.is_supported.return_value = True
+        
+        res = split_massive_block_ast(source, "test.py", max_lines=4)
+        self.assertEqual(len(res), 1)
+        text = res[0]["text"]
+        lines = text.splitlines()
+        self.assertEqual(len(lines), 4)
+        self.assertEqual(lines[2], "    pass")
+        self.assertEqual(lines[3], "    # ... [Remaining Methods Omitted] ...")
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_split_massive_block_ast_sibling_no_duplicate_lines(self, mock_ast_engine):
+        # Sibling nodes sharing same line range (e.g. statement + trailing comment or multiple inline statements)
+        source = (
+            "import os; import sys  # inline imports\n"
+            "def foo():\n"
+            "    pass\n"
+        )
+        mock_parser = MagicMock()
+        mock_tree = MagicMock()
+        
+        # Sibling 1: import os (line 0)
+        mock_child1 = MagicMock()
+        mock_child1.type = "import_statement"
+        mock_child1.start_point = (0, 0)
+        mock_child1.end_point = (0, 9)
+        
+        # Sibling 2: import sys (line 0)
+        mock_child2 = MagicMock()
+        mock_child2.type = "import_statement"
+        mock_child2.start_point = (0, 11)
+        mock_child2.end_point = (0, 21)
+        
+        # Sibling 3: trailing comment (line 0)
+        mock_child3 = MagicMock()
+        mock_child3.type = "comment"
+        mock_child3.start_point = (0, 23)
+        mock_child3.end_point = (0, 39)
+        
+        # Sibling 4: function definition (lines 1-2)
+        mock_child4 = MagicMock()
+        mock_child4.type = "function_definition"
+        mock_child4.start_point = (1, 0)
+        mock_child4.end_point = (2, 8)
+        
+        mock_tree.root_node.children = [mock_child1, mock_child2, mock_child3, mock_child4]
+        mock_parser.parse.return_value = mock_tree
+        mock_ast_engine.parsers = {".py": mock_parser}
+        mock_ast_engine.is_supported.return_value = True
+        
+        # Truncating with budget of 3. They should fit without duplication or omission comments.
+        res = split_massive_block_ast(source, "test.py", max_lines=3)
+        self.assertEqual(len(res), 1)
+        text = res[0]["text"]
+        lines = text.splitlines()
+        self.assertEqual(len(lines), 3)
+        self.assertEqual(lines[0], "import os; import sys  # inline imports")
+        self.assertEqual(lines[1], "def foo():")
+        self.assertEqual(lines[2], "    pass")
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_split_massive_block_ast_data_structure_omission_preserves_indentation(self, mock_ast_engine):
+        source_dict = (
+            "    my_dict = {\n"
+            "        'a': 1,\n"
+            "        'b': 2,\n"
+            "        'c': 3,\n"
+            "        'd': 4,\n"
+            "        'e': 5,\n"
+            "        'f': 6,\n"
+            "    }\n"
+        )
+        mock_parser = MagicMock()
+        mock_tree = MagicMock()
+        mock_child_dict = MagicMock()
+        mock_child_dict.type = "assignment"
+        mock_child_dict.start_point = (0, 0)
+        mock_child_dict.end_point = (7, 5)
+        
+        mock_tree.root_node.children = [mock_child_dict]
+        mock_parser.parse.return_value = mock_tree
+        mock_ast_engine.parsers = {".py": mock_parser}
+        mock_ast_engine.is_supported.return_value = True
+        
+        res = split_massive_block_ast(source_dict, "test.py", max_lines=6)
+        self.assertEqual(len(res), 1)
+        text = res[0]["text"]
+        lines = text.splitlines()
+        self.assertEqual(len(lines), 6)
+        self.assertEqual(lines[-1], "        # ... [Data Structure Omitted] ...")
 
