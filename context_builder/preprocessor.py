@@ -324,7 +324,11 @@ def analyze_compile_commands(target_file, file_cache=None, repo_root=None):
         """
         include_pattern = re.compile(pattern, re.M | re.X)
         abs_target_file = os.path.abspath(target_file)
-        norm_root = os.path.abspath(repo_root).replace("\\", "/").lower() if repo_root else None
+        norm_root = None
+        if repo_root:
+            norm_root = os.path.abspath(repo_root).replace("\\", "/").lower()
+            if not norm_root.endswith("/"):
+                norm_root += "/"
         cwd = os.getcwd()
 
         for entry in db:

@@ -648,3 +648,35 @@ helper.h"
         callers2 = analyze_compile_commands("src/helper.h", file_cache=cache2)
         self.assertIn("src/file2.cpp", callers2)
         self.assertNotIn("src/file1.cpp", callers2)
+
+    @patch("os.path.relpath")
+    def test_analyze_compile_commands_worktree_repo_root_prefix_bug(self, mock_relpath):
+        """Verify that files in sibling directories sharing a prefix with repo_root
+        are not incorrectly matched and processed by the worktree mapping logic."""
+        # Setup a dummy compile commands database pointing to a file in a sibling directory
+        db = [
+            {
+                "directory": ".",
+                "command": "clang++ -c /path/to/repo_addon/src/other.cpp",
+                "file": "/path/to/repo_addon/src/other.cpp"
+            }
+        ]
+        with open("compile_commands.json", "w", encoding="utf-8") as f:
+            json.dump(db, f)
+
+        # Set up a side effect for mock_relpath to behave normally for other calls
+        # (e.g. relpath calls when computing return values), but we want to make sure
+        # it is not called with the sibling directory path relative to the repo_root.
+        mock_relpath.side_effect = os.path.relpath
+
+        # Run analysis looking for helper.h, with repo_root=/path/to/repo
+        # Since /path/to/repo_addon does not start with /path/to/repo/ (with trailing slash),
+        # it should NOT trigger the worktree mapping logic.
+        cache = LRUFileCache()
+        analyze_compile_commands("src/helper.h", repo_root="/path/to/repo", file_cache=cache)
+
+        # Assert that relpath was never called to map /path/to/repo_addon relative to /path/to/repo
+        for call_args in mock_relpath.call_args_list:
+            args = call_args[0]
+            if len(args) >= 2:
+                self.assertNotEqual(args[1], "/path/to/repo")
