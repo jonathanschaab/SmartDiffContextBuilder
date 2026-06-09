@@ -925,6 +925,7 @@ class TestCLI(unittest.TestCase):
         from context_builder.config import CONFIG, reset_config
         reset_config()
 
+        # 1. Test integer timeout
         mock_args = CliNamespace()
         mock_args.ripgrep_timeout = 35
         mock_parse_args.return_value = mock_args
@@ -932,12 +933,21 @@ class TestCLI(unittest.TestCase):
         main()
 
         self.assertEqual(CONFIG["ripgrep_timeout"], 35)
-        # Verify that it is set on the Namespace object passed to run_scan
         args_passed = mock_run_scan.call_args[0][0]
         self.assertEqual(args_passed.ripgrep_timeout, 35)
 
-        # Verify type validation (should fail if not an int)
-        mock_args.ripgrep_timeout = "not_an_int"
+        # 2. Test float/fractional timeout
+        reset_config()
+        mock_args = CliNamespace()
+        mock_args.ripgrep_timeout = 1.5
+        mock_parse_args.return_value = mock_args
+
+        main()
+
+        self.assertEqual(CONFIG["ripgrep_timeout"], 1.5)
+
+        # 3. Verify type validation (should fail if not an int/float, e.g. a string)
+        mock_args.ripgrep_timeout = "not_a_float"
         with self.assertRaises(SystemExit) as cm:
             main()
         self.assertEqual(cm.exception.code, 1)

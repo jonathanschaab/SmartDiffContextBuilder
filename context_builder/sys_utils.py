@@ -100,6 +100,8 @@ def ripgrep_filter(files, token, fixed_strings=True):
     Returns:
         list: Filtered list of files.
     """
+    if not files:
+        return []
     from .config import CONFIG  # pylint: disable=import-outside-toplevel
     timeout = CONFIG.get("ripgrep_timeout", 10)
     if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout <= 0:

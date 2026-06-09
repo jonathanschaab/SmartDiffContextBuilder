@@ -129,7 +129,7 @@ def reset_config():
         'max_interface_depth': 15,
         'disable_pruning': False,
         'lsp_timeout': 45,
-        'ripgrep_timeout': 10,
+        'ripgrep_timeout': 10.0,
         'no_language_server': False,
         'skip_ffi': False,
         'skip_macro_expansion': False,

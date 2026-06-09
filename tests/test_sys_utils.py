@@ -241,3 +241,10 @@ class TestSysUtils(unittest.TestCase):
         finally:
             CONFIG["ripgrep_timeout"] = old_timeout
 
+    @patch("subprocess.run")
+    def test_ripgrep_filter_empty_files_early_exit(self, mock_run):
+        # Empty input files list should return immediately without calling subprocess
+        filtered = ripgrep_filter([], "query")
+        self.assertEqual(filtered, [])
+        self.assertFalse(mock_run.called)
+
