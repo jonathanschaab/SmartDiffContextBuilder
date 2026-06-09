@@ -1032,3 +1032,34 @@ class TestAstEngine(unittest.TestCase):
         self.assertEqual(lines[1], "def foo():")
         self.assertEqual(lines[2], "    pass")
 
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_split_massive_block_ast_data_structure_omission_preserves_indentation(self, mock_ast_engine):
+        source_dict = (
+            "    my_dict = {\n"
+            "        'a': 1,\n"
+            "        'b': 2,\n"
+            "        'c': 3,\n"
+            "        'd': 4,\n"
+            "        'e': 5,\n"
+            "        'f': 6,\n"
+            "    }\n"
+        )
+        mock_parser = MagicMock()
+        mock_tree = MagicMock()
+        mock_child_dict = MagicMock()
+        mock_child_dict.type = "assignment"
+        mock_child_dict.start_point = (0, 0)
+        mock_child_dict.end_point = (7, 5)
+        
+        mock_tree.root_node.children = [mock_child_dict]
+        mock_parser.parse.return_value = mock_tree
+        mock_ast_engine.parsers = {".py": mock_parser}
+        mock_ast_engine.is_supported.return_value = True
+        
+        res = split_massive_block_ast(source_dict, "test.py", max_lines=6)
+        self.assertEqual(len(res), 1)
+        text = res[0]["text"]
+        lines = text.splitlines()
+        self.assertEqual(len(lines), 6)
+        self.assertEqual(lines[-1], "        # ... [Data Structure Omitted] ...")
+

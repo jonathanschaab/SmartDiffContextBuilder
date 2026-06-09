@@ -398,10 +398,15 @@ def _get_group_min_lines(group, lines, is_python):
         group_lines = lines[start_line:end_line + 1]
         min_lines = list(group_lines[:5])
         if len(group_lines) > 5:
+            indent = 0
+            if min_lines:
+                last_line = min_lines[-1]
+                indent = len(last_line) - len(last_line.lstrip())
+            indent_str = " " * indent
             if is_python:
-                min_lines.append("# ... [Data Structure Omitted] ...")
+                min_lines.append(indent_str + "# ... [Data Structure Omitted] ...")
             else:
-                min_lines.append("/* ... [Data Structure Omitted] ... */")
+                min_lines.append(indent_str + "/* ... [Data Structure Omitted] ... */")
         return min_lines
 
     # If there are definitions, we want to semantically truncate each definition
