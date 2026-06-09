@@ -412,7 +412,8 @@ def _collect_children_info(tree, lines, is_python):
 def _build_with_omissions(children_info, max_lines, is_python):
     """Build list of lines when total minimum lines exceeds budget, showing omissions."""
     output_lines = []
-    budget = max_lines
+    # Reserve 1 line for omission comment
+    budget = max(0, max_lines - 1)
     for info in children_info:
         min_len = len(info["min_lines"])
         if min_len <= budget:
@@ -424,15 +425,18 @@ def _build_with_omissions(children_info, max_lines, is_python):
         if budget <= 0:
             break
 
+    # Determine indentation of the last line in output_lines
+    indent = 0
+    if output_lines:
+        last_line = output_lines[-1]
+        indent = len(last_line) - len(last_line.lstrip())
+
     omission_comment = (
         "# ... [Remaining Methods Omitted] ..."
         if is_python
         else "/* ... [Remaining Methods Omitted] ... */"
     )
-    if output_lines:
-        output_lines[-1] = omission_comment
-    else:
-        output_lines.append(omission_comment)
+    output_lines.append(" " * indent + omission_comment)
     return output_lines
 
 

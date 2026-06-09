@@ -801,7 +801,7 @@ class TestAstEngine(unittest.TestCase):
         self.assertEqual(len(text.splitlines()), 3)
         # Verify no inner body omission comments exist (since min_lines was optimized to the full body)
         self.assertNotIn("Inner Body Omitted", text)
-        self.assertEqual(text, "def foo():\n    pass\n# ... [Remaining Methods Omitted] ...")
+        self.assertEqual(text, "def foo():\n    pass\n    # ... [Remaining Methods Omitted] ...")
 
     @patch("context_builder.ast_engine.AST_ENGINE")
     def test_split_massive_block_ast_new_definition_types(self, mock_ast_engine):
@@ -943,5 +943,42 @@ class TestAstEngine(unittest.TestCase):
         # Verify the omission comment replaced the last line to respect budget of 4
         lines = text.splitlines()
         self.assertEqual(len(lines), 4)
-        self.assertEqual(lines[-1], "# ... [Remaining Methods Omitted] ...")
+        self.assertEqual(lines[-1], "    # ... [Remaining Methods Omitted] ...")
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_split_massive_block_ast_omission_preserves_last_line_and_indentation(self, mock_ast_engine):
+        source = (
+            "def foo():\n"
+            "    # line 1\n"
+            "    # line 2\n"
+            "    # line 3\n"
+            "    pass\n"
+            "def bar():\n"
+            "    pass\n"
+        )
+        mock_parser = MagicMock()
+        mock_tree = MagicMock()
+        
+        mock_child1 = MagicMock()
+        mock_child1.type = "function_definition"
+        mock_child1.start_point = (0, 0)
+        mock_child1.end_point = (4, 0)
+        
+        mock_child2 = MagicMock()
+        mock_child2.type = "function_definition"
+        mock_child2.start_point = (5, 0)
+        mock_child2.end_point = (6, 0)
+        
+        mock_tree.root_node.children = [mock_child1, mock_child2]
+        mock_parser.parse.return_value = mock_tree
+        mock_ast_engine.parsers = {".py": mock_parser}
+        mock_ast_engine.is_supported.return_value = True
+        
+        res = split_massive_block_ast(source, "test.py", max_lines=4)
+        self.assertEqual(len(res), 1)
+        text = res[0]["text"]
+        lines = text.splitlines()
+        self.assertEqual(len(lines), 4)
+        self.assertEqual(lines[2], "    pass")
+        self.assertEqual(lines[3], "    # ... [Remaining Methods Omitted] ...")
 
