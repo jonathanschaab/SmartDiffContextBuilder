@@ -269,10 +269,15 @@ def analyze_compile_commands(target_file, file_cache=None, repo_root=None):
                 _COMPILE_COMMANDS_STATE["cache"] = json.load(f)
             _COMPILE_COMMANDS_STATE["mtime"] = mtime
         db = _COMPILE_COMMANDS_STATE["cache"] or []
-        target_base = os.path.basename(target_file)
         # Build target pattern to allow line continuations between any characters
         # of the target base name. E.g. 'helper.h' -> 'h(?:\\\r?\n)?e...'
-        target_chars = [re.escape(c) for c in target_base]
+        # Space character is explicitly escaped because re.VERBOSE ignores unescaped space.
+        target_chars = []
+        for c in target_base:
+            escaped = re.escape(c)
+            if c.isspace() and escaped == c:
+                escaped = "\\" + c
+            target_chars.append(escaped)
         target_pattern = r'(?:\\\r?\n)?'.join(target_chars)
 
         # Construct a regex that matches include directives, restricting raw

@@ -561,3 +561,33 @@ helper.h"
         # Target file that has no basename (e.g. just a separator or root directory)
         callers = analyze_compile_commands("/")
         self.assertEqual(callers, {})
+
+    def test_analyze_compile_commands_target_with_spaces(self):
+        """Verify that targets containing space characters are matched correctly."""
+        db = [
+            {
+                "directory": ".",
+                "command": "clang++ -c src/other.cpp",
+                "file": "src/other.cpp"
+            }
+        ]
+        with open("compile_commands.json", "w") as f:
+            json.dump(db, f)
+
+        os.makedirs("src", exist_ok=True)
+
+        # 1. Matching case: include contains a space matching the target
+        with open("src/other.cpp", "w", encoding="utf-8", newline="") as f:
+            f.write('#include "my helper.h"\n')
+        
+        cache = LRUFileCache()
+        callers = analyze_compile_commands("src/my helper.h", file_cache=cache)
+        self.assertIn("src/other.cpp", callers)
+
+        # 2. Non-matching case: include does not contain the space (un-spaced filename)
+        with open("src/other.cpp", "w", encoding="utf-8", newline="") as f:
+            f.write('#include "myhelper.h"\n')
+        
+        cache = LRUFileCache()
+        callers = analyze_compile_commands("src/my helper.h", file_cache=cache)
+        self.assertNotIn("src/other.cpp", callers)
