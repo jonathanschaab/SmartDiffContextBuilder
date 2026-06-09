@@ -137,6 +137,8 @@ def ripgrep_filter(files, token, fixed_strings=True):
                 "ripgrep_error",
                 f"ripgrep exited with an error code 2. Stderr: {res.stderr.strip()}"
             )
+    except FileNotFoundError:
+        pass
     except subprocess.TimeoutExpired:
         warn_once(
             "ripgrep_timeout",

@@ -248,3 +248,17 @@ class TestSysUtils(unittest.TestCase):
         self.assertEqual(filtered, [])
         self.assertFalse(mock_run.called)
 
+    @patch("subprocess.run")
+    @patch("context_builder.sys_utils.warn_once")
+    def test_ripgrep_filter_missing_binary_silence(self, mock_warn, mock_run):
+        # When ripgrep is not installed on the system (FileNotFoundError),
+        # it should fail silently and fallback to manual scanning.
+        mock_run.side_effect = FileNotFoundError()
+        
+        files = ["file1.py", "file2.py"]
+        filtered = ripgrep_filter(files, "query")
+        
+        self.assertEqual(filtered, files)
+        # Verify no warning was issued
+        self.assertFalse(mock_warn.called)
+
