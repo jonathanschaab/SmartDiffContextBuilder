@@ -96,7 +96,10 @@ class RipgrepChecker:  # pylint: disable=too-few-public-methods
     def __bool__(self):
         """Evaluate truthiness by checking if rg is present, warning once if missing."""
         if self._has_rg is None:
-            self._has_rg = bool(run_command(["rg", "--version"]))
+            try:
+                self._has_rg = bool(run_command(["rg", "--version"], timeout=5.0))
+            except Exception:  # pylint: disable=broad-exception-caught
+                self._has_rg = False
             if not self._has_rg:
                 warn_once(
                     "ripgrep_missing",

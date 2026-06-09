@@ -277,6 +277,7 @@ class TestSysUtils(unittest.TestCase):
         mock_run.return_value = ""  # rg not found/executable failed
 
         self.assertFalse(bool(HAS_RG))
+        mock_run.assert_called_once_with(["rg", "--version"], timeout=5.0)
         mock_warn.assert_called_once_with("ripgrep_missing", unittest.mock.ANY)
 
     @patch("context_builder.sys_utils.run_command")
@@ -289,4 +290,18 @@ class TestSysUtils(unittest.TestCase):
         mock_run.return_value = "ripgrep 14.1.0"
 
         self.assertTrue(bool(HAS_RG))
+        mock_run.assert_called_once_with(["rg", "--version"], timeout=5.0)
         mock_warn.assert_not_called()
+
+    @patch("context_builder.sys_utils.run_command")
+    @patch("context_builder.sys_utils.warn_once")
+    def test_has_rg_checker_exception_safety(self, mock_warn, mock_run):
+        """Verify that HAS_RG evaluates to False and warns if run_command raises an exception."""
+        # Force re-evaluation by resetting cached value
+        from context_builder.sys_utils import HAS_RG  # pylint: disable=import-outside-toplevel
+        HAS_RG._has_rg = None  # pylint: disable=protected-access
+        mock_run.side_effect = PermissionError("Access Denied")
+
+        self.assertFalse(bool(HAS_RG))
+        mock_warn.assert_called_once_with("ripgrep_missing", unittest.mock.ANY)
+
