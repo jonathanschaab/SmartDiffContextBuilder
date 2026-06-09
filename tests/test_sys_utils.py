@@ -26,6 +26,7 @@ class TestSysUtils(unittest.TestCase):
         files = get_git_tracked_files()
         self.assertEqual(files, ["src/a.py", "src/b.py"])
 
+    @patch("context_builder.sys_utils.HAS_RG", True)
     @patch("subprocess.run")
     def test_ripgrep_filter(self, mock_run):
         mock_res = MagicMock()
@@ -81,6 +82,7 @@ class TestSysUtils(unittest.TestCase):
                 except Exception:
                     pass
 
+    @patch("context_builder.sys_utils.HAS_RG", True)
     @patch("subprocess.run")
     def test_ripgrep_filter_windows_separator(self, mock_run):
         mock_res = MagicMock()
@@ -137,6 +139,7 @@ class TestSysUtils(unittest.TestCase):
         self.assertEqual(ctx.exception.code, 1)
         self.assertIn("Executable not found: nonexistent_binary", mock_out.getvalue())
 
+    @patch("context_builder.sys_utils.HAS_RG", True)
     @patch("subprocess.run")
     def test_ripgrep_filter_regex_alternation(self, mock_run):
         mock_res = MagicMock()
@@ -150,6 +153,7 @@ class TestSysUtils(unittest.TestCase):
         cmd_args = mock_run.call_args[0][0]
         self.assertNotIn("-F", cmd_args)
 
+    @patch("context_builder.sys_utils.HAS_RG", True)
     @patch("subprocess.run")
     @patch("context_builder.sys_utils.warn_once")
     def test_ripgrep_filter_timeout_warning(self, mock_warn, mock_run):
@@ -171,6 +175,7 @@ class TestSysUtils(unittest.TestCase):
         self.assertIn("timed out", warn_msg)
         self.assertIn("--ripgrep-timeout", warn_msg)
 
+    @patch("context_builder.sys_utils.HAS_RG", True)
     @patch("subprocess.run")
     @patch("context_builder.sys_utils.warn_once")
     def test_ripgrep_filter_unexpected_fail_warning(self, mock_warn, mock_run):
@@ -187,6 +192,7 @@ class TestSysUtils(unittest.TestCase):
             unittest.mock.ANY
         )
 
+    @patch("context_builder.sys_utils.HAS_RG", True)
     @patch("subprocess.run")
     def test_ripgrep_filter_respects_configured_timeout(self, mock_run):
         from context_builder.config import CONFIG
@@ -207,6 +213,7 @@ class TestSysUtils(unittest.TestCase):
         finally:
             CONFIG["ripgrep_timeout"] = old_timeout
 
+    @patch("context_builder.sys_utils.HAS_RG", True)
     @patch("subprocess.run")
     @patch("context_builder.sys_utils.warn_once")
     def test_ripgrep_filter_invalid_timeout_fallback(self, mock_warn, mock_run):
@@ -248,6 +255,7 @@ class TestSysUtils(unittest.TestCase):
         self.assertEqual(filtered, [])
         self.assertFalse(mock_run.called)
 
+    @patch("context_builder.sys_utils.HAS_RG", True)
     @patch("subprocess.run")
     @patch("context_builder.sys_utils.warn_once")
     def test_ripgrep_filter_missing_binary_warning(self, mock_warn, mock_run):

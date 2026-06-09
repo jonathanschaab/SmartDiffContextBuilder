@@ -124,7 +124,10 @@ def ripgrep_filter(files, token, fixed_strings=True):
     """
     if not files:
         return []
+    if not HAS_RG:
+        return files
     from .config import CONFIG  # pylint: disable=import-outside-toplevel
+
     timeout = CONFIG.get("ripgrep_timeout", 10)
     if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout <= 0:
         warn_once(
