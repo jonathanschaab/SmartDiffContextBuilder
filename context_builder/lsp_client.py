@@ -6,6 +6,7 @@ and managing event loop threads for async communication.
 
 import atexit
 import asyncio
+import concurrent.futures
 import inspect
 import os
 import re
@@ -179,7 +180,11 @@ class MinimalLSPClient:
             if "fut" in locals():
                 fut.cancel()
             warn_once("lsp_fail", f"Failed to start LSP {self.cmd[0]}: {e}")
-            self.cleanup()
+            is_timeout = isinstance(
+                e,
+                (TimeoutError, asyncio.TimeoutError, concurrent.futures.TimeoutError),
+            )
+            self.cleanup(force_kill=is_timeout)
             return False
 
     def get_references(self, file_path, line_num, char_num, timeout) -> list:
@@ -293,12 +298,22 @@ class MinimalLSPClient:
             )
             return []
 
-    def cleanup(self):
+    def cleanup(self, force_kill=False):
         """Shutdown the language client and terminate the server subprocess."""
         client = self.client
         if not client:
             return
         self.client = None
+
+        if force_kill:
+            try:
+                server = getattr(client, "subprocess", None) or getattr(
+                    client, "_server", None
+                )
+                if server and server.returncode is None:
+                    server.kill()
+            except Exception:  # pylint: disable=broad-exception-caught
+                pass
 
         async def _async_cleanup():
             is_stopped = getattr(client, "stopped", False)

@@ -714,6 +714,54 @@ class TestLspClient(unittest.TestCase):
         client.cleanup()
         mock_client.stop.assert_not_called()
 
+    @patch("context_builder.lsp_client.LanguageClient")
+    def test_cleanup_force_kill_immediately_terminates(self, mock_lc_class):
+        mock_client = MagicMock()
+        mock_lc_class.return_value = mock_client
+        mock_client.stopped = False
+        
+        mock_subproc = MagicMock()
+        mock_subproc.returncode = None
+        mock_subproc.kill.side_effect = lambda: setattr(mock_subproc, 'returncode', -9)
+        mock_client.subprocess = mock_subproc
+        
+        async def mock_shutdown_async(*args, **kwargs):
+            # Verify subprocess was ALREADY killed before this async call
+            self.assertTrue(mock_subproc.kill.called)
+            
+        mock_client.shutdown_async = mock_shutdown_async
+        mock_client.stop = AsyncMock()
+        
+        client = MinimalLSPClient(["some_lsp_binary"])
+        client.client = mock_client
+        
+        client.cleanup(force_kill=True)
+        
+        mock_subproc.kill.assert_called_once()
+        self.assertIsNone(client.client)
+
+    @patch("context_builder.lsp_client.LanguageClient")
+    def test_lsp_client_startup_timeout_triggers_force_kill(self, mock_lc_class):
+        import concurrent.futures
+        client = MinimalLSPClient(["some_lsp_binary"])
+        
+        # Mock run_coroutine_threadsafe to raise concurrent.futures.TimeoutError
+        with patch("asyncio.run_coroutine_threadsafe", side_effect=concurrent.futures.TimeoutError("Timeout!")):
+            with patch.object(client, "cleanup") as mock_cleanup:
+                success = client.start()
+                self.assertFalse(success)
+                mock_cleanup.assert_called_once_with(force_kill=True)
+
+    @patch("context_builder.lsp_client.LanguageClient")
+    def test_lsp_client_startup_generic_error_triggers_normal_cleanup(self, mock_lc_class):
+        client = MinimalLSPClient(["some_lsp_binary"])
+        
+        with patch("asyncio.run_coroutine_threadsafe", side_effect=RuntimeError("Some error")):
+            with patch.object(client, "cleanup") as mock_cleanup:
+                success = client.start()
+                self.assertFalse(success)
+                mock_cleanup.assert_called_once_with(force_kill=False)
+
 
 
 
