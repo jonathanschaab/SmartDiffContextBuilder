@@ -677,3 +677,81 @@ class TestAstEngine(unittest.TestCase):
         self.assertEqual(occurrences[0]["line"], 4)
         self.assertEqual(occurrences[0]["code"], "y = target_func()  # Actual call")
 
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_split_massive_block_ast_two_pass_prioritizes_signatures(self, mock_ast_engine):
+        source = (
+            "def method_one():\n"
+            "    # body line 1\n"
+            "    # body line 2\n"
+            "    # body line 3\n"
+            "    # body line 4\n"
+            "    # body line 5\n"
+            "    # body line 6\n"
+            "    # body line 7\n"
+            "    # body line 8\n"
+            "    # body line 9\n"
+            "    pass\n"
+            "def method_two():\n"
+            "    # body 1\n"
+            "    # body 2\n"
+            "    # body 3\n"
+            "    pass\n"
+            "def method_three():\n"
+            "    # unique body 1\n"
+            "    # unique body 2\n"
+            "    # unique body 3\n"
+            "    pass\n"
+        )
+        
+        mock_parser = MagicMock()
+        mock_tree = MagicMock()
+        
+        mock_child1 = MagicMock()
+        mock_child1.type = "function_definition"
+        mock_child1.start_point = (0, 0)
+        mock_child1.end_point = (10, 0)
+        
+        mock_child2 = MagicMock()
+        mock_child2.type = "function_definition"
+        mock_child2.start_point = (11, 0)
+        mock_child2.end_point = (15, 0)
+        
+        mock_child3 = MagicMock()
+        mock_child3.type = "function_definition"
+        mock_child3.start_point = (16, 0)
+        mock_child3.end_point = (20, 0)
+        
+        mock_tree.root_node.children = [mock_child1, mock_child2, mock_child3]
+        mock_parser.parse.return_value = mock_tree
+        mock_ast_engine.parsers = {".py": mock_parser}
+        mock_ast_engine.is_supported.return_value = True
+        
+        # Call split_massive_block_ast with max_lines=11.
+        # total_min_lines is 3 + 3 + 3 = 9. remaining_budget = 2.
+        # method_one upgrade cost is 8 -> does not upgrade.
+        # method_two upgrade cost is 2 -> upgrades.
+        # method_three upgrade cost is 2 -> does not upgrade.
+        res = split_massive_block_ast(source, "test.py", max_lines=11)
+        
+        self.assertEqual(len(res), 1)
+        text = res[0]["text"]
+        
+        # Verify method_one is truncated to its signature
+        self.assertIn("def method_one():", text)
+        self.assertIn("# ... [Inner Body Omitted for Context Preservation] ...", text)
+        self.assertNotIn("# body line 1", text)
+        
+        # Verify method_two has its full body printed
+        self.assertIn("def method_two():", text)
+        self.assertIn("# body 1", text)
+        self.assertIn("# body 2", text)
+        self.assertIn("# body 3", text)
+        
+        # Verify method_three is truncated to its signature
+        self.assertIn("def method_three():", text)
+        self.assertNotIn("# unique body 1", text)
+        
+        # Verify both methods' signatures exist (so they are not omitted completely)
+        self.assertTrue(text.count("def method_two():") == 1)
+        self.assertTrue(text.count("def method_three():") == 1)
+

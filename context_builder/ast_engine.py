@@ -370,6 +370,74 @@ def _semantically_truncate_child(child, lines, is_python):
     return truncated_lines
 
 
+def _get_fallback_truncated_text(lines, max_lines, is_python):
+    """Get fallback plain truncation when AST parsing is not supported."""
+    if is_python:
+        return "\n".join(lines[:max_lines]) + "\n# ... [Lines Omitted due to size] ..."
+    return "\n".join(lines[:max_lines]) + "\n/* ... [Lines Omitted due to size] ... */"
+
+
+def _collect_children_info(tree, lines, is_python):
+    """Collect full and minimum representation lines for each child node."""
+    children_info = []
+    definition_types = {
+        'function_definition', 'class_definition', 'function_item', 'impl_item',
+        'method_definition', 'function_declaration', 'generator_function',
+        'generator_function_declaration', 'arrow_function'
+    }
+    for child in tree.root_node.children:
+        child_lines = lines[child.start_point[0]:child.end_point[0] + 1]
+        if child.type in definition_types:
+            min_lines = _semantically_truncate_child(child, lines, is_python)
+        else:
+            min_lines = list(child_lines[:5])
+            if len(child_lines) > 5:
+                if is_python:
+                    min_lines.append("# ... [Data Structure Omitted] ...")
+                else:
+                    min_lines.append("/* ... [Data Structure Omitted] ... */")
+        children_info.append({
+            "full_lines": child_lines,
+            "min_lines": min_lines
+        })
+    return children_info
+
+
+def _allocate_budget_and_build(children_info, max_lines):
+    """Allocate budget and build final pruned line list."""
+    total_min_lines = sum(len(info["min_lines"]) for info in children_info)
+    output_lines = []
+
+    if total_min_lines > max_lines:
+        # We don't even have budget for all signatures.
+        # Print min_lines for as many children as possible in full.
+        budget = max_lines
+        for info in children_info:
+            min_len = len(info["min_lines"])
+            output_lines.extend(info["min_lines"])
+            budget -= min_len
+            if budget <= 0:
+                break
+    else:
+        # We can fit all signatures!
+        # Upgrade as many children as possible from min_lines to full_lines sequentially.
+        remaining_budget = max_lines - total_min_lines
+        upgraded = [False] * len(children_info)
+        for i, info in enumerate(children_info):
+            upgrade_cost = len(info["full_lines"]) - len(info["min_lines"])
+            if upgrade_cost <= remaining_budget:
+                upgraded[i] = True
+                remaining_budget -= upgrade_cost
+
+        # Build the final output
+        for i, info in enumerate(children_info):
+            if upgraded[i]:
+                output_lines.extend(info["full_lines"])
+            else:
+                output_lines.extend(info["min_lines"])
+    return output_lines
+
+
 def split_massive_block_ast(source_text, file_path, max_lines):
     """Truncate and omit large AST definition blocks to preserve context budgets."""
     max_lines = max(1, max_lines)
@@ -381,40 +449,12 @@ def split_massive_block_ast(source_text, file_path, max_lines):
     is_python = ext == '.py'
 
     if not AST_ENGINE.is_supported(ext):
-        if is_python:
-            fallback_text = "\n".join(lines[:max_lines]) + "\n# ... [Lines Omitted due to size] ..."
-        else:
-            fallback_text = (
-                "\n".join(lines[:max_lines]) + "\n/* ... [Lines Omitted due to size] ... */"
-            )
+        fallback_text = _get_fallback_truncated_text(lines, max_lines, is_python)
         return [{"suffix": " (Truncated)", "text": fallback_text}]
 
     tree = AST_ENGINE.parsers[ext].parse(source_text.encode('utf-8'))
-    output_lines = []
-    budget = max_lines
-
-    for child in tree.root_node.children:
-        child_lines = lines[child.start_point[0]:child.end_point[0] + 1]
-        if len(child_lines) < budget:
-            output_lines.extend(child_lines)
-            budget -= len(child_lines)
-        else:
-            if child.type in [
-                'function_definition', 'class_definition', 'function_item', 'impl_item',
-                'method_definition', 'function_declaration', 'generator_function',
-                'generator_function_declaration', 'arrow_function'
-            ]:
-                truncated = _semantically_truncate_child(child, lines, is_python)
-                output_lines.extend(truncated)
-            else:
-                output_lines.extend(child_lines[:5])
-                if is_python:
-                    output_lines.append("# ... [Data Structure Omitted] ...")
-                else:
-                    output_lines.append("/* ... [Data Structure Omitted] ... */")
-            budget -= 3
-            if budget <= 0:
-                break
+    children_info = _collect_children_info(tree, lines, is_python)
+    output_lines = _allocate_budget_and_build(children_info, max_lines)
 
     return [{"suffix": " (AST Semantically Pruned)", "text": "\n".join(output_lines)}]
 
