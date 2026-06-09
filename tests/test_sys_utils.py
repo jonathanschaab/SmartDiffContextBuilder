@@ -217,14 +217,26 @@ class TestSysUtils(unittest.TestCase):
         mock_run.return_value = mock_res
 
         old_timeout = CONFIG.get("ripgrep_timeout", 10)
-        # Test negative timeout
-        CONFIG["ripgrep_timeout"] = -5
         try:
+            # Test negative timeout
+            CONFIG["ripgrep_timeout"] = -5
+            mock_warn.reset_mock()
             ripgrep_filter(["file1.py"], "query")
-            self.assertTrue(mock_run.called)
-            kwargs = mock_run.call_args[1]
-            # Verify it fell back to 10 seconds
-            self.assertEqual(kwargs.get("timeout"), 10)
+            self.assertEqual(mock_run.call_args[1].get("timeout"), 10)
+            mock_warn.assert_any_call("ripgrep_timeout_invalid", unittest.mock.ANY)
+
+            # Test boolean timeout
+            CONFIG["ripgrep_timeout"] = True
+            mock_warn.reset_mock()
+            ripgrep_filter(["file1.py"], "query")
+            self.assertEqual(mock_run.call_args[1].get("timeout"), 10)
+            mock_warn.assert_any_call("ripgrep_timeout_invalid", unittest.mock.ANY)
+
+            # Test string timeout
+            CONFIG["ripgrep_timeout"] = "invalid_string"
+            mock_warn.reset_mock()
+            ripgrep_filter(["file1.py"], "query")
+            self.assertEqual(mock_run.call_args[1].get("timeout"), 10)
             mock_warn.assert_any_call("ripgrep_timeout_invalid", unittest.mock.ANY)
         finally:
             CONFIG["ripgrep_timeout"] = old_timeout
