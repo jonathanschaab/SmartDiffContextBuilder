@@ -111,13 +111,17 @@ class RipgrepChecker:  # pylint: disable=too-few-public-methods
 
 HAS_RG = RipgrepChecker()
 
-def ripgrep_filter(files, token, fixed_strings=True):
+def ripgrep_filter(files, token, fixed_strings=True, fallback_hint=None):
     """Filter list of files to only those containing the given token using ripgrep.
 
     Args:
         files (list): List of files to filter.
         token (str): Search token/pattern.
         fixed_strings (bool): Treat token as literal string instead of regex.
+        fallback_hint (str, optional): Human-readable description of what is being
+            searched (e.g. "callers of 'my_func'"). When provided, a prominent
+            warning is printed whenever the fast ripgrep path is unavailable and
+            the caller will fall back to an exhaustive scan.
 
     Returns:
         list: Filtered list of files.
@@ -125,6 +129,12 @@ def ripgrep_filter(files, token, fixed_strings=True):
     if not files:
         return []
     if not HAS_RG:
+        if fallback_hint:
+            warn_once(
+                f"ripgrep_fallback_{token}",
+                f"Fast-path search unavailable. Falling back to exhaustive repository scan "
+                f"for {fallback_hint}. This may take a while in large repositories.",
+            )
         return files
     from .config import CONFIG  # pylint: disable=import-outside-toplevel
 
@@ -175,8 +185,16 @@ def ripgrep_filter(files, token, fixed_strings=True):
             "ripgrep_fail",
             f"ripgrep failed unexpectedly: {e}. Falling back to manual scanning."
         )
-    # Fallback to scanning all files if ripgrep execution fails unexpectedly
+    # Fallback: rg failed or timed out — warn and return the unfiltered list so the
+    # caller can proceed with an exhaustive scan rather than silently dropping results.
+    if fallback_hint:
+        warn_once(
+            f"ripgrep_fallback_{token}",
+            f"Falling back to exhaustive repository scan for {fallback_hint}. "
+            "This may take a while in large repositories.",
+        )
     return files
+
 
 
 def is_in_repo(file_path):

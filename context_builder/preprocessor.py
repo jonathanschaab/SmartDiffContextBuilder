@@ -76,7 +76,10 @@ def trace_macro_expansion(func_name, repo_files, file_cache=None):
         file_cache = get_global_cache()
     callers = {}
     print(f" [Pre-Expansion] Searching expanded ASTs for {func_name}...")
-    fast_files = ripgrep_filter(repo_files, func_name) if HAS_RG else repo_files
+    fast_files = ripgrep_filter(
+        repo_files, func_name,
+        fallback_hint=f"macro callers of '{func_name}'"
+    ) if HAS_RG else repo_files
 
     # We dynamically construct boundaries so \b is only applied if the adjacent character
     # is a word character (alphanumeric or underscore). This avoids boundary mismatch for C++
@@ -85,7 +88,10 @@ def trace_macro_expansion(func_name, repo_files, file_cache=None):
     trail_b = r"\b" if func_name and (func_name[-1].isalnum() or func_name[-1] == "_") else ""
     func_pattern = re.compile(lead_b + re.escape(func_name) + trail_b)
 
-    for f in fast_files:
+    total = len(fast_files)
+    for idx, f in enumerate(fast_files):
+        if total > 200 and idx % 100 == 0:
+            print(f"  [Scanning {idx + 1}/{total} files for '{func_name}'...]")
         _process_single_macro_file(f, func_pattern, callers, file_cache)
     return callers
 
@@ -151,7 +157,10 @@ def trace_ffi_callers(func_name, repo_files, source_ext, file_cache=None):
         file_cache = get_global_cache()
     callers = {}
     print(f" [FFI] Cross-language tracing triggered for exported symbol: {func_name}()")
-    fast_files = ripgrep_filter(repo_files, func_name) if HAS_RG else repo_files
+    fast_files = ripgrep_filter(
+        repo_files, func_name,
+        fallback_hint=f"FFI callers of '{func_name}'"
+    ) if HAS_RG else repo_files
 
     # We dynamically construct boundaries so \b is only applied if the adjacent character
     # is a word character (alphanumeric or underscore).

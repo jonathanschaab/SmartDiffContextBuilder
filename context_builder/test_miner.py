@@ -196,7 +196,10 @@ def mine_relevant_unit_tests(
         rf"(?:\btest_|{lead_b}){re.escape(func_name)}(?:_[A-Za-z0-9_]+)?{trail_b}"
     )
 
-    files_to_scan = ripgrep_filter(repo_files, func_name) if HAS_RG else repo_files
+    files_to_scan = ripgrep_filter(
+        repo_files, func_name,
+        fallback_hint=f"tests referencing '{func_name}'"
+    ) if HAS_RG else repo_files
     if current_source_file and current_source_file not in files_to_scan:
         files_to_scan.append(current_source_file)
 

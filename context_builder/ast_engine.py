@@ -271,9 +271,15 @@ def trace_lexical_dependencies_ast(func_name, repo_files, file_cache=None):
     if not func_name or len(func_name) < 3:
         return callers
 
-    fast_files = ripgrep_filter(repo_files, func_name) if HAS_RG else repo_files
+    fast_files = ripgrep_filter(
+        repo_files, func_name,
+        fallback_hint=f"callers of '{func_name}' (AST pass)"
+    ) if HAS_RG else repo_files
 
-    for file_path in fast_files:
+    total = len(fast_files)
+    for idx, file_path in enumerate(fast_files):
+        if total > 200 and idx % 100 == 0:
+            print(f"  [Scanning {idx + 1}/{total} files for '{func_name}'...]")
         _trace_file_ast_dependencies(file_path, func_name, file_cache, callers)
 
     return callers
@@ -312,7 +318,10 @@ def trace_lexical_dependencies_regex(func_name, repo_files, file_cache=None):
     callers = {}
     if not func_name or len(func_name) < 3:
         return callers
-    fast_files = ripgrep_filter(repo_files, func_name) if HAS_RG else repo_files
+    fast_files = ripgrep_filter(
+        repo_files, func_name,
+        fallback_hint=f"callers of '{func_name}' (regex pass)"
+    ) if HAS_RG else repo_files
 
     lead_b = r'\b' if func_name[0].isalnum() or func_name[0] == '_' else ''
     trail_b = r'\b' if func_name[-1].isalnum() or func_name[-1] == '_' else ''
@@ -325,7 +334,10 @@ def trace_lexical_dependencies_regex(func_name, repo_files, file_cache=None):
     def_cpp_pattern = re.compile(
         r'^\s*(?:[A-Za-z0-9_<>:]+(?:\s+\*?\s*)*)?' + lead_b + escaped_name + r'\s*\('
     )
-    for file_path in fast_files:
+    total = len(fast_files)
+    for idx, file_path in enumerate(fast_files):
+        if total > 200 and idx % 100 == 0:
+            print(f"  [Scanning {idx + 1}/{total} files for '{func_name}'...]")
         ext = os.path.splitext(file_path)[1]
         if ext not in LANG_MAP or file_path.endswith('.md'):
             continue
@@ -615,7 +627,10 @@ def find_callee_definition(callee_name, all_repo_files, file_cache=None):
     if not callee_name or len(callee_name) < 3:
         return None, None
 
-    candidate_files = ripgrep_filter(all_repo_files, callee_name) if HAS_RG else all_repo_files
+    candidate_files = ripgrep_filter(
+        all_repo_files, callee_name,
+        fallback_hint=f"definition of '{callee_name}'"
+    ) if HAS_RG else all_repo_files
 
     lead_b = r'\b' if callee_name[0].isalnum() or callee_name[0] == '_' else ''
     trail_b = r'\b' if callee_name[-1].isalnum() or callee_name[-1] == '_' else ''

@@ -1,3 +1,4 @@
+import subprocess
 import sys
 import unittest
 from io import StringIO
@@ -323,4 +324,56 @@ class TestSysUtils(unittest.TestCase):
         self.assertIn("unexpected return code 2", warn_msg)
         self.assertIn("Some internal rg error", warn_msg)
 
+    @patch("context_builder.sys_utils.HAS_RG", False)
+    @patch("context_builder.sys_utils.warn_once")
+    def test_ripgrep_filter_fallback_hint_no_rg(self, mock_warn):
+        """When HAS_RG is False and fallback_hint is provided, the fallback warning is printed."""
+        files = ["a.py", "b.py"]
+        result = ripgrep_filter(files, "my_func", fallback_hint="callers of 'my_func'")
+        self.assertEqual(result, files)
+        keys_warned = [c[0][0] for c in mock_warn.call_args_list]
+        self.assertIn("ripgrep_fallback_my_func", keys_warned)
+        hint_msg = [c[0][1] for c in mock_warn.call_args_list
+                    if c[0][0] == "ripgrep_fallback_my_func"][0]
+        self.assertIn("callers of 'my_func'", hint_msg)
 
+    @patch("context_builder.sys_utils.HAS_RG", True)
+    @patch("subprocess.run")
+    @patch("context_builder.sys_utils.warn_once")
+    def test_ripgrep_filter_fallback_hint_on_timeout(self, mock_warn, mock_run):
+        """When rg times out and fallback_hint is provided, the fallback warning is printed."""
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd=["rg"], timeout=10)
+        files = ["a.py", "b.py"]
+        result = ripgrep_filter(files, "my_func", fallback_hint="callers of 'my_func'")
+        self.assertEqual(result, files)
+        keys_warned = [c[0][0] for c in mock_warn.call_args_list]
+        self.assertIn("ripgrep_timeout", keys_warned)
+        self.assertIn("ripgrep_fallback_my_func", keys_warned)
+
+    @patch("context_builder.sys_utils.HAS_RG", True)
+    @patch("subprocess.run")
+    @patch("context_builder.sys_utils.warn_once")
+    def test_ripgrep_filter_fallback_hint_on_error(self, mock_warn, mock_run):
+        """When rg exits unexpectedly and fallback_hint is provided, the fallback warning fires."""
+        mock_res = MagicMock()
+        mock_res.returncode = 5
+        mock_res.stderr = "something went wrong"
+        mock_run.return_value = mock_res
+        files = ["a.py", "b.py"]
+        result = ripgrep_filter(files, "my_func", fallback_hint="callers of 'my_func'")
+        self.assertEqual(result, files)
+        keys_warned = [c[0][0] for c in mock_warn.call_args_list]
+        self.assertIn("ripgrep_error", keys_warned)
+        self.assertIn("ripgrep_fallback_my_func", keys_warned)
+
+    @patch("context_builder.sys_utils.HAS_RG", False)
+    @patch("context_builder.sys_utils.warn_once")
+    def test_ripgrep_filter_no_hint_no_extra_warning(self, mock_warn):
+        """When fallback_hint is not provided, no fallback warning is emitted (silent fallback)."""
+        files = ["a.py", "b.py"]
+        result = ripgrep_filter(files, "my_func")
+        self.assertEqual(result, files)
+        # Only the ripgrep_missing warn from HAS_RG.__bool__ may fire; no ripgrep_fallback_ key
+        fallback_keys = [c[0][0] for c in mock_warn.call_args_list
+                         if c[0][0].startswith("ripgrep_fallback_")]
+        self.assertEqual(fallback_keys, [])
