@@ -245,6 +245,13 @@ class TestSysUtils(unittest.TestCase):
             ripgrep_filter(["file1.py"], "query")
             self.assertEqual(mock_run.call_args[1].get("timeout"), 10)
             mock_warn.assert_any_call("ripgrep_timeout_invalid", unittest.mock.ANY)
+
+            # Test NaN timeout — float('nan') > 0 is False, so not (nan > 0) correctly rejects it
+            CONFIG["ripgrep_timeout"] = float("nan")
+            mock_warn.reset_mock()
+            ripgrep_filter(["file1.py"], "query")
+            self.assertEqual(mock_run.call_args[1].get("timeout"), 10)
+            mock_warn.assert_any_call("ripgrep_timeout_invalid", unittest.mock.ANY)
         finally:
             CONFIG["ripgrep_timeout"] = old_timeout
 

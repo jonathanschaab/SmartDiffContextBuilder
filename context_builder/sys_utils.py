@@ -129,7 +129,7 @@ def ripgrep_filter(files, token, fixed_strings=True):
     from .config import CONFIG  # pylint: disable=import-outside-toplevel
 
     timeout = CONFIG.get("ripgrep_timeout", 10)
-    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout <= 0:
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not (timeout > 0):  # pylint: disable=superfluous-parens
         warn_once(
             "ripgrep_timeout_invalid",
             f"Configured ripgrep_timeout ({timeout}) must be a positive number. "
