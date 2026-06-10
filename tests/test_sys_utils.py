@@ -332,9 +332,9 @@ class TestSysUtils(unittest.TestCase):
         result = ripgrep_filter(files, "my_func", fallback_hint="callers of 'my_func'")
         self.assertEqual(result, files)
         keys_warned = [c[0][0] for c in mock_warn.call_args_list]
-        self.assertIn("ripgrep_fallback_my_func", keys_warned)
+        self.assertIn("ripgrep_fallback", keys_warned)
         hint_msg = [c[0][1] for c in mock_warn.call_args_list
-                    if c[0][0] == "ripgrep_fallback_my_func"][0]
+                    if c[0][0] == "ripgrep_fallback"][0]
         self.assertIn("callers of 'my_func'", hint_msg)
 
     @patch("context_builder.sys_utils.HAS_RG", True)
@@ -348,7 +348,7 @@ class TestSysUtils(unittest.TestCase):
         self.assertEqual(result, files)
         keys_warned = [c[0][0] for c in mock_warn.call_args_list]
         self.assertIn("ripgrep_timeout", keys_warned)
-        self.assertIn("ripgrep_fallback_my_func", keys_warned)
+        self.assertIn("ripgrep_fallback", keys_warned)
 
     @patch("context_builder.sys_utils.HAS_RG", True)
     @patch("subprocess.run")
@@ -364,7 +364,7 @@ class TestSysUtils(unittest.TestCase):
         self.assertEqual(result, files)
         keys_warned = [c[0][0] for c in mock_warn.call_args_list]
         self.assertIn("ripgrep_error", keys_warned)
-        self.assertIn("ripgrep_fallback_my_func", keys_warned)
+        self.assertIn("ripgrep_fallback", keys_warned)
 
     @patch("context_builder.sys_utils.HAS_RG", False)
     @patch("context_builder.sys_utils.warn_once")
@@ -373,7 +373,7 @@ class TestSysUtils(unittest.TestCase):
         files = ["a.py", "b.py"]
         result = ripgrep_filter(files, "my_func")
         self.assertEqual(result, files)
-        # Only the ripgrep_missing warn from HAS_RG.__bool__ may fire; no ripgrep_fallback_ key
+        # Only the ripgrep_missing warn from HAS_RG.__bool__ may fire; no ripgrep_fallback key
         fallback_keys = [c[0][0] for c in mock_warn.call_args_list
-                         if c[0][0].startswith("ripgrep_fallback_")]
+                         if c[0][0] == "ripgrep_fallback"]
         self.assertEqual(fallback_keys, [])

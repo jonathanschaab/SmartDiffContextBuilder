@@ -131,7 +131,7 @@ def ripgrep_filter(files, token, fixed_strings=True, fallback_hint=None):
     if not HAS_RG:
         if fallback_hint:
             warn_once(
-                f"ripgrep_fallback_{token}",
+                "ripgrep_fallback",
                 f"Fast-path search unavailable. Falling back to exhaustive repository scan "
                 f"for {fallback_hint}. This may take a while in large repositories.",
             )
@@ -189,7 +189,7 @@ def ripgrep_filter(files, token, fixed_strings=True, fallback_hint=None):
     # caller can proceed with an exhaustive scan rather than silently dropping results.
     if fallback_hint:
         warn_once(
-            f"ripgrep_fallback_{token}",
+            "ripgrep_fallback",
             f"Falling back to exhaustive repository scan for {fallback_hint}. "
             "This may take a while in large repositories.",
         )

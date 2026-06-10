@@ -7,7 +7,7 @@ and callee analysis.
 import os
 import re
 import importlib
-from .sys_utils import warn_once, ripgrep_filter, HAS_RG
+from .sys_utils import warn_once, ripgrep_filter
 from .cache import get_global_cache
 
 try:
@@ -274,7 +274,7 @@ def trace_lexical_dependencies_ast(func_name, repo_files, file_cache=None):
     fast_files = ripgrep_filter(
         repo_files, func_name,
         fallback_hint=f"callers of '{func_name}' (AST pass)"
-    ) if HAS_RG else repo_files
+    )
 
     total = len(fast_files)
     for idx, file_path in enumerate(fast_files):
@@ -321,7 +321,7 @@ def trace_lexical_dependencies_regex(func_name, repo_files, file_cache=None):
     fast_files = ripgrep_filter(
         repo_files, func_name,
         fallback_hint=f"callers of '{func_name}' (regex pass)"
-    ) if HAS_RG else repo_files
+    )
 
     lead_b = r'\b' if func_name[0].isalnum() or func_name[0] == '_' else ''
     trail_b = r'\b' if func_name[-1].isalnum() or func_name[-1] == '_' else ''
@@ -630,7 +630,7 @@ def find_callee_definition(callee_name, all_repo_files, file_cache=None):
     candidate_files = ripgrep_filter(
         all_repo_files, callee_name,
         fallback_hint=f"definition of '{callee_name}'"
-    ) if HAS_RG else all_repo_files
+    )
 
     lead_b = r'\b' if callee_name[0].isalnum() or callee_name[0] == '_' else ''
     trail_b = r'\b' if callee_name[-1].isalnum() or callee_name[-1] == '_' else ''

@@ -79,7 +79,7 @@ def trace_macro_expansion(func_name, repo_files, file_cache=None):
     fast_files = ripgrep_filter(
         repo_files, func_name,
         fallback_hint=f"macro callers of '{func_name}'"
-    ) if HAS_RG else repo_files
+    )
 
     # We dynamically construct boundaries so \b is only applied if the adjacent character
     # is a word character (alphanumeric or underscore). This avoids boundary mismatch for C++
@@ -160,7 +160,7 @@ def trace_ffi_callers(func_name, repo_files, source_ext, file_cache=None):
     fast_files = ripgrep_filter(
         repo_files, func_name,
         fallback_hint=f"FFI callers of '{func_name}'"
-    ) if HAS_RG else repo_files
+    )
 
     # We dynamically construct boundaries so \b is only applied if the adjacent character
     # is a word character (alphanumeric or underscore).
