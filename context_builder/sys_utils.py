@@ -196,7 +196,6 @@ def ripgrep_filter(files, token, fixed_strings=True, fallback_hint=None):
     return files
 
 
-
 def is_in_repo(file_path):
     """Check if file_path is within the current repository and is not ignored.
 
