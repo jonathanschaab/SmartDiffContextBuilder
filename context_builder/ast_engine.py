@@ -623,7 +623,8 @@ def extract_callees(file_path, start_line, end_line, file_cache=None):
             callees = extract_callees_ast(file_path, start_line, end_line, ext, file_cache)
             return list(callees)
         except (AttributeError, RuntimeError) as e:
-            print(f"\n[ContextLens Warning] {e} Falling back to regex-based callee extraction.")
+            print(f"\n[SmartDiffContextBuilder Warning] {e} "
+                  "Falling back to regex-based callee extraction.")
     return list(extract_callees_regex(file_path, start_line, end_line, file_cache))
 
 

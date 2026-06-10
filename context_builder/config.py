@@ -124,7 +124,7 @@ def reset_config():
         'format': 'md',
         'max_lines': 1500,
         'max_mb': 2.0,
-        'base_name': 'ContextLens',
+        'base_name': 'SmartDiffContextBuilder',
         'max_cache_size_mb': 200.0,
         'max_interface_depth': 15,
         'disable_pruning': False,

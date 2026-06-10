@@ -222,7 +222,8 @@ def run_scan(args, start_ref=None, end_ref=None, output_dir=".", repo_root=None)
     clear_preprocessed_cache()
     lsp_client.USE_LSP = not args.no_language_server
 
-    print(f"\n[ContextLens] Scanning Git Diff Workspace [Format: {args.format.upper()}]")
+    print(f"\n[SmartDiffContextBuilder] Scanning Git Diff Workspace "
+          f"[Format: {args.format.upper()}]")
 
     diff_files = [
         f for f in get_git_diff_files(start_ref, end_ref) if is_in_repo(f)
@@ -278,7 +279,7 @@ def run_scan(args, start_ref=None, end_ref=None, output_dir=".", repo_root=None)
 
     vm.flush_all_volumes()
     cleanup_zombie_lsps()
-    print("\n[ContextLens] Context packaging completed successfully.")
+    print("\n[SmartDiffContextBuilder] Context packaging completed successfully.")
 
 
 def _validate_config_type(k, v):
@@ -289,7 +290,7 @@ def _validate_config_type(k, v):
     if CONFIG[k] is None:
         if v is not None and not isinstance(v, str):
             print(
-                f"[ContextLens Error] Config key '{k}' must be "
+                f"[SmartDiffContextBuilder Error] Config key '{k}' must be "
                 f"a string, got {type(v).__name__}"
             )
             sys.exit(1)
@@ -299,7 +300,7 @@ def _validate_config_type(k, v):
     if isinstance(CONFIG[k], bool):
         if not isinstance(v, bool):
             print(
-                f"[ContextLens Error] Config key '{k}' must be "
+                f"[SmartDiffContextBuilder Error] Config key '{k}' must be "
                 f"a boolean, got {type(v).__name__}"
             )
             sys.exit(1)
@@ -307,7 +308,7 @@ def _validate_config_type(k, v):
         # explicitly reject bool for int
         if not isinstance(v, int) or isinstance(v, bool):
             print(
-                f"[ContextLens Error] Config key '{k}' must be "
+                f"[SmartDiffContextBuilder Error] Config key '{k}' must be "
                 f"an integer, got {type(v).__name__}"
             )
             sys.exit(1)
@@ -315,14 +316,14 @@ def _validate_config_type(k, v):
         # accept float or int, reject bool
         if (not isinstance(v, (int, float))) or isinstance(v, bool):
             print(
-                f"[ContextLens Error] Config key '{k}' must be "
+                f"[SmartDiffContextBuilder Error] Config key '{k}' must be "
                 f"a float, got {type(v).__name__}"
             )
             sys.exit(1)
     elif isinstance(CONFIG[k], str):
         if not isinstance(v, str):
             print(
-                f"[ContextLens Error] Config key '{k}' must be "
+                f"[SmartDiffContextBuilder Error] Config key '{k}' must be "
                 f"a string, got {type(v).__name__}"
             )
             sys.exit(1)
@@ -336,7 +337,7 @@ def _parse_config_file(args_config):
         loaded_cfg = load_json_with_comments(args_config)
         if not isinstance(loaded_cfg, dict):
             print(
-                f"[ContextLens Error] Config file {args_config} "
+                f"[SmartDiffContextBuilder Error] Config file {args_config} "
                 f"must be a JSON object (dictionary)"
             )
             sys.exit(1)
@@ -347,7 +348,7 @@ def _parse_config_file(args_config):
             if isinstance(CONFIG[k], dict):
                 if not isinstance(v, dict):
                     print(
-                        f"[ContextLens Error] Config key '{k}' must be "
+                        f"[SmartDiffContextBuilder Error] Config key '{k}' must be "
                         f"a dictionary, got {type(v).__name__}"
                     )
                     sys.exit(1)
@@ -355,7 +356,7 @@ def _parse_config_file(args_config):
             elif isinstance(CONFIG[k], list):
                 if not isinstance(v, list):
                     print(
-                        f"[ContextLens Error] Config key '{k}' must be "
+                        f"[SmartDiffContextBuilder Error] Config key '{k}' must be "
                         f"a list, got {type(v).__name__}"
                     )
                     sys.exit(1)
@@ -366,7 +367,7 @@ def _parse_config_file(args_config):
     except Exception as e:  # pylint: disable=broad-exception-caught
         if isinstance(e, SystemExit):
             raise
-        print(f"[ContextLens Error] Failed to load config from {args_config}: {e}")
+        print(f"[SmartDiffContextBuilder Error] Failed to load config from {args_config}: {e}")
         sys.exit(1)
 
 
@@ -411,7 +412,7 @@ def _merge_json_mappings(args, active_overrides):
         try:
             return json.loads(val)
         except Exception as e:  # pylint: disable=broad-exception-caught
-            print(f"[ContextLens Error] CLI argument {name} is not valid JSON: {e}")
+            print(f"[SmartDiffContextBuilder Error] CLI argument {name} is not valid JSON: {e}")
             sys.exit(1)
 
     json_mappings = {
@@ -432,7 +433,7 @@ def _merge_json_mappings(args, active_overrides):
                     CONFIG[cfg_key].update(parsed)
                 else:
                     print(
-                        f"[ContextLens Error] CLI override for key '{cfg_key}' must be "
+                        f"[SmartDiffContextBuilder Error] CLI override for key '{cfg_key}' must be "
                         f"a dictionary, got {type(parsed).__name__}"
                     )
                     sys.exit(1)
@@ -441,7 +442,7 @@ def _merge_json_mappings(args, active_overrides):
                     CONFIG[cfg_key] = parsed
                 else:
                     print(
-                        f"[ContextLens Error] CLI override for key '{cfg_key}' must be "
+                        f"[SmartDiffContextBuilder Error] CLI override for key '{cfg_key}' must be "
                         f"a list, got {type(parsed).__name__}"
                     )
                     sys.exit(1)
@@ -473,10 +474,11 @@ def _create_config_if_requested(args_create_config, active_overrides):
                 os.makedirs(parent_dir, exist_ok=True)
             with open(args_create_config, "w", encoding="utf-8") as f:
                 f.write(config_content)
-            print(f"[ContextLens] Created configuration template at: {args_create_config}")
+            print("[SmartDiffContextBuilder] Created configuration template at: "
+                  f"{args_create_config}")
             sys.exit(0)
         except Exception as e:  # pylint: disable=broad-exception-caught
-            print(f"[ContextLens Error] Failed to create configuration file: {e}")
+            print(f"[SmartDiffContextBuilder Error] Failed to create configuration file: {e}")
             sys.exit(1)
 
 
@@ -491,7 +493,7 @@ def _setup_temp_worktree(temp_worktree_dir, end_sha, original_cwd):
     )
     if add_res.returncode != 0:
         print(
-            f"\n[ContextLens Error] Failed to create git worktree: "
+            f"\n[SmartDiffContextBuilder Error] Failed to create git worktree: "
             f"{add_res.stderr.strip()}"
         )
         try:
@@ -518,7 +520,7 @@ def _setup_temp_worktree(temp_worktree_dir, end_sha, original_cwd):
 def _cleanup_temp_worktree(temp_worktree_dir, original_cwd):
     """Teardown worktree and release active file handles."""
     os.chdir(original_cwd)
-    print("\n[ContextLens] Cleaning up temporary worktree...")
+    print("\n[SmartDiffContextBuilder] Cleaning up temporary worktree...")
     try:
         cleanup_zombie_lsps()
     except Exception:  # pylint: disable=broad-exception-caught
@@ -552,7 +554,7 @@ def _run_commit_range_worktree(args, commit_range):
     try:
         start_sha, end_sha = parse_and_resolve_range(commit_range)
     except Exception as e:  # pylint: disable=broad-exception-caught
-        print(f"\n[ContextLens Error] Invalid commit range: {e}")
+        print(f"\n[SmartDiffContextBuilder Error] Invalid commit range: {e}")
         sys.exit(1)
 
     original_cwd = os.getcwd()
@@ -570,7 +572,7 @@ def _run_commit_range_worktree(args, commit_range):
 
     if current_head and end_sha == current_head:
         print(
-            f"\n[ContextLens] Current HEAD matches final commit {end_sha[:8]}. "
+            f"\n[SmartDiffContextBuilder] Current HEAD matches final commit {end_sha[:8]}. "
             "Bypassing temporary worktree..."
         )
         run_scan(args, start_ref=start_sha, end_ref=end_sha)
@@ -578,16 +580,22 @@ def _run_commit_range_worktree(args, commit_range):
 
     temp_worktree_dir = os.path.join(
         tempfile.gettempdir(),
-        f"context_lens_worktree_{uuid.uuid4()}"
+        f"smdc_worktree_{uuid.uuid4()}"
     )
 
     print(
-        f"\n[ContextLens] Setting up temporary worktree for commit "
+        f"\n[SmartDiffContextBuilder] Setting up temporary worktree for commit "
         f"{end_sha[:8]}..."
     )
     try:
         _setup_temp_worktree(temp_worktree_dir, end_sha, original_cwd)
         os.chdir(temp_worktree_dir)
+        if not args.no_language_server:
+            print(
+                "\n[SmartDiffContextBuilder] Note: Starting a language server in a clean "
+                "worktree may take several minutes while the project is indexed. "
+                "Use --no-language-server to skip LSP and avoid this delay."
+            )
         run_scan(
             args,
             start_ref=start_sha,

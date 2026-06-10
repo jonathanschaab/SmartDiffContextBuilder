@@ -45,6 +45,7 @@ class TestLspClient(unittest.TestCase):
         
         client = MinimalLSPClient(["some_lsp_binary"])
         client.client = mock_client
+        client.start = MagicMock(return_value=True)
         
         start = time.time()
         # Query with a very small timeout
@@ -300,21 +301,40 @@ class TestLspClient(unittest.TestCase):
     def test_lsp_client_startup_timeout_returns_false(self, mock_lc_class):
         mock_client = MagicMock()
         mock_lc_class.return_value = mock_client
-        
+
         mock_client.start_io = AsyncMock()
-        
+
         async def mock_initialize_timeout(*args, **kwargs):
             raise asyncio.TimeoutError()
-            
+
         mock_client.initialize_async = mock_initialize_timeout
         mock_shutdown = AsyncMock()
         mock_client.shutdown_async = mock_shutdown
         mock_client.stop = AsyncMock()
         mock_client.stopped = False
-        
+
         client = MinimalLSPClient(["some_lsp_binary"])
-        success = client.start()
+        
+        # Safely execute the background coroutine synchronously so its internal logic 
+        # (like catching the TimeoutError and calling stop()) actually runs!
+        def mock_run_coroutine(coro, loop):
+            import asyncio
+            import concurrent.futures
             
+            new_loop = asyncio.new_event_loop()
+            try:
+                # This executes _async_start, hits the mock timeout, and triggers stop()
+                res = new_loop.run_until_complete(coro)
+            finally:
+                new_loop.close()
+            
+            f = concurrent.futures.Future()
+            f.set_result(res)
+            return f
+
+        with patch("asyncio.run_coroutine_threadsafe", side_effect=mock_run_coroutine):
+            success = client.start()
+
         self.assertFalse(success)
         self.assertIsNone(client.client)
         mock_shutdown.assert_not_called()
@@ -761,10 +781,4 @@ class TestLspClient(unittest.TestCase):
                 success = client.start()
                 self.assertFalse(success)
                 mock_cleanup.assert_called_once_with(force_kill=False)
-
-
-
-
-
-
 

@@ -689,7 +689,7 @@ class TestPreprocessor(unittest.TestCase):
             CONFIG['ffi_rg_pattern'] = "MY_FFI_EXPORT"
             CONFIG['ffi_patterns'] = [
                 r'MY_FFI_EXPORT\s+([A-Za-z0-9_]+)',
-                r'INVALID_REGEX_[[[' # Intentional invalid regex
+                r'INVALID_REGEX_(' # Intentional invalid regex
             ]
             
             code = (

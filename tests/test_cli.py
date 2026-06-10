@@ -27,7 +27,7 @@ class TestCLI(unittest.TestCase):
         mock_args.format = "md"
         mock_args.max_lines = 100
         mock_args.max_mb = 1.0
-        mock_args.base_name = "ContextLens"
+        mock_args.base_name = "SmartDiffContextBuilder"
         mock_args.max_cache_size_mb = 200
         mock_args.max_interface_depth = 15
         mock_args.disable_pruning = False
@@ -116,7 +116,7 @@ class TestCLI(unittest.TestCase):
         mock_args.format = "md"
         mock_args.max_lines = 100
         mock_args.max_mb = 1.0
-        mock_args.base_name = "ContextLens"
+        mock_args.base_name = "SmartDiffContextBuilder"
         mock_args.max_cache_size_mb = 200
         mock_args.max_interface_depth = 15
         mock_args.disable_pruning = False
@@ -186,7 +186,7 @@ class TestCLI(unittest.TestCase):
         mock_args.format = "md"
         mock_args.max_lines = 1000
         mock_args.max_mb = 1.0
-        mock_args.base_name = "ContextLens"
+        mock_args.base_name = "SmartDiffContextBuilder"
         mock_args.max_cache_size_mb = 200
         mock_args.max_interface_depth = 15
         mock_args.disable_pruning = False
@@ -281,7 +281,7 @@ class TestCLI(unittest.TestCase):
         mock_args.format = "md"
         mock_args.max_lines = 1000
         mock_args.max_mb = 1.0
-        mock_args.base_name = "ContextLens"
+        mock_args.base_name = "SmartDiffContextBuilder"
         mock_args.max_cache_size_mb = 200
         mock_args.max_interface_depth = 15
         mock_args.disable_pruning = False
@@ -357,7 +357,7 @@ class TestCLI(unittest.TestCase):
         mock_args.format = "md"
         mock_args.max_lines = 1000
         mock_args.max_mb = 1.0
-        mock_args.base_name = "ContextLens"
+        mock_args.base_name = "SmartDiffContextBuilder"
         mock_args.max_cache_size_mb = 200
         mock_args.max_interface_depth = 15
         mock_args.disable_pruning = False
@@ -756,7 +756,7 @@ class TestCLI(unittest.TestCase):
             self.assertIn('"format": "json"', content)
             # Verify commented out defaults
             self.assertIn('// "max_mb": 2.0', content)
-            self.assertIn('// "base_name": "ContextLens"', content)
+            self.assertIn('// "base_name": "SmartDiffContextBuilder"', content)
         finally:
             os.remove(temp_path)
             reset_config()
