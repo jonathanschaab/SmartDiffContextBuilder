@@ -379,6 +379,7 @@ def _merge_cli_mappings(args, active_overrides):
         "max_interface_depth": "max_interface_depth",
         "disable_pruning": "disable_pruning",
         "lsp_timeout": "lsp_timeout",
+        "ripgrep_timeout": "ripgrep_timeout",
         "no_language_server": "no_language_server",
         "skip_ffi": "skip_ffi",
         "skip_macro_expansion": "skip_macro_expansion",
@@ -610,6 +611,7 @@ def main():
     parser.add_argument("--max-interface-depth", type=int, default=None)
     parser.add_argument("--disable-pruning", action="store_true", default=None)
     parser.add_argument("--lsp-timeout", type=int, default=None)
+    parser.add_argument("--ripgrep-timeout", type=float, default=None)
     parser.add_argument("--no-language-server", action="store_true", default=None)
     parser.add_argument("--skip-ffi", action="store_true", default=None)
     parser.add_argument("--skip-macro-expansion", action="store_true", default=None)

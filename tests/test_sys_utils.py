@@ -26,6 +26,7 @@ class TestSysUtils(unittest.TestCase):
         files = get_git_tracked_files()
         self.assertEqual(files, ["src/a.py", "src/b.py"])
 
+    @patch("context_builder.sys_utils.HAS_RG", True)
     @patch("subprocess.run")
     def test_ripgrep_filter(self, mock_run):
         mock_res = MagicMock()
@@ -81,6 +82,7 @@ class TestSysUtils(unittest.TestCase):
                 except Exception:
                     pass
 
+    @patch("context_builder.sys_utils.HAS_RG", True)
     @patch("subprocess.run")
     def test_ripgrep_filter_windows_separator(self, mock_run):
         mock_res = MagicMock()
@@ -137,6 +139,7 @@ class TestSysUtils(unittest.TestCase):
         self.assertEqual(ctx.exception.code, 1)
         self.assertIn("Executable not found: nonexistent_binary", mock_out.getvalue())
 
+    @patch("context_builder.sys_utils.HAS_RG", True)
     @patch("subprocess.run")
     def test_ripgrep_filter_regex_alternation(self, mock_run):
         mock_res = MagicMock()
@@ -149,4 +152,175 @@ class TestSysUtils(unittest.TestCase):
         # Verify that "-F" was NOT in the command arguments
         cmd_args = mock_run.call_args[0][0]
         self.assertNotIn("-F", cmd_args)
+
+    @patch("context_builder.sys_utils.HAS_RG", True)
+    @patch("subprocess.run")
+    @patch("context_builder.sys_utils.warn_once")
+    def test_ripgrep_filter_timeout_warning(self, mock_warn, mock_run):
+        import subprocess
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd=["rg"], timeout=5)
+
+        files = ["file1.py", "file2.py"]
+        filtered = ripgrep_filter(files, "query")
+
+        # Must fall back to returning all input files
+        self.assertEqual(filtered, files)
+        # Verify warning was issued
+        mock_warn.assert_any_call(
+            "ripgrep_timeout",
+            unittest.mock.ANY
+        )
+        # Verify the warning contains the word "timed out" and adjustment options
+        warn_msg = [c[0][1] for c in mock_warn.call_args_list if c[0][0] == "ripgrep_timeout"][0]
+        self.assertIn("timed out", warn_msg)
+        self.assertIn("--ripgrep-timeout", warn_msg)
+
+    @patch("context_builder.sys_utils.HAS_RG", True)
+    @patch("subprocess.run")
+    @patch("context_builder.sys_utils.warn_once")
+    def test_ripgrep_filter_unexpected_fail_warning(self, mock_warn, mock_run):
+        mock_run.side_effect = RuntimeError("Something bad happened")
+
+        files = ["file1.py", "file2.py"]
+        filtered = ripgrep_filter(files, "query")
+
+        # Must fall back to returning all input files
+        self.assertEqual(filtered, files)
+        # Verify warning was issued
+        mock_warn.assert_any_call(
+            "ripgrep_fail",
+            unittest.mock.ANY
+        )
+
+    @patch("context_builder.sys_utils.HAS_RG", True)
+    @patch("subprocess.run")
+    def test_ripgrep_filter_respects_configured_timeout(self, mock_run):
+        from context_builder.config import CONFIG
+        mock_res = MagicMock()
+        mock_res.returncode = 0
+        mock_res.stdout = ""
+        mock_run.return_value = mock_res
+
+        # Save and set config timeout
+        old_timeout = CONFIG.get("ripgrep_timeout", 10)
+        CONFIG["ripgrep_timeout"] = 25
+        try:
+            ripgrep_filter(["file1.py"], "query")
+            # Verify subprocess.run was called with timeout=25
+            self.assertTrue(mock_run.called)
+            kwargs = mock_run.call_args[1]
+            self.assertEqual(kwargs.get("timeout"), 25)
+        finally:
+            CONFIG["ripgrep_timeout"] = old_timeout
+
+    @patch("context_builder.sys_utils.HAS_RG", True)
+    @patch("subprocess.run")
+    @patch("context_builder.sys_utils.warn_once")
+    def test_ripgrep_filter_invalid_timeout_fallback(self, mock_warn, mock_run):
+        from context_builder.config import CONFIG
+        mock_res = MagicMock()
+        mock_res.returncode = 0
+        mock_res.stdout = ""
+        mock_run.return_value = mock_res
+
+        old_timeout = CONFIG.get("ripgrep_timeout", 10)
+        try:
+            # Test negative timeout
+            CONFIG["ripgrep_timeout"] = -5
+            mock_warn.reset_mock()
+            ripgrep_filter(["file1.py"], "query")
+            self.assertEqual(mock_run.call_args[1].get("timeout"), 10)
+            mock_warn.assert_any_call("ripgrep_timeout_invalid", unittest.mock.ANY)
+
+            # Test boolean timeout
+            CONFIG["ripgrep_timeout"] = True
+            mock_warn.reset_mock()
+            ripgrep_filter(["file1.py"], "query")
+            self.assertEqual(mock_run.call_args[1].get("timeout"), 10)
+            mock_warn.assert_any_call("ripgrep_timeout_invalid", unittest.mock.ANY)
+
+            # Test string timeout
+            CONFIG["ripgrep_timeout"] = "invalid_string"
+            mock_warn.reset_mock()
+            ripgrep_filter(["file1.py"], "query")
+            self.assertEqual(mock_run.call_args[1].get("timeout"), 10)
+            mock_warn.assert_any_call("ripgrep_timeout_invalid", unittest.mock.ANY)
+
+            # Test NaN timeout — float('nan') > 0 is False, so not (nan > 0) correctly rejects it
+            CONFIG["ripgrep_timeout"] = float("nan")
+            mock_warn.reset_mock()
+            ripgrep_filter(["file1.py"], "query")
+            self.assertEqual(mock_run.call_args[1].get("timeout"), 10)
+            mock_warn.assert_any_call("ripgrep_timeout_invalid", unittest.mock.ANY)
+        finally:
+            CONFIG["ripgrep_timeout"] = old_timeout
+
+    @patch("subprocess.run")
+    def test_ripgrep_filter_empty_files_early_exit(self, mock_run):
+        # Empty input files list should return immediately without calling subprocess
+        filtered = ripgrep_filter([], "query")
+        self.assertEqual(filtered, [])
+        self.assertFalse(mock_run.called)
+
+    @patch("context_builder.sys_utils.run_command")
+    @patch("context_builder.sys_utils.warn_once")
+    def test_has_rg_checker_missing(self, mock_warn, mock_run):
+        """Verify that when ripgrep is missing, HAS_RG evaluates to False and warns."""
+        # Force re-evaluation by resetting cached value
+        from context_builder.sys_utils import HAS_RG  # pylint: disable=import-outside-toplevel
+        HAS_RG._has_rg = None  # pylint: disable=protected-access
+        mock_run.return_value = ""  # rg not found/executable failed
+
+        self.assertFalse(bool(HAS_RG))
+        mock_run.assert_called_once_with(["rg", "--version"], timeout=5.0)
+        mock_warn.assert_called_once_with("ripgrep_missing", unittest.mock.ANY)
+
+    @patch("context_builder.sys_utils.run_command")
+    @patch("context_builder.sys_utils.warn_once")
+    def test_has_rg_checker_present(self, mock_warn, mock_run):
+        """Verify that when ripgrep is present, HAS_RG evaluates to True and does not warn."""
+        # Force re-evaluation by resetting cached value
+        from context_builder.sys_utils import HAS_RG  # pylint: disable=import-outside-toplevel
+        HAS_RG._has_rg = None  # pylint: disable=protected-access
+        mock_run.return_value = "ripgrep 14.1.0"
+
+        self.assertTrue(bool(HAS_RG))
+        mock_run.assert_called_once_with(["rg", "--version"], timeout=5.0)
+        mock_warn.assert_not_called()
+
+    @patch("context_builder.sys_utils.run_command")
+    @patch("context_builder.sys_utils.warn_once")
+    def test_has_rg_checker_exception_safety(self, mock_warn, mock_run):
+        """Verify that HAS_RG evaluates to False and warns if run_command raises an exception."""
+        # Force re-evaluation by resetting cached value
+        from context_builder.sys_utils import HAS_RG  # pylint: disable=import-outside-toplevel
+        HAS_RG._has_rg = None  # pylint: disable=protected-access
+        mock_run.side_effect = PermissionError("Access Denied")
+
+        self.assertFalse(bool(HAS_RG))
+        mock_warn.assert_called_once_with("ripgrep_missing", unittest.mock.ANY)
+
+    @patch("context_builder.sys_utils.HAS_RG", True)
+    @patch("subprocess.run")
+    @patch("context_builder.sys_utils.warn_once")
+    def test_ripgrep_filter_unexpected_exit_code_warning(self, mock_warn, mock_run):
+        """Verify that any non-zero/non-one return code triggers the ripgrep_error warning."""
+        mock_res = MagicMock()
+        mock_res.returncode = 2
+        mock_res.stderr = "Some internal rg error"
+        mock_run.return_value = mock_res
+
+        files = ["file1.py", "file2.py"]
+        filtered = ripgrep_filter(files, "query")
+
+        # Must fall back to returning all input files
+        self.assertEqual(filtered, files)
+        mock_warn.assert_any_call(
+            "ripgrep_error",
+            unittest.mock.ANY
+        )
+        warn_msg = [c[0][1] for c in mock_warn.call_args_list if c[0][0] == "ripgrep_error"][0]
+        self.assertIn("unexpected return code 2", warn_msg)
+        self.assertIn("Some internal rg error", warn_msg)
+
 

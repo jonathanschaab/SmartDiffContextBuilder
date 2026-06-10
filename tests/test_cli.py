@@ -917,3 +917,37 @@ class TestCLI(unittest.TestCase):
         with self.assertRaises(SystemExit) as cm2:
             _validate_config_type("max_cache_size_mb", True)
         self.assertEqual(cm2.exception.code, 1)
+
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    @patch("context_builder.cli.run_scan")
+    def test_cli_ripgrep_timeout_mapping(self, mock_run_scan, mock_parse_args):
+        """Verify that CLI parameter --ripgrep-timeout updates CONFIG['ripgrep_timeout']."""
+        from context_builder.config import CONFIG, reset_config
+        reset_config()
+
+        # 1. Test integer timeout
+        mock_args = CliNamespace()
+        mock_args.ripgrep_timeout = 35
+        mock_parse_args.return_value = mock_args
+
+        main()
+
+        self.assertEqual(CONFIG["ripgrep_timeout"], 35)
+        args_passed = mock_run_scan.call_args[0][0]
+        self.assertEqual(args_passed.ripgrep_timeout, 35)
+
+        # 2. Test float/fractional timeout
+        reset_config()
+        mock_args = CliNamespace()
+        mock_args.ripgrep_timeout = 1.5
+        mock_parse_args.return_value = mock_args
+
+        main()
+
+        self.assertEqual(CONFIG["ripgrep_timeout"], 1.5)
+
+        # 3. Verify type validation (should fail if not an int/float, e.g. a string)
+        mock_args.ripgrep_timeout = "not_a_float"
+        with self.assertRaises(SystemExit) as cm:
+            main()
+        self.assertEqual(cm.exception.code, 1)

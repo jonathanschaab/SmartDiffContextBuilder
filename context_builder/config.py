@@ -129,6 +129,7 @@ def reset_config():
         'max_interface_depth': 15,
         'disable_pruning': False,
         'lsp_timeout': 45,
+        'ripgrep_timeout': 10.0,
         'no_language_server': False,
         'skip_ffi': False,
         'skip_macro_expansion': False,
@@ -180,7 +181,7 @@ def generate_commented_config(active_options):
     groups = {
         "General Settings": [
             'format', 'max_lines', 'max_mb', 'base_name', 'max_cache_size_mb',
-            'max_interface_depth', 'disable_pruning', 'lsp_timeout',
+            'max_interface_depth', 'disable_pruning', 'lsp_timeout', 'ripgrep_timeout',
             'no_language_server', 'skip_ffi', 'skip_macro_expansion',
             'caller_depth', 'callee_depth', 'commit_range'
         ],
