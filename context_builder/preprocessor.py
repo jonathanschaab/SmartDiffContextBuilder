@@ -90,7 +90,9 @@ def trace_macro_expansion(func_name, repo_files, file_cache=None):
 
     total = len(fast_files)
     for idx, f in enumerate(fast_files):
-        if total > 200 and idx % 100 == 0:
+        # Each iteration invokes clang -E, which is expensive. Report frequently so the
+        # user knows the tool is active rather than appearing to hang between intervals.
+        if total > 50 and idx % 10 == 0:
             print(f"  [Scanning {idx + 1}/{total} files for '{func_name}'...]")
         _process_single_macro_file(f, func_pattern, callers, file_cache)
     return callers
