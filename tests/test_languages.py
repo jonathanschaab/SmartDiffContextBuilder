@@ -88,6 +88,11 @@ class TestLanguageProfiles(unittest.TestCase):
         self.assertEqual(get_language_profile(".PY").name, "python")
         self.assertEqual(get_language_profile("HEADER.HPP").name, "c-family")
 
+    def test_hidden_files_with_multiple_dots_use_final_extension(self):
+        """Hidden filenames are resolved as paths rather than pure extensions."""
+        self.assertEqual(get_language_profile(".test.py").name, "python")
+        self.assertEqual(get_language_profile(".config.js").name, "javascript")
+
 
 if __name__ == "__main__":
     unittest.main()

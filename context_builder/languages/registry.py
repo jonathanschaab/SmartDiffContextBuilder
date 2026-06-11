@@ -36,7 +36,12 @@ def get_language_profile(file_path_or_extension):
     if base_name.lower().startswith("makefile"):
         return HASH_COMMENTS
 
-    if value.startswith(".") and "/" not in value and "\\" not in value:
+    if (
+        value.startswith(".")
+        and value.count(".") == 1
+        and "/" not in value
+        and "\\" not in value
+    ):
         extension = value.lower()
     else:
         extension = os.path.splitext(value)[1].lower()

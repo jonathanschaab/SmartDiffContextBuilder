@@ -160,6 +160,56 @@ class TestLspClient(unittest.TestCase):
         self.assertEqual(len(LSP_INSTANCES), 0)
         mock_client.cleanup.assert_called_once()
 
+    @patch("context_builder.lsp_client.USE_LSP", True)
+    @patch("context_builder.lsp_client.MinimalLSPClient")
+    def test_c_family_extensions_share_one_language_server(self, mock_client_class):
+        mock_client = MagicMock()
+        mock_client.start.return_value = True
+        mock_client.get_references.return_value = []
+        mock_client_class.return_value = mock_client
+        mock_cache = MagicMock()
+        mock_cache.get_lines.return_value = ["void target() {}\n"]
+
+        with patch("context_builder.lsp_client.LSP_INSTANCES", {}):
+            for extension in (".c", ".cc", ".cpp", ".cxx", ".h", ".hpp", ".hxx"):
+                get_lsp_references(
+                    f"source{extension}",
+                    1,
+                    "target",
+                    5,
+                    10,
+                    False,
+                    file_cache=mock_cache,
+                )
+
+        mock_client_class.assert_called_once_with(
+            ["clangd", "--background-index"]
+        )
+        mock_client.start.assert_called_once_with()
+        self.assertEqual(mock_client.get_references.call_count, 7)
+
+    @patch("context_builder.lsp_client.MinimalLSPClient")
+    def test_language_server_arguments_are_part_of_instance_identity(
+        self, mock_client_class
+    ):
+        from context_builder.lsp_client import _get_or_create_lsp_client
+
+        first_client = MagicMock()
+        second_client = MagicMock()
+        first_client.start.return_value = True
+        second_client.start.return_value = True
+        mock_client_class.side_effect = [first_client, second_client]
+        with patch("context_builder.lsp_client.LSP_INSTANCES", {}):
+            first = _get_or_create_lsp_client(["shared-lsp", "--mode", "one"])
+            same = _get_or_create_lsp_client(["shared-lsp", "--mode", "one"])
+            different = _get_or_create_lsp_client(
+                ["shared-lsp", "--mode", "two"]
+            )
+
+        self.assertIs(first, same)
+        self.assertIsNot(first, different)
+        self.assertEqual(mock_client_class.call_count, 2)
+
     @patch("context_builder.lsp_client.LanguageClient")
     def test_lsp_client_json_decode_robustness(self, mock_lc_class):
         # pygls internally parses JSON, verify start still succeeds
