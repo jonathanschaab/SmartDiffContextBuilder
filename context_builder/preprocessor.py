@@ -30,6 +30,7 @@ def clear_preprocessed_cache():
     _PREPROCESSED_CACHE.clear()
     _PREPROCESSED_CACHE_STATE["size_bytes"] = 0
     _PREPROCESS_TIMEOUT_COUNTS.clear()
+    _run_clang_preprocessor._clang_missing = False  # pylint: disable=protected-access
 
 
 def _cache_preprocessed_code(cache_key, signature, expanded_code):
@@ -57,12 +58,14 @@ def _cache_preprocessed_code(cache_key, signature, expanded_code):
 
 def _run_clang_preprocessor(file_path):
     """Run clang preprocessing and distinguish retryable timeouts from results."""
+    if getattr(_run_clang_preprocessor, "_clang_missing", False):
+        return "", "failed"
+
     cmd = ["clang", "-E", file_path]
     try:
         result = subprocess.run(
             cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
             check=True,
             timeout=5,
@@ -71,6 +74,17 @@ def _run_clang_preprocessor(file_path):
     except subprocess.TimeoutExpired:
         warn_once("timeout_clang", f"Command '{' '.join(cmd)}' timed out.")
         return "", "timeout"
+    except FileNotFoundError:
+        # Macro expansion requires clang, but the graph tracer has already run
+        # its normal tree-sitter/regex C/C++ analysis. Cache this scan-wide
+        # capability failure so every remaining source file does not spawn the
+        # same failing process; only generated macro linkages are unavailable.
+        _run_clang_preprocessor._clang_missing = True  # pylint: disable=protected-access
+        warn_once(
+            "clang_missing",
+            "clang is unavailable; continuing C/C++ analysis without macro expansion.",
+        )
+        return "", "failed"
     except (subprocess.CalledProcessError, OSError):
         return "", "failed"
 

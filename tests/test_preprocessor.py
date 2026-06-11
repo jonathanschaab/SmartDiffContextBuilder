@@ -559,6 +559,39 @@ class TestPreprocessor(unittest.TestCase):
         self.assertEqual(output, "")
         self.assertEqual(status, "failed")
 
+    def test_clang_preprocessor_caches_missing_executable_for_scan(self):
+        """A missing clang executable is probed only once per repository scan."""
+        with patch(
+            "context_builder.preprocessor.subprocess.run",
+            side_effect=FileNotFoundError("clang unavailable"),
+        ) as mock_run, patch(
+            "context_builder.preprocessor.warn_once",
+        ) as mock_warn:
+            first = _preprocessor_mod._run_clang_preprocessor("one.c")
+            second = _preprocessor_mod._run_clang_preprocessor("two.cpp")
+
+        self.assertEqual(first, ("", "failed"))
+        self.assertEqual(second, ("", "failed"))
+        mock_run.assert_called_once()
+        mock_warn.assert_called_once_with(
+            "clang_missing",
+            "clang is unavailable; continuing C/C++ analysis without macro expansion.",
+        )
+
+    def test_clear_preprocessed_cache_rechecks_clang_availability(self):
+        """A new repository scan gets one fresh chance to discover clang."""
+        with patch(
+            "context_builder.preprocessor.subprocess.run",
+            side_effect=FileNotFoundError("clang unavailable"),
+        ) as mock_run, patch(
+            "context_builder.preprocessor.warn_once",
+        ):
+            _preprocessor_mod._run_clang_preprocessor("one.c")
+            _preprocessor_mod.clear_preprocessed_cache()
+            _preprocessor_mod._run_clang_preprocessor("two.c")
+
+        self.assertEqual(mock_run.call_count, 2)
+
     def test_analyze_compile_commands_worktree_mapping(self):
         """Verify that when repo_root is passed, absolute paths in compile_commands.json
         pointing to the original repo are mapped to the active worktree (CWD) and read correctly."""

@@ -221,8 +221,10 @@ def iter_scan_progress(files, label=None, min_files=100, force=False):
     Yields:
         str: File paths from files.
     """
+    # Read metadata before materializing arbitrary iterables because converting
+    # them to a plain list discards custom fallback progress attributes.
+    fallback_label = getattr(files, "fallback_label", None)
     scan_files = files if isinstance(files, list) else list(files)
-    fallback_label = getattr(scan_files, "fallback_label", None)
     progress_label = label or fallback_label
     should_show = force or bool(fallback_label)
     progress = ScanProgressBar(

@@ -499,6 +499,22 @@ class TestSysUtils(unittest.TestCase):
         self.assertIn("callers of 'my_func'", output)
         self.assertTrue(output.rstrip().endswith("[Scanning 120/120]  callers of 'my_func'"))
 
+    def test_iter_scan_progress_preserves_iterable_fallback_label(self):
+        """Materializing a custom iterable does not discard progress metadata."""
+        class FallbackIterable:
+            """Non-list fallback candidates carrying a progress label."""
+
+            fallback_label = "custom fallback scan"
+
+            def __iter__(self):
+                return iter(["one.py", "two.py"])
+
+        with patch("sys.stderr", new_callable=StringIO) as mock_err:
+            scanned = list(iter_scan_progress(FallbackIterable(), min_files=1))
+
+        self.assertEqual(scanned, ["one.py", "two.py"])
+        self.assertIn("custom fallback scan", mock_err.getvalue())
+
     def test_iter_scan_progress_stays_quiet_for_fast_path_results(self):
         """Regular filtered lists do not emit progress unless explicitly forced."""
         files = [f"file_{idx}.py" for idx in range(120)]
