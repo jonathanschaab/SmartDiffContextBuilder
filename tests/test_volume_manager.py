@@ -84,3 +84,28 @@ class TestVolumeManager(unittest.TestCase):
         idx1 = content.find("caller1.py")
         idx2 = content.find("caller2.py")
         self.assertTrue(idx1 < idx2)
+
+    def test_volume_manager_formats_callees_and_unit_tests(self):
+        vm = VolumeManager(
+            fmt="md", max_lines=100, max_mb=1.0, base_name="test_payload"
+        )
+        vm.local_callees.append({
+            "file": "callee.cpp",
+            "function_name": "helper",
+            "distance": 2,
+            "code": "void helper() {}",
+        })
+        vm.unit_tests.append({
+            "file": "test_helper.py",
+            "line": 7,
+            "code": "def test_helper():\n    helper()\n",
+        })
+
+        vm.flush_all_volumes()
+
+        with open("test_payload_final.md", "r", encoding="utf-8") as output_file:
+            content = output_file.read()
+        self.assertIn("`callee.cpp` -> `helper()` (Distance 2)", content)
+        self.assertIn("```cpp\nvoid helper() {}", content)
+        self.assertIn("`test_helper.py` (Line 7)", content)
+        self.assertIn("```python\ndef test_helper()", content)

@@ -7,6 +7,8 @@
 import unittest
 from unittest.mock import MagicMock, patch, ANY
 from collections import deque
+from types import SimpleNamespace
+
 from context_builder.graph_tracer import CallGraphTracer
 
 
@@ -431,3 +433,154 @@ class TestCallGraphTracer(unittest.TestCase):
         )
         mock_macro.assert_called_once()
         mock_ffi.assert_called_once()
+
+    @patch("context_builder.graph_tracer.trace_lexical_dependencies_regex")
+    @patch("context_builder.graph_tracer.AST_ENGINE.is_supported", return_value=False)
+    @patch("context_builder.graph_tracer.get_lsp_references", return_value=None)
+    def test_resolve_references_uses_regex_when_lsp_and_ast_are_unavailable(
+        self, _mock_lsp, _mock_supported, mock_regex
+    ):
+        mock_regex.return_value = {"caller.txt": [{"line": 2, "code": "target()"}]}
+        tracer = CallGraphTracer(
+            MagicMock(), ["caller.txt"], set(), {}, MagicMock(), None
+        )
+
+        callers = tracer._resolve_references("source.txt", 1, "target")
+
+        self.assertEqual(callers, mock_regex.return_value)
+        mock_regex.assert_called_once_with(
+            "target", ["caller.txt"], file_cache=tracer.file_cache
+        )
+
+    @patch("context_builder.graph_tracer.trace_macro_expansion")
+    @patch("context_builder.graph_tracer.get_language_profile")
+    def test_macro_and_build_linkages_merge_without_duplicate_macro_lines(
+        self, mock_profile, mock_macro
+    ):
+        mock_profile.return_value.supports_macro_expansion = True
+        mock_macro.return_value = {
+            "macro.cpp": [
+                {"line": 4, "code": "existing"},
+                {"line": 8, "code": "new"},
+            ]
+        }
+        build_match = {"line": 12, "code": "linked"}
+        tracer = CallGraphTracer(
+            MagicMock(),
+            ["macro.cpp"],
+            set(),
+            {"source.cpp": {"build.cpp": [build_match]}},
+            MagicMock(),
+            SimpleNamespace(skip_macro_expansion=False),
+        )
+        callers = {"macro.cpp": [{"line": 4, "code": "existing"}]}
+
+        tracer._merge_macro_and_build_linkages(
+            "source.cpp", "target", ".cpp", callers
+        )
+
+        self.assertEqual([item["line"] for item in callers["macro.cpp"]], [4, 8])
+        self.assertEqual(callers["build.cpp"], [build_match])
+
+    @patch("context_builder.graph_tracer.trace_ffi_callers")
+    @patch("context_builder.graph_tracer.is_in_repo")
+    @patch.object(CallGraphTracer, "_merge_macro_and_build_linkages")
+    @patch.object(CallGraphTracer, "_resolve_references")
+    def test_caller_step_filters_external_references_and_ffi(
+        self, mock_resolve, _mock_merge, mock_is_in_repo, mock_ffi
+    ):
+        mock_resolve.return_value = {
+            "inside.py": [{"line": 2, "code": "target()"}],
+            "outside.py": [{"line": 3, "code": "target()"}],
+            "[Pruned Instances]": [{"line": 1, "code": "omitted"}],
+        }
+        mock_ffi.return_value = {
+            "bridge.py": [{"line": 5, "code": "target()"}],
+            "external_bridge.py": [{"line": 6, "code": "target()"}],
+        }
+        mock_is_in_repo.side_effect = lambda path: path in {"inside.py", "bridge.py"}
+        file_cache = MagicMock()
+        file_cache.get_lines.return_value = ["def caller():\n", "    target()\n"]
+        vm = MagicMock()
+        vm.local_callers = []
+        vm.ffi_linkages = []
+        tracer = CallGraphTracer(
+            file_cache,
+            [],
+            {"target"},
+            {},
+            vm,
+            SimpleNamespace(skip_ffi=False),
+        )
+
+        with patch(
+            "context_builder.graph_tracer.extract_function_bounds",
+            return_value=(0, 2),
+        ):
+            tracer._process_caller_depth_step(
+                "source.py", 1, "target", 0, set(), deque()
+            )
+
+        local_callers = vm.add_callers.call_args_list[0].args[1]
+        ffi_callers = vm.add_callers.call_args_list[1].args[1]
+        self.assertEqual(set(local_callers), {"inside.py", "[Pruned Instances]"})
+        self.assertEqual(set(ffi_callers), {"bridge.py"})
+
+    @patch("context_builder.graph_tracer.extract_function_bounds")
+    def test_single_caller_reference_rejects_invalid_occurrences(self, mock_bounds):
+        tracer = CallGraphTracer(MagicMock(), [], set(), {}, MagicMock(), None)
+        queue = deque()
+        processed = set()
+
+        tracer._process_single_caller_reference(
+            "[Pruned Instances]", [{"line": 1}], processed, queue, 0
+        )
+        tracer._process_single_caller_reference(
+            "caller.py", [{"line": 0}], processed, queue, 0
+        )
+        mock_bounds.return_value = (None, None)
+        tracer._process_single_caller_reference(
+            "caller.py", [{"line": 1}], processed, queue, 0
+        )
+        mock_bounds.return_value = (3, 4)
+        tracer.file_cache.get_lines.return_value = ["short\n"]
+        tracer._process_single_caller_reference(
+            "caller.py", [{"line": 1}], processed, queue, 0
+        )
+
+        self.assertEqual(queue, deque())
+        self.assertEqual(processed, set())
+
+    @patch("context_builder.graph_tracer.extract_function_bounds", return_value=(None, None))
+    @patch(
+        "context_builder.graph_tracer.find_callee_definition",
+        return_value=("callee.py", 4),
+    )
+    def test_single_callee_ignores_definition_without_function_bounds(
+        self, _mock_find, _mock_bounds
+    ):
+        vm = MagicMock()
+        vm.local_callees = []
+        tracer = CallGraphTracer(MagicMock(), [], set(), {}, vm, None)
+        queue = deque()
+
+        tracer._process_single_callee("helper", 0, set(), queue)
+
+        self.assertEqual(vm.local_callees, [])
+        self.assertEqual(queue, deque())
+
+    @patch("context_builder.graph_tracer.extract_function_bounds", return_value=(None, None))
+    def test_trace_callees_skips_source_without_function_bounds(self, _mock_bounds):
+        tracer = CallGraphTracer(
+            MagicMock(),
+            [],
+            set(),
+            {},
+            MagicMock(),
+            SimpleNamespace(callee_depth=1),
+        )
+        queue = deque([("source.py", 3, "target", 0)])
+
+        tracer.trace_callees(queue, set())
+
+        self.assertEqual(queue, deque())

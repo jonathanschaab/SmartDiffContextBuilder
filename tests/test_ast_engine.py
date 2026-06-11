@@ -2,11 +2,14 @@
 # pylint: disable=attribute-defined-outside-init,import-outside-toplevel,protected-access
 # pylint: disable=redefined-outer-name,reimported,too-many-lines,too-many-public-methods
 # pylint: disable=consider-using-with,line-too-long,consider-using-from-import
+# pylint: disable=too-few-public-methods
 
 import os
 import unittest
 from unittest.mock import ANY, patch, MagicMock
 import tempfile
+from types import SimpleNamespace
+
 from context_builder.cache import LRUFileCache
 from context_builder.ast_engine import (
     strip_strings_and_comments,
@@ -106,6 +109,87 @@ class TestAstEngine(unittest.TestCase):
         start, end = extract_function_bounds("some_file.py", 0, file_cache=self.cache)
         self.assertIsNone(start)
         self.assertIsNone(end)
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_extract_function_bounds_ast_finds_enclosing_function(self, mock_engine):
+        from context_builder.ast_engine import extract_function_bounds_ast
+
+        class FakeNode:
+            def __init__(
+                self, node_type, start, end, children=None, parent=None
+            ):
+                self.type = node_type
+                self.start_point = (start, 0)
+                self.end_point = (end, 0)
+                self.children = children or []
+                self.parent = parent
+                for child in self.children:
+                    child.parent = self
+
+        statement = FakeNode("expression_statement", 2, 2)
+        function = FakeNode("function_definition", 0, 3, [statement])
+        root = FakeNode("module", 0, 3, [function])
+        parser = MagicMock()
+        parser.parse.return_value = SimpleNamespace(root_node=root)
+        mock_engine.parsers = {".py": parser}
+        cache = MagicMock()
+        cache.get_bytes.return_value = b"def target():\n    value = 1\n    call()\n"
+
+        bounds = extract_function_bounds_ast(
+            "source.py", 3, ".py", file_cache=cache
+        )
+
+        self.assertEqual(bounds, (0, 4))
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_extract_function_bounds_ast_returns_none_without_target_node(
+        self, mock_engine
+    ):
+        from context_builder.ast_engine import extract_function_bounds_ast
+
+        root = SimpleNamespace(children=[])
+        parser = MagicMock()
+        parser.parse.return_value = SimpleNamespace(root_node=root)
+        mock_engine.parsers = {".py": parser}
+        cache = MagicMock()
+        cache.get_bytes.return_value = b""
+
+        self.assertEqual(
+            extract_function_bounds_ast("empty.py", 1, ".py", cache),
+            (None, None),
+        )
+
+    @patch(
+        "context_builder.ast_engine.extract_function_bounds_regex",
+        return_value=(4, 8),
+    )
+    @patch(
+        "context_builder.ast_engine.extract_function_bounds_ast",
+        return_value=(None, None),
+    )
+    @patch("context_builder.ast_engine.AST_ENGINE.is_supported", return_value=True)
+    def test_extract_function_bounds_uses_regex_when_ast_has_no_block(
+        self, _mock_supported, _mock_ast, mock_regex
+    ):
+        bounds = extract_function_bounds("source.py", 6, file_cache=self.cache)
+
+        self.assertEqual(bounds, (4, 8))
+        mock_regex.assert_called_once_with(
+            "source.py", 6, file_cache=self.cache
+        )
+
+    def test_extract_function_bounds_regex_handles_empty_and_out_of_range_files(self):
+        cache = MagicMock()
+        cache.get_lines.side_effect = [[], ["only line\n"]]
+
+        self.assertEqual(
+            extract_function_bounds_regex("empty.py", 1, cache),
+            (None, None),
+        )
+        self.assertEqual(
+            extract_function_bounds_regex("short.py", 3, cache),
+            (None, None),
+        )
 
         start, end = extract_function_bounds("some_file.py", -10, file_cache=self.cache)
         self.assertIsNone(start)
@@ -599,6 +683,55 @@ class TestAstEngine(unittest.TestCase):
                 self.assertIn('.dummy', engine.missing_bindings)
         finally:
             CONFIG['bindings'] = orig_bindings
+
+    @patch("context_builder.ast_engine.warn_once")
+    def test_initialize_without_tree_sitter_warns_once(self, mock_warn):
+        import context_builder.ast_engine as ast_engine
+
+        engine = ast_engine.AstEngine()
+        with patch.object(ast_engine, "HAS_TREESITTER", False):
+            engine.initialize()
+            engine.initialize()
+
+        self.assertTrue(engine._initialized)
+        mock_warn.assert_called_once_with(
+            "tree-sitter",
+            "For perfect AST scoping, install tree-sitter bindings.",
+        )
+
+    def test_initialize_accepts_language_object_from_older_binding(self):
+        import context_builder.ast_engine as ast_engine
+
+        binding_object = object()
+        mock_module = SimpleNamespace(language=lambda: binding_object)
+        mock_tree_sitter = MagicMock()
+        mock_tree_sitter.Language.side_effect = TypeError("already a language")
+        parser = mock_tree_sitter.Parser.return_value
+        engine = ast_engine.AstEngine()
+
+        with patch.dict(
+            ast_engine.CONFIG,
+            {"bindings": {".dummy": ("dummy_module", "language")}},
+            clear=True,
+        ), patch.object(
+            ast_engine.importlib,
+            "import_module",
+            return_value=mock_module,
+        ), patch.object(
+            ast_engine,
+            "HAS_TREESITTER",
+            True,
+        ), patch.object(
+            ast_engine,
+            "tree_sitter",
+            mock_tree_sitter,
+            create=True,
+        ):
+            engine.initialize()
+
+        parser.set_language.assert_called_once_with(binding_object)
+        self.assertIs(engine.languages[".dummy"], binding_object)
+        self.assertIs(engine.parsers[".dummy"], parser)
 
     def test_custom_regex_and_query_overrides(self):
         """Verify that custom func_decl_pattern and callee_pattern configurations are respected."""
