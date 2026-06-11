@@ -254,8 +254,6 @@ def _get_external_search_paths(files, cwd):
     """Return absolute candidate files that are outside the current directory."""
     external_paths = []
     for file_path in files:
-        if not os.path.isabs(file_path):
-            continue
         abs_path = _get_cached_absolute_path(file_path, cwd)
         try:
             if os.path.commonpath([cwd, abs_path]) != cwd:

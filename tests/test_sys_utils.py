@@ -121,6 +121,22 @@ class TestSysUtils(unittest.TestCase):
         cmd = mock_run.call_args[0][0]
         self.assertEqual(cmd[-2:], ["--", external_file])
 
+    @patch("context_builder.sys_utils.HAS_RG", True)
+    @patch("subprocess.run")
+    def test_ripgrep_filter_searches_external_relative_files(self, mock_run):
+        """Relative candidates escaping the working tree are passed directly to ripgrep."""
+        external_file = os.path.join("..", "sibling", "file.py")
+        mock_res = MagicMock()
+        mock_res.returncode = 0
+        mock_res.stdout = external_file + "\n"
+        mock_run.return_value = mock_res
+
+        filtered = ripgrep_filter([external_file], "query")
+
+        self.assertEqual(filtered, [external_file])
+        cmd = mock_run.call_args[0][0]
+        self.assertEqual(cmd[-2:], ["--", external_file])
+
     def test_exit_on_fail_prints_error_before_exit(self):
         """When exit_on_fail=True, a helpful error message (with the command and
         stderr) must be printed before sys.exit(1) is called so that users

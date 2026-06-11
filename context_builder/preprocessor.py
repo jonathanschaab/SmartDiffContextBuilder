@@ -86,10 +86,25 @@ def trace_macro_expansion(func_name, repo_files, file_cache=None):
         repo_files, func_name,
         fallback_hint=f"macro callers of '{func_name}'"
     )
-    if not fast_files:
-        # Macro expansion can introduce the symbol even when it is absent from
-        # the original source, so an empty lexical prefilter is not conclusive.
-        fast_files = repo_files
+    macro_extensions = {".c", ".cpp", ".hpp", ".h"}
+    macro_files = [
+        file_path
+        for file_path in repo_files
+        if os.path.splitext(file_path)[1].lower() in macro_extensions
+    ]
+    fast_file_set = set(fast_files)
+    scan_files = [
+        file_path
+        for file_path in fast_files
+        if os.path.splitext(file_path)[1].lower() in macro_extensions
+    ]
+    scan_files.extend(
+        file_path for file_path in macro_files if file_path not in fast_file_set
+    )
+    exhaustive_scan = (
+        getattr(fast_files, "used_ripgrep_fallback", False)
+        or len(scan_files) > len(fast_file_set.intersection(macro_files))
+    )
 
     # We dynamically construct boundaries so \b is only applied if the adjacent character
     # is a word character (alphanumeric or underscore). This avoids boundary mismatch for C++
@@ -99,10 +114,10 @@ def trace_macro_expansion(func_name, repo_files, file_cache=None):
     func_pattern = re.compile(lead_b + re.escape(func_name) + trail_b)
 
     for file_path in iter_scan_progress(
-        fast_files,
+        scan_files,
         label=f"Scanning macro callers of '{func_name}'",
         min_files=50,
-        force=fast_files is repo_files,
+        force=exhaustive_scan,
     ):
         _process_single_macro_file(file_path, func_pattern, callers, file_cache)
     return callers

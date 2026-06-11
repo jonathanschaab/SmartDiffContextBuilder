@@ -86,9 +86,9 @@ class AstEngine:
                     lang_obj = tree_sitter.Language(binding_obj)
                 except Exception:  # pylint: disable=broad-exception-caught
                     lang_obj = binding_obj
-                self.languages[ext] = lang_obj
                 parser = tree_sitter.Parser()
                 parser.set_language(lang_obj)
+                self.languages[ext] = lang_obj
                 self.parsers[ext] = parser
             except Exception:  # pylint: disable=broad-exception-caught
                 self.missing_bindings[ext] = module_name

@@ -337,6 +337,21 @@ class TestPreprocessor(unittest.TestCase):
 
         self.assertTrue(mock_iter.call_args.kwargs["force"])
 
+    def test_trace_macro_expansion_scans_callers_without_lexical_match(self):
+        """Header macro matches do not exclude source files that invoke the macro."""
+        repo_files = ["macros.h", "main.c"]
+
+        with patch(
+            "context_builder.preprocessor.ripgrep_filter",
+            return_value=["macros.h"],
+        ), patch(
+            "context_builder.preprocessor._process_single_macro_file",
+        ) as mock_process:
+            trace_macro_expansion("my_func", repo_files, file_cache=MagicMock())
+
+        scanned_files = [call.args[0] for call in mock_process.call_args_list]
+        self.assertEqual(scanned_files, ["macros.h", "main.c"])
+
     def test_analyze_compile_commands_worktree_mapping(self):
         """Verify that when repo_root is passed, absolute paths in compile_commands.json
         pointing to the original repo are mapped to the active worktree (CWD) and read correctly."""

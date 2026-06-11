@@ -5,6 +5,7 @@ and FFI None capture guards.
 import os
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from context_builder.config import CONFIG, reset_config
@@ -19,24 +20,47 @@ class TestSafetyRefactors(unittest.TestCase):
     def tearDown(self):
         reset_config()
 
-    @patch("importlib.import_module")
-    def test_dotted_module_import(self, mock_import_module):
+    def test_dotted_module_import(self):
         """Verify that dynamic imports can handle dotted module names using importlib."""
-        from context_builder.ast_engine import HAS_TREESITTER, AstEngine
+        import context_builder.ast_engine as ast_engine
 
-        if not HAS_TREESITTER:
-            self.skipTest("tree-sitter not installed")
+        binding_obj = object()
+        mock_module = SimpleNamespace(dummy=lambda: binding_obj)
+        mock_lang = object()
 
-        mock_module = MagicMock()
-        mock_import_module.return_value = mock_module
-        mock_lang = MagicMock()
-        setattr(mock_module, "dummy", mock_lang)
+        class FakeParser:
+            """Minimal successful parser used to isolate import behavior."""
 
-        engine = AstEngine()
+            def __init__(self):
+                self.language = None
+
+            def set_language(self, language):
+                self.language = language
+
+        mock_tree_sitter = SimpleNamespace(
+            Language=MagicMock(return_value=mock_lang),
+            Parser=FakeParser,
+        )
+
+        engine = ast_engine.AstEngine()
         orig_bindings = CONFIG["bindings"].copy()
         try:
             CONFIG["bindings"] = {".dummy": ("pkg.sub", "dummy")}
-            engine.initialize()
+            with patch.object(
+                ast_engine.importlib,
+                "import_module",
+                return_value=mock_module,
+            ) as mock_import_module, patch.object(
+                ast_engine,
+                "HAS_TREESITTER",
+                True,
+            ), patch.object(
+                ast_engine,
+                "tree_sitter",
+                mock_tree_sitter,
+                create=True,
+            ):
+                engine.initialize()
             mock_import_module.assert_called_with("pkg.sub")
             self.assertIn(".dummy", engine.languages)
         finally:
