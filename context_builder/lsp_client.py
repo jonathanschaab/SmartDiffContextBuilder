@@ -26,6 +26,32 @@ USE_LSP = True
 LSP_INSTANCES = {}
 
 
+def _register_notebook_filter_compatibility(client):
+    """Handle lsprotocol's missing hook for optional notebook filters."""
+    converter = client.protocol._converter  # pylint: disable=protected-access
+    notebook_filter_type = next(
+        field.type
+        for field in types.NotebookDocumentFilterWithCells.__attrs_attrs__
+        if field.name == "notebook"
+    )
+
+    def structure_notebook_filter(value, _type):
+        if value is None or isinstance(value, str):
+            return value
+        if "notebookType" in value:
+            filter_type = types.NotebookDocumentFilterNotebookType
+        elif "scheme" in value:
+            filter_type = types.NotebookDocumentFilterScheme
+        else:
+            filter_type = types.NotebookDocumentFilterPattern
+        return converter.structure(value, filter_type)
+
+    converter.register_structure_hook(
+        notebook_filter_type,
+        structure_notebook_filter,
+    )
+
+
 class LSPEventLoopThread(threading.Thread):
     """A background thread hosting an asyncio event loop for language client communication."""
 
@@ -143,18 +169,23 @@ class MinimalLSPClient:
         Returns:
             bool: True if initialized successfully, False otherwise.
         """
+        process_start_failed = False
 
         async def _async_start():
+            nonlocal process_start_failed
             self.client = LanguageClient(name="SmartDiffContextBuilder-LSP", version="1.0")
+            _register_notebook_filter_compatibility(self.client)
             start_task = asyncio.create_task(
-                self.client.start_io(
-                    self.cmd[0], *self.cmd[1:], stderr=asyncio.subprocess.DEVNULL
-                )
+                self.client.start_io(self.cmd[0], *self.cmd[1:])
             )
             try:
                 await asyncio.sleep(0.1)
                 if start_task.done():
-                    start_task.result()
+                    try:
+                        start_task.result()
+                    except BaseException:
+                        process_start_failed = True
+                        raise
 
                 params = types.InitializeParams(
                     process_id=os.getpid(),
@@ -185,7 +216,12 @@ class MinimalLSPClient:
                 e,
                 (TimeoutError, asyncio.TimeoutError, concurrent.futures.TimeoutError),
             )
-            self.cleanup(force_kill=is_timeout)
+            if process_start_failed:
+                # No transport exists yet, so LSP shutdown notifications would
+                # only produce secondary "no available transport" errors.
+                self.client = None
+            else:
+                self.cleanup(force_kill=is_timeout)
             return False
 
     def get_references(self, file_path, line_num, char_num, timeout) -> list:

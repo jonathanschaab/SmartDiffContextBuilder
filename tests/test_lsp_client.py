@@ -11,18 +11,33 @@ import time
 from unittest.mock import MagicMock, patch, AsyncMock
 
 import lsprotocol.types as types
+from pygls.lsp.client import LanguageClient
 
 from context_builder.lsp_client import (
     LSP_INSTANCES,
     MinimalLSPClient,
+    _register_notebook_filter_compatibility,
     cleanup_zombie_lsps,
     get_lsp_references,
 )
 
 class TestLspClient(unittest.TestCase):
+    def test_notebook_filter_compatibility_accepts_cells_only_selector(self):
+        client = LanguageClient(name="test-client", version="1.0")
+        _register_notebook_filter_compatibility(client)
+
+        options = client.protocol._converter.structure(
+            {"notebookSelector": [{"cells": [{"language": "python"}]}]},
+            types.NotebookDocumentSyncOptions,
+        )
+
+        self.assertEqual(options.notebook_selector[0].cells[0].language, "python")
+        self.assertIsNone(options.notebook_selector[0].notebook)
+
     @patch("context_builder.lsp_client.LanguageClient")
     def test_lsp_client_init_and_send(self, mock_lc_class):
         mock_client = MagicMock()
+        mock_client.protocol._converter = MagicMock()
         mock_lc_class.return_value = mock_client
 
         mock_client.start_io = AsyncMock()
@@ -36,6 +51,7 @@ class TestLspClient(unittest.TestCase):
 
         self.assertTrue(success)
         self.assertIsNotNone(client.client)
+        mock_client.start_io.assert_awaited_once_with("some_lsp_binary")
         mock_lc_class.assert_called_once_with(name="SmartDiffContextBuilder-LSP", version="1.0")
 
     @patch("context_builder.lsp_client.USE_LSP", False)
@@ -119,6 +135,7 @@ class TestLspClient(unittest.TestCase):
     def test_lsp_client_case_insensitive_header(self, mock_lc_class):
         # Since pygls handles headers internally, verify client startup works
         mock_client = MagicMock()
+        mock_client.protocol._converter = MagicMock()
         mock_lc_class.return_value = mock_client
 
         mock_client.start_io = AsyncMock()
@@ -225,6 +242,7 @@ class TestLspClient(unittest.TestCase):
     def test_lsp_client_json_decode_robustness(self, mock_lc_class):
         # pygls internally parses JSON, verify start still succeeds
         mock_client = MagicMock()
+        mock_client.protocol._converter = MagicMock()
         mock_lc_class.return_value = mock_client
 
         mock_client.start_io = AsyncMock()
@@ -238,6 +256,7 @@ class TestLspClient(unittest.TestCase):
     def test_lsp_client_lf_only_headers(self, mock_lc_class):
         # pygls internally parses headers, verify start still succeeds
         mock_client = MagicMock()
+        mock_client.protocol._converter = MagicMock()
         mock_lc_class.return_value = mock_client
 
         mock_client.start_io = AsyncMock()
@@ -628,6 +647,8 @@ class TestLspClient(unittest.TestCase):
 
         self.assertFalse(success)
         self.assertIsNone(client.client)
+        mock_client.shutdown_async.assert_not_awaited()
+        mock_client.stop.assert_not_awaited()
 
     def test_get_lsp_loop_recreates_when_closed(self):
         import context_builder.lsp_client as lsp_client
