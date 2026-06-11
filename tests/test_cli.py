@@ -864,6 +864,42 @@ class TestCLI(unittest.TestCase):
         self.assertIn("may take several minutes", output)
         self.assertIn("--no-language-server", output)
         mock_run_scan.assert_called_once()
+        worktree_args = mock_run_scan.call_args.args[0]
+        self.assertEqual(worktree_args.lsp_init_timeout, 120)
+        self.assertEqual(worktree_args.lsp_timeout, 300)
+        self.assertIsNot(worktree_args, args)
+        self.assertIsNone(args.lsp_init_timeout)
+        self.assertIsNone(args.lsp_timeout)
+
+    @patch("context_builder.cli._cleanup_temp_worktree")
+    @patch("context_builder.cli._setup_temp_worktree")
+    @patch("context_builder.cli.run_scan")
+    @patch("context_builder.cli.parse_and_resolve_range")
+    @patch("context_builder.cli.subprocess.run")
+    def test_worktree_preserves_larger_lsp_timeouts(
+        self,
+        mock_sub_run,
+        mock_resolve_range,
+        mock_run_scan,
+        _mock_setup,
+        _mock_cleanup,
+    ):
+        from context_builder.cli import _run_commit_range_worktree
+
+        args = CliNamespace(
+            no_language_server=False,
+            lsp_init_timeout=180,
+            lsp_timeout=420,
+        )
+        mock_resolve_range.return_value = ("start_sha", "end_sha")
+        mock_sub_run.return_value = MagicMock(stdout="other_sha\n")
+
+        with patch("context_builder.cli.os.chdir"):
+            _run_commit_range_worktree(args, "start..end")
+
+        worktree_args = mock_run_scan.call_args.args[0]
+        self.assertEqual(worktree_args.lsp_init_timeout, 180)
+        self.assertEqual(worktree_args.lsp_timeout, 420)
 
     @patch("context_builder.cli._cleanup_temp_worktree")
     @patch("context_builder.cli._setup_temp_worktree")

@@ -69,6 +69,8 @@ class TestConfig(unittest.TestCase):
         CONFIG["format"] = "html"
         reset_config()
         self.assertEqual(CONFIG["format"], "md")
+        self.assertEqual(CONFIG["lsp_init_timeout"], 60)
+        self.assertEqual(CONFIG["lsp_timeout"], 150)
 
     def test_generate_commented_config(self):
         reset_config()

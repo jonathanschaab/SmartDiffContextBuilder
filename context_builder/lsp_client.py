@@ -20,6 +20,7 @@ from lsprotocol import types
 from pygls.lsp.client import LanguageClient
 
 from .cache import get_global_cache
+from .config import DEFAULT_LSP_INIT_TIMEOUT
 from .languages import get_language_profile
 from .sys_utils import warn_once
 
@@ -210,13 +211,15 @@ def _call_lsp_method(method, *args):
 class MinimalLSPClient:
     """A minimal LSP client managing initialize handshake and text document reference queries."""
 
-    def __init__(self, cmd):
+    def __init__(self, cmd, init_timeout=DEFAULT_LSP_INIT_TIMEOUT):
         """Initialize the client with language server launch command.
 
         Args:
             cmd (list): Subprocess command list.
+            init_timeout (float): Maximum seconds for the initialize handshake.
         """
         self.cmd = cmd
+        self.init_timeout = init_timeout
         self.client = None
         self.loop = get_lsp_loop()
 
@@ -271,7 +274,10 @@ class MinimalLSPClient:
                     root_uri=Path(".").absolute().as_uri(),
                     capabilities=types.ClientCapabilities(),
                 )
-                await asyncio.wait_for(self.client.initialize_async(params), timeout=10.0)
+                await asyncio.wait_for(
+                    self.client.initialize_async(params),
+                    timeout=self.init_timeout,
+                )
                 self.client.initialized(types.InitializedParams())
                 return True
             except BaseException:
@@ -286,7 +292,7 @@ class MinimalLSPClient:
 
         try:
             fut = asyncio.run_coroutine_threadsafe(_async_start(), self.loop)
-            return fut.result(timeout=11.0)
+            return fut.result(timeout=self.init_timeout + 1.0)
         except Exception as e:  # pylint: disable=broad-exception-caught
             if "fut" in locals():
                 fut.cancel()
@@ -551,11 +557,13 @@ def _get_lsp_instance_key(command):
     return project_root, tuple(command)
 
 
-def _get_or_create_lsp_client(command):
+def _get_or_create_lsp_client(
+    command, init_timeout=DEFAULT_LSP_INIT_TIMEOUT
+):
     """Retrieve or start a client shared by identical server invocations."""
     instance_key = _get_lsp_instance_key(command)
     if instance_key not in LSP_INSTANCES:
-        client = MinimalLSPClient(command)
+        client = MinimalLSPClient(command, init_timeout=init_timeout)
         LSP_INSTANCES[instance_key] = client if client.start() else None
     return LSP_INSTANCES.get(instance_key)
 
@@ -568,6 +576,7 @@ def get_lsp_references(
     max_depth,
     disable_pruning,
     file_cache=None,
+    init_timeout=DEFAULT_LSP_INIT_TIMEOUT,
 ):
     """Find references using the active LSP.
 
@@ -579,6 +588,7 @@ def get_lsp_references(
         max_depth (int): Max number of references to parse.
         disable_pruning (bool): Disable reference pruning.
         file_cache (LRUFileCache, optional): Cache instance.
+        init_timeout (float): Language-server initialize timeout.
 
     Returns:
         dict: Mapping of relative file paths to reference lists.
@@ -594,7 +604,7 @@ def get_lsp_references(
         return None
     command = list(profile.lsp_command)
 
-    client = _get_or_create_lsp_client(command)
+    client = _get_or_create_lsp_client(command, init_timeout=init_timeout)
     if not client:
         return None
 

@@ -83,7 +83,8 @@ python smart_diff_context_builder.py --commit-range -3
 ```
 
 > **Note:** When running in a clean worktree, starting a language server may take several minutes
-> while the project is indexed. Use `--no-language-server` to skip LSP and avoid this delay.
+> while the project is indexed. Worktree scans allow at least 120 seconds for initialization and
+> 300 seconds for reference queries. Use `--no-language-server` to skip LSP and avoid this delay.
 
 ### Output Limits
 Restrict source-block and payload sizes:
@@ -129,7 +130,8 @@ python smart_diff_context_builder.py --config .smdc_config.json
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--no-language-server` | flag | off | Disable LSP for caller tracing (falls back to AST/regex) |
-| `--lsp-timeout` | int | `45` | LSP query timeout in seconds |
+| `--lsp-init-timeout` | float | `60` | LSP initialization handshake timeout in seconds |
+| `--lsp-timeout` | int | `150` | LSP reference query timeout in seconds |
 | `--disable-pruning` | flag | off | Disable caller graph pruning (may significantly increase output size) |
 
 ### Performance

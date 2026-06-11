@@ -279,7 +279,8 @@ class TestLspClient(unittest.TestCase):
                 )
 
         mock_client_class.assert_called_once_with(
-            ["clangd", "--background-index"]
+            ["clangd", "--background-index"],
+            init_timeout=60,
         )
         mock_client.start.assert_called_once_with()
         self.assertEqual(mock_client.get_references.call_count, 7)
@@ -500,6 +501,37 @@ class TestLspClient(unittest.TestCase):
         mock_client.stop.assert_called_once()
         self.assertIsNotNone(observed_loop)
         self.assertTrue(observed_loop.is_closed())
+
+    @patch("context_builder.lsp_client.asyncio.wait_for", new_callable=AsyncMock)
+    @patch("context_builder.lsp_client.LanguageClient")
+    def test_lsp_client_uses_configured_initialize_timeout(
+        self, mock_lc_class, mock_wait_for
+    ):
+        mock_client = MagicMock()
+        mock_lc_class.return_value = mock_client
+        mock_client.start_io = AsyncMock()
+        mock_client.initialize_async = MagicMock(return_value=object())
+        mock_client.initialized = MagicMock()
+        mock_wait_for.return_value = None
+        client = MinimalLSPClient(["some_lsp_binary"], init_timeout=75)
+
+        def mock_run_coroutine(coro, _loop):
+            future = concurrent.futures.Future()
+            new_loop = asyncio.new_event_loop()
+            try:
+                future.set_result(new_loop.run_until_complete(coro))
+            finally:
+                new_loop.close()
+            return future
+
+        with patch(
+            "asyncio.run_coroutine_threadsafe",
+            side_effect=mock_run_coroutine,
+        ):
+            self.assertTrue(client.start())
+
+        mock_wait_for.assert_awaited_once()
+        self.assertEqual(mock_wait_for.await_args.kwargs["timeout"], 75)
 
     @patch("context_builder.lsp_client.USE_LSP", True)
     @patch("context_builder.lsp_client.LSP_INSTANCES")

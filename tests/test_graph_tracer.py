@@ -391,7 +391,14 @@ class TestCallGraphTracer(unittest.TestCase):
         tracer._process_caller_depth_step("file1.cpp", 1, "foo", 0, set(), deque())
 
         mock_lsp.assert_called_once_with(
-            "file1.cpp", 1, "foo", 45, 15, False, file_cache=file_cache
+            "file1.cpp",
+            1,
+            "foo",
+            150,
+            15,
+            False,
+            file_cache=file_cache,
+            init_timeout=60,
         )
         mock_macro.assert_called_once()
         mock_ffi.assert_called_once()
@@ -407,6 +414,7 @@ class TestCallGraphTracer(unittest.TestCase):
         vm = MagicMock()
 
         class MockArgs:
+            lsp_init_timeout = None
             lsp_timeout = None
             max_interface_depth = None
             disable_pruning = None
@@ -429,7 +437,14 @@ class TestCallGraphTracer(unittest.TestCase):
         tracer._process_caller_depth_step("file1.cpp", 1, "foo", 0, set(), deque())
 
         mock_lsp.assert_called_once_with(
-            "file1.cpp", 1, "foo", 45, 15, False, file_cache=file_cache
+            "file1.cpp",
+            1,
+            "foo",
+            150,
+            15,
+            False,
+            file_cache=file_cache,
+            init_timeout=60,
         )
         mock_macro.assert_called_once()
         mock_ffi.assert_called_once()
