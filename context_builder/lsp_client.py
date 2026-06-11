@@ -19,6 +19,7 @@ from lsprotocol import types
 from pygls.lsp.client import LanguageClient
 
 from .cache import get_global_cache
+from .languages import get_language_profile
 from .sys_utils import warn_once
 
 USE_LSP = True
@@ -446,13 +447,19 @@ def _parse_single_lsp_reference(ref, file_cache):
     return rel_path, ref_line, ref_code
 
 
-def _get_or_create_lsp_client(ext, configs):
-    """Retrieve or start the MinimalLSPClient for a given file extension."""
-    if ext not in LSP_INSTANCES:
-        cmd = configs[ext]
-        client = MinimalLSPClient(cmd)
-        LSP_INSTANCES[ext] = client if client.start() else None
-    return LSP_INSTANCES.get(ext)
+def _get_lsp_instance_key(command):
+    """Identify one language-server invocation within the current project."""
+    project_root = os.path.normcase(os.path.abspath(os.getcwd()))
+    return project_root, tuple(command)
+
+
+def _get_or_create_lsp_client(command):
+    """Retrieve or start a client shared by identical server invocations."""
+    instance_key = _get_lsp_instance_key(command)
+    if instance_key not in LSP_INSTANCES:
+        client = MinimalLSPClient(command)
+        LSP_INSTANCES[instance_key] = client if client.start() else None
+    return LSP_INSTANCES.get(instance_key)
 
 
 def get_lsp_references(
@@ -483,21 +490,13 @@ def get_lsp_references(
     if file_cache is None:
         file_cache = get_global_cache()
 
-    ext = os.path.splitext(file_path)[1]
-    configs = {
-        ".cpp": ["clangd", "--background-index"],
-        ".c": ["clangd", "--background-index"],
-        ".hpp": ["clangd", "--background-index"],
-        ".h": ["clangd", "--background-index"],
-        ".rs": ["rust-analyzer"],
-        ".py": ["pylsp"],
-        ".ts": ["typescript-language-server", "--stdio"],
-    }
-
-    if ext not in configs:
+    ext = os.path.splitext(file_path)[1].lower()
+    profile = get_language_profile(ext)
+    if not profile.lsp_command:
         return None
+    command = list(profile.lsp_command)
 
-    client = _get_or_create_lsp_client(ext, configs)
+    client = _get_or_create_lsp_client(command)
     if not client:
         return None
 
@@ -507,7 +506,7 @@ def get_lsp_references(
 
     actual_line, char_idx = _find_lsp_func_start_character(lines, line_num, func_name)
 
-    print(f" [LSP] Querying {configs[ext][0]} for {func_name}() references...")
+    print(f" [LSP] Querying {command[0]} for {func_name}() references...")
     refs = client.get_references(file_path, actual_line, char_idx, timeout=timeout)
 
     callers = {}

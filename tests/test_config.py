@@ -9,6 +9,30 @@ from context_builder.config import (
 )
 
 class TestConfig(unittest.TestCase):
+    def test_common_cpp_extensions_share_cpp_defaults(self):
+        """Common C++ suffixes receive the same parser and query defaults."""
+        from context_builder.config import (
+            DEFAULT_BINDINGS,
+            DEFAULT_CALLEE_QUERY_STRINGS,
+            DEFAULT_DEPENDENCY_QUERY_STRINGS,
+            DEFAULT_LANG_MAP,
+        )
+
+        for extension in (".cc", ".cxx", ".hxx"):
+            self.assertEqual(DEFAULT_LANG_MAP[extension], "cpp")
+            self.assertEqual(
+                DEFAULT_BINDINGS[extension],
+                ("tree_sitter_cpp", "language"),
+            )
+            self.assertEqual(
+                DEFAULT_DEPENDENCY_QUERY_STRINGS[extension],
+                DEFAULT_DEPENDENCY_QUERY_STRINGS[".cpp"],
+            )
+            self.assertEqual(
+                DEFAULT_CALLEE_QUERY_STRINGS[extension],
+                DEFAULT_CALLEE_QUERY_STRINGS[".cpp"],
+            )
+
     def setUp(self):
         reset_config()
 

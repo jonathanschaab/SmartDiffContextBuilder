@@ -18,11 +18,11 @@ from collections import deque
 from .ast_engine import (
     AST_ENGINE,
     extract_function_bounds,
-    strip_strings_and_comments,
 )
 from .cache import get_global_cache
 from .config import CONFIG, generate_commented_config, load_json_with_comments
 from .lsp_client import cleanup_zombie_lsps
+from .languages import get_language_profile
 from .preprocessor import (
     analyze_compile_commands,
     build_ffi_registry,
@@ -165,12 +165,17 @@ def _process_single_diff_line(
         return
     func_chunk = "".join(file_lines[start:end])
 
-    is_py = file_path.endswith('.py')
+    profile = get_language_profile(file_path)
     cleaned_func_chunk = "\n".join(
-        strip_strings_and_comments(line, is_python=is_py)
+        profile.strip_strings_and_comments(line)
         for line in func_chunk.splitlines()
     )
-    func_name = extract_function_name(cleaned_func_chunk, start, end)
+    func_name = extract_function_name(
+        cleaned_func_chunk,
+        start,
+        end,
+        file_path=file_path,
+    )
 
     span_signature = f"{file_path}::line_{start}_to_{end}"
     if span_signature in processed_spans:
@@ -252,7 +257,7 @@ def run_scan(args, start_ref=None, end_ref=None, output_dir=".", repo_root=None)
 
     cpp_linkages = {}
     for f in diff_files:
-        if f.endswith(('.cpp', '.c', '.hpp', '.h')):
+        if get_language_profile(f).supports_compile_commands:
             linkages = analyze_compile_commands(f, repo_root=repo_root)
             if linkages:
                 cpp_linkages[f] = linkages

@@ -8,7 +8,9 @@ from collections.abc import MutableMapping
 # Defaults
 DEFAULT_LANG_MAP = {
     '.rs': 'rust', '.js': 'javascript', '.ts': 'typescript', '.py': 'python',
-    '.cpp': 'cpp', '.hpp': 'cpp', '.c': 'c', '.h': 'cpp', '.go': 'go', '.pl': 'perl',
+    '.cpp': 'cpp', '.cc': 'cpp', '.cxx': 'cpp',
+    '.hpp': 'cpp', '.hxx': 'cpp', '.c': 'c', '.h': 'cpp',
+    '.go': 'go', '.pl': 'perl',
     '.mk': 'makefile', '.cmake': 'cmake', '.sh': 'bash', '.bat': 'batch'
 }
 
@@ -18,8 +20,11 @@ DEFAULT_BINDINGS = {
     '.js': ('tree_sitter_javascript', 'language'),
     '.ts': ('tree_sitter_typescript', 'language_typescript'),
     '.c':  ('tree_sitter_c', 'language'),
+    '.cc': ('tree_sitter_cpp', 'language'),
     '.cpp': ('tree_sitter_cpp', 'language'),
+    '.cxx': ('tree_sitter_cpp', 'language'),
     '.hpp': ('tree_sitter_cpp', 'language'),
+    '.hxx': ('tree_sitter_cpp', 'language'),
     '.h':   ('tree_sitter_cpp', 'language')
 }
 
@@ -84,6 +89,14 @@ DEFAULT_CALLEE_QUERY_STRINGS = {
         '(field_expression field: (field_identifier) @id)])'
     )
 }
+
+for _cpp_extension in ('.cc', '.cxx', '.hpp', '.hxx', '.h'):
+    DEFAULT_DEPENDENCY_QUERY_STRINGS[_cpp_extension] = (
+        DEFAULT_DEPENDENCY_QUERY_STRINGS['.cpp']
+    )
+    DEFAULT_CALLEE_QUERY_STRINGS[_cpp_extension] = (
+        DEFAULT_CALLEE_QUERY_STRINGS['.cpp']
+    )
 
 DEFAULT_FUNC_DECL_PATTERN = (
     r'\b(fn|function|def|sub|func|class|macro)\b|'

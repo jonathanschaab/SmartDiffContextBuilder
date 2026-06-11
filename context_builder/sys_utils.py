@@ -5,6 +5,8 @@ import subprocess
 import sys
 import time
 
+from .languages import get_language_profile
+
 WARNED_MISSING_DEPS = set()
 
 
@@ -430,7 +432,7 @@ def is_in_repo(file_path):
 
 
 def get_comment_prefix(file_path):
-    """Return the correct comment prefix based on the file extension or name.
+    """Return the configured language profile's comment prefix.
 
     Args:
         file_path (str): Path to the file.
@@ -438,12 +440,4 @@ def get_comment_prefix(file_path):
     Returns:
         str: Comment prefix (e.g., "#", "//", "REM").
     """
-    base = os.path.basename(file_path)
-    if base.lower() == "makefile" or base.startswith("Makefile"):
-        return "#"
-    ext = os.path.splitext(file_path)[1].lower()
-    if ext in (".py", ".sh", ".pl", ".mk", ".cmake"):
-        return "#"
-    if ext == ".bat":
-        return "REM"
-    return "//"
+    return get_language_profile(file_path).comment_prefix

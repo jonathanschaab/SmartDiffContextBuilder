@@ -9,6 +9,7 @@ import xml.etree.ElementTree as ET
 
 from .ast_engine import AST_ENGINE, extract_function_bounds_regex
 from .cache import get_global_cache
+from .languages import get_language_profile
 from .sys_utils import iter_scan_progress, ripgrep_filter, warn_once
 
 
@@ -72,15 +73,12 @@ def _mine_ast_tests(
 ):
     """Scan file using AST query to find tests."""
     tree = AST_ENGINE.parsers[ext].parse(source_bytes)
-    test_queries = {
-        ".rs": "(attribute_item (attribute (identifier) @attr (#eq? @attr \"test\")))",
-        ".py": "(function_definition name: (identifier) @name (#match? @name \"^test_\"))",
-    }
-    if ext not in test_queries:
+    test_query = get_language_profile(ext).test_query
+    if not test_query:
         return False
 
     try:
-        query = AST_ENGINE.languages[ext].query(test_queries[ext])
+        query = AST_ENGINE.languages[ext].query(test_query)
         captures = query.captures(tree.root_node)
         for node, _ in captures:
             _process_ast_capture(
@@ -132,10 +130,14 @@ def _mine_single_file(
 ):
     """Process a single file for mining tests."""
     path_lower = file_path.lower()
+    profile = get_language_profile(file_path)
     is_test_file = (
         "test" in path_lower
         or "spec" in path_lower
-        or (file_path.endswith(".rs") and file_path == current_source_file)
+        or (
+            profile.tests_can_share_source_file
+            and file_path == current_source_file
+        )
     )
     if not is_test_file:
         return

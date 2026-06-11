@@ -190,3 +190,17 @@ The payload is written to `{base-name}_final.md` (default: `SmartDiffContextBuil
 6. **Cross-Language FFI Linkages**: FFI call-site locations across language boundaries.
 
 When the payload exceeds `--max-mb`, lower-priority sections are truncated and the output includes a warning notice.
+
+---
+
+## Language Profiles
+
+Language-specific behavior lives in `context_builder/languages/`. Profiles define
+comment syntax, LSP commands, block style, C/C++ preprocessing capabilities, and
+function-name fallback behavior. Shared scanners resolve a profile through the
+registry instead of maintaining their own extension lists.
+
+Unregistered extensions use `unknown_language.py`, which preserves the
+conservative C-like fallback behavior. User-configurable tree-sitter bindings
+and query strings remain in the configuration layer so custom language support
+does not require editing a built-in profile.
