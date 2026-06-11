@@ -26,6 +26,7 @@ from .lsp_client import cleanup_zombie_lsps
 from .preprocessor import (
     analyze_compile_commands,
     build_ffi_registry,
+    clear_preprocessed_cache,
 )
 from .sys_utils import (
     get_comment_prefix,
@@ -218,6 +219,7 @@ def _process_diff_files(
 def run_scan(args, start_ref=None, end_ref=None, output_dir=".", repo_root=None):
     """Execute the context scan."""
     file_cache = get_global_cache(args.max_cache_size_mb)
+    clear_preprocessed_cache()
     lsp_client.USE_LSP = not args.no_language_server
 
     print(f"\n[ContextLens] Scanning Git Diff Workspace [Format: {args.format.upper()}]")
@@ -667,7 +669,12 @@ def main():
         help="JSON list of callee ignored keywords",
     )
     parser.add_argument("--ffi-patterns", type=str, default=None, help="JSON list of FFI patterns")
-    parser.add_argument("--ffi-rg-pattern", type=str, default=None)
+    parser.add_argument(
+        "--ffi-rg-pattern",
+        type=str,
+        default=None,
+        help="Ripgrep prefilter that must match every file eligible for --ffi-patterns",
+    )
 
     args = parser.parse_args()
 

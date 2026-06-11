@@ -3,6 +3,7 @@
 import os
 import subprocess
 import sys
+import time
 
 WARNED_MISSING_DEPS = set()
 
@@ -108,16 +109,231 @@ class RipgrepChecker:  # pylint: disable=too-few-public-methods
                 )
         return self._has_rg
 
-
 HAS_RG = RipgrepChecker()
 
-def ripgrep_filter(files, token, fixed_strings=True):
+
+_PROGRESS_BAR_WIDTH = 25
+_RG_COMMAND_MAX_CHARS = 24000
+_NORMALIZED_PATH_CACHE = {}
+
+
+def _stream_is_tty(stream):
+    """Return whether a stream is interactive without trusting custom wrappers."""
+    try:
+        return bool(stream.isatty())
+    except Exception:  # pylint: disable=broad-exception-caught
+        return False
+
+
+class FileScanCandidates(list):
+    """List of files returned by ripgrep_filter with scan metadata attached."""
+
+    def __init__(self, files, fallback_label=None):
+        """Initialize candidate list.
+
+        Args:
+            files (iterable): File paths to scan.
+            fallback_label (str, optional): Description for fallback scans.
+        """
+        super().__init__(files)
+        self.fallback_label = fallback_label
+        self.used_ripgrep_fallback = fallback_label is not None
+
+
+class ScanProgressBar:  # pylint: disable=too-few-public-methods
+    """Renders a lightweight progress indicator for long-running file scans.
+
+    On interactive terminals (tty): rewrites the same line using carriage
+    return so progress is shown without cluttering the log.
+    On non-interactive output (CI, redirected): emits periodic status lines
+    instead, avoiding escape sequences in log files.
+    """
+
+    def __init__(self, total, label, min_files=100):
+        """Initialize the progress bar.
+
+        Args:
+            total (int): Total number of files to scan.
+            label (str): Description shown alongside the progress indicator.
+            min_files (int): Minimum file count required to activate the bar.
+        """
+        self.total = total
+        self.label = label
+        self.active = total > 0 and total >= min_files
+        self._is_tty = self.active and _stream_is_tty(sys.stderr)
+        self._last_pct = -1
+        self._last_count = 0
+        # Emit roughly 20 periodic lines for non-tty output
+        self._interval = max(1, total // 20) if self.active else 1
+
+    def update(self, idx):
+        """Update the progress indicator after processing the file at position idx.
+
+        Args:
+            idx (int): Zero-based index of the file just processed.
+        """
+        if not self.active:
+            return
+        if self._is_tty:
+            pct = ((idx + 1) * 100) // self.total
+            if pct != self._last_pct:
+                filled = (pct * _PROGRESS_BAR_WIDTH) // 100
+                progress_bar = "#" * filled + "-" * (_PROGRESS_BAR_WIDTH - filled)
+                print(
+                    f"\r  [{progress_bar}] {pct:3d}%  {self.label}  [{idx + 1}/{self.total}]",
+                    end="",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                self._last_pct = pct
+                self._last_count = idx + 1
+        else:
+            if idx % self._interval == 0:
+                print(f"  [Scanning {idx + 1}/{self.total}]  {self.label}", file=sys.stderr)
+                self._last_count = idx + 1
+
+    def finish(self, completed=True):
+        """Finalize the progress indicator after all files have been processed."""
+        if not self.active:
+            return
+        if self._is_tty:
+            if completed:
+                progress_bar = "#" * _PROGRESS_BAR_WIDTH
+                print(
+                    f"\r  [{progress_bar}] 100%  {self.label}  [{self.total}/{self.total}]",
+                    file=sys.stderr,
+                )
+            else:
+                print(file=sys.stderr)
+        elif completed and self._last_count != self.total:
+            print(f"  [Scanning {self.total}/{self.total}]  {self.label}", file=sys.stderr)
+
+
+def iter_scan_progress(files, label=None, min_files=100, force=False):
+    """Yield files while displaying progress for long-running scans.
+
+    Args:
+        files (iterable): File paths to scan.
+        label (str, optional): Description shown alongside progress.
+        min_files (int): Minimum file count required to activate progress.
+        force (bool): Show progress regardless of whether ripgrep fell back.
+
+    Yields:
+        str: File paths from files.
+    """
+    # Read metadata before materializing arbitrary iterables because converting
+    # them to a plain list discards custom fallback progress attributes.
+    fallback_label = getattr(files, "fallback_label", None)
+    scan_files = files if isinstance(files, list) else list(files)
+    progress_label = label or fallback_label
+    should_show = force or bool(fallback_label)
+    progress = ScanProgressBar(
+        len(scan_files),
+        progress_label or "Scanning files",
+        min_files=min_files,
+    )
+    progress.active = progress.active and should_show
+    completed = False
+    try:
+        for idx, file_path in enumerate(scan_files):
+            yield file_path
+            progress.update(idx)
+        completed = True
+    finally:
+        progress.finish(completed=completed)
+
+
+def _fallback_candidates(files, fallback_hint):
+    """Return all files with metadata indicating ripgrep fallback was used."""
+    return FileScanCandidates(files, fallback_hint)
+
+
+def _get_cached_absolute_path(file_path, cwd):
+    """Return a normalized absolute path, caching repeated repository paths."""
+    cache_key = (cwd, file_path)
+    abs_path = _NORMALIZED_PATH_CACHE.get(cache_key)
+    if abs_path is None:
+        abs_path = os.path.normcase(os.path.abspath(os.path.join(cwd, file_path)))
+        _NORMALIZED_PATH_CACHE[cache_key] = abs_path
+    return abs_path
+
+
+def _normalize_search_result(file_path, cwd):
+    """Normalize a candidate or ripgrep result for reliable path comparison."""
+    return _get_cached_absolute_path(file_path, cwd).replace("\\", "/")
+
+
+def _build_rg_file_batches(base_cmd, files, max_chars=_RG_COMMAND_MAX_CHARS):
+    """Split explicit file arguments into command-line-length-safe batches."""
+    base_length = len(subprocess.list2cmdline(base_cmd + ["--"]))
+    batches = []
+    current_batch = []
+    current_length = base_length
+    for file_path in files:
+        arg_length = len(subprocess.list2cmdline([file_path])) + 1
+        if current_batch and current_length + arg_length > max_chars:
+            batches.append(current_batch)
+            current_batch = []
+            current_length = base_length
+        current_batch.append(file_path)
+        current_length += arg_length
+    if current_batch:
+        batches.append(current_batch)
+    return batches
+
+
+def _run_rg_batches(base_cmd, files, cwd, timeout):
+    """Run explicit-file ripgrep batches and return normalized matches."""
+    batches = _build_rg_file_batches(base_cmd, files)
+    matched_files = set()
+    deadline = time.monotonic() + timeout
+    for batch_index, batch in enumerate(batches):
+        batch_timeout = timeout if batch_index == 0 else deadline - time.monotonic()
+        if batch_timeout <= 0:
+            raise subprocess.TimeoutExpired(cmd=base_cmd, timeout=timeout)
+        cmd = base_cmd + ["--"] + batch
+        res = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            # A path with undecodable bytes should not crash the batch and force
+            # an exhaustive scan. Replacement may prevent that one path from
+            # matching exactly, but keeps all normally decoded results usable.
+            errors="replace",
+            check=False,
+            timeout=batch_timeout,
+        )
+        # rg exits with 0 if matches are found, 1 if no matches are found,
+        # and 2 if an error occurs.
+        if res.returncode == 0:
+            matched_files.update(
+                _normalize_search_result(file_path, cwd)
+                for file_path in res.stdout.splitlines()
+            )
+            continue
+        if res.returncode == 1:
+            continue
+        warn_once(
+            "ripgrep_error",
+            f"ripgrep exited with an unexpected return code {res.returncode}. "
+            f"Stderr: {res.stderr.strip()}"
+        )
+        return None
+    return matched_files
+
+
+def ripgrep_filter(files, token, fixed_strings=True, fallback_hint=None):
     """Filter list of files to only those containing the given token using ripgrep.
 
     Args:
         files (list): List of files to filter.
         token (str): Search token/pattern.
         fixed_strings (bool): Treat token as literal string instead of regex.
+        fallback_hint (str, optional): Human-readable description of what is being
+            searched (e.g. "callers of 'my_func'"). When provided, a prominent
+            warning is printed whenever the fast ripgrep path is unavailable and
+            the caller will fall back to an exhaustive scan.
 
     Returns:
         list: Filtered list of files.
@@ -125,7 +341,14 @@ def ripgrep_filter(files, token, fixed_strings=True):
     if not files:
         return []
     if not HAS_RG:
-        return files
+        if fallback_hint:
+            warn_once(
+                "ripgrep_fallback",
+                f"Fast-path search unavailable. Falling back to exhaustive repository scan "
+                f"for {fallback_hint}. This may take a while in large repositories; "
+                "progress will be shown for long scans.",
+            )
+        return _fallback_candidates(files, fallback_hint)
     from .config import CONFIG  # pylint: disable=import-outside-toplevel
 
     timeout = CONFIG.get("ripgrep_timeout", 10)
@@ -137,31 +360,19 @@ def ripgrep_filter(files, token, fixed_strings=True):
         )
         timeout = 10
     try:
-        cmd = ["rg", "-l"]
+        base_cmd = ["rg", "-l"]
         if fixed_strings:
             # -F treats the token as a literal fixed string rather than a regular expression
-            cmd.append("-F")
-        cmd.append(token)
-        res = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-            timeout=timeout,
-        )
-        # rg exits with 0 if matches are found, 1 if no matches are found, and 2 if an error occurs.
-        if res.returncode == 0:
-            # Normalize path separators to forward slashes to prevent mismatches on Windows
-            rg_files = {f.replace("\\", "/") for f in res.stdout.splitlines()}
-            return [f for f in files if f.replace("\\", "/") in rg_files]
-        if res.returncode == 1:
-            return []
-        warn_once(
-            "ripgrep_error",
-            f"ripgrep exited with an unexpected return code {res.returncode}. "
-            f"Stderr: {res.stderr.strip()}"
-        )
+            base_cmd.append("-F")
+        base_cmd.append(token)
+        cwd = os.path.normcase(os.path.abspath(os.getcwd()))
+        matched_files = _run_rg_batches(base_cmd, files, cwd, timeout)
+        if matched_files is not None:
+            return [
+                file_path
+                for file_path in files
+                if _normalize_search_result(file_path, cwd) in matched_files
+            ]
 
     except subprocess.TimeoutExpired:
         warn_once(
@@ -170,13 +381,21 @@ def ripgrep_filter(files, token, fixed_strings=True):
             "You can increase this limit by using the --ripgrep-timeout option "
             "or by setting 'ripgrep_timeout' in your config file."
         )
-    except Exception as e:  # pylint: disable=broad-exception-caught
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         warn_once(
             "ripgrep_fail",
-            f"ripgrep failed unexpectedly: {e}. Falling back to manual scanning."
+            f"ripgrep failed unexpectedly: {exc}. Falling back to manual scanning."
         )
-    # Fallback to scanning all files if ripgrep execution fails unexpectedly
-    return files
+    # Fallback: rg failed or timed out; warn and return the unfiltered list so the
+    # caller can proceed with an exhaustive scan rather than silently dropping results.
+    if fallback_hint:
+        warn_once(
+            "ripgrep_fallback",
+            f"Falling back to exhaustive repository scan for {fallback_hint}. "
+            "This may take a while in large repositories; progress will be shown "
+            "for long scans.",
+        )
+    return _fallback_candidates(files, fallback_hint)
 
 
 def is_in_repo(file_path):

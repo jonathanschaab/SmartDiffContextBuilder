@@ -1,6 +1,6 @@
 import os
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import ANY, patch, MagicMock
 import tempfile
 from context_builder.cache import LRUFileCache
 from context_builder.ast_engine import (
@@ -519,7 +519,11 @@ class TestAstEngine(unittest.TestCase):
         mock_cache = MagicMock()
         mock_cache.get_bytes.return_value = b"void operator+();"
         
-        trace_lexical_dependencies_ast("operator+", ["file.cpp"], file_cache=mock_cache)
+        with patch(
+            "context_builder.ast_engine.ripgrep_filter",
+            return_value=["file.cpp"],
+        ):
+            trace_lexical_dependencies_ast("operator+", ["file.cpp"], file_cache=mock_cache)
         
         # Verify that AST_ENGINE.languages[".cpp"].query was called with double-escaped operator\\+
         mock_lang.query.assert_called_once()
@@ -627,6 +631,42 @@ class TestAstEngine(unittest.TestCase):
                     mock_warn.assert_any_call("invalid_binding_.dummy", ANY)
         finally:
             CONFIG['bindings'] = orig_bindings
+
+    def test_failed_parser_setup_does_not_register_language(self):
+        """A language is registered only after parser configuration succeeds."""
+        import context_builder.ast_engine as ast_engine
+
+        mock_module = MagicMock()
+        mock_module.language.return_value = object()
+        mock_tree_sitter = MagicMock()
+        mock_tree_sitter.Language.return_value = MagicMock()
+        mock_tree_sitter.Parser.return_value.set_language.side_effect = RuntimeError("bad parser")
+
+        engine = ast_engine.AstEngine()
+        orig_bindings = ast_engine.CONFIG["bindings"].copy()
+        try:
+            ast_engine.CONFIG["bindings"] = {".dummy": ("pkg.sub", "language")}
+            with patch.object(
+                ast_engine.importlib,
+                "import_module",
+                return_value=mock_module,
+            ), patch.object(
+                ast_engine,
+                "HAS_TREESITTER",
+                True,
+            ), patch.object(
+                ast_engine,
+                "tree_sitter",
+                mock_tree_sitter,
+                create=True,
+            ):
+                engine.initialize()
+        finally:
+            ast_engine.CONFIG["bindings"] = orig_bindings
+
+        self.assertNotIn(".dummy", engine.languages)
+        self.assertNotIn(".dummy", engine.parsers)
+        self.assertEqual(engine.missing_bindings[".dummy"], "pkg.sub")
 
     def test_quantifier_curly_braces_in_templates(self):
         """Verify that curly brace quantifiers (e.g. {1,3}) in templates do not crash definitions or dependency tracing."""

@@ -1,10 +1,12 @@
 import os
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch, MagicMock, ANY
 import json
 from context_builder.cache import LRUFileCache
 import context_builder.preprocessor as _preprocessor_mod
+from context_builder.sys_utils import FileScanCandidates
 from context_builder.preprocessor import (
     analyze_compile_commands,
     build_ffi_registry,
@@ -23,6 +25,7 @@ class TestPreprocessor(unittest.TestCase):
         _preprocessor_mod._COMPILE_COMMANDS_STATE["cache"] = None
         _preprocessor_mod._COMPILE_COMMANDS_STATE["mtime"] = None
         _preprocessor_mod._COMPILE_COMMANDS_STATE["path"] = None
+        _preprocessor_mod.clear_preprocessed_cache()
 
     def tearDown(self):
         os.chdir(self.old_cwd)
@@ -205,7 +208,10 @@ class TestPreprocessor(unittest.TestCase):
         mock_cache = MagicMock()
         mock_cache.get_lines.return_value = []
 
-        with patch("context_builder.preprocessor.run_command", return_value=expanded), \
+        with patch(
+            "context_builder.preprocessor._run_clang_preprocessor",
+            return_value=(expanded, "success"),
+        ), \
              patch("context_builder.preprocessor.os.path.relpath",
                    side_effect=ValueError("path is on mount 'D:'")) as mock_rp, \
              patch("context_builder.preprocessor.os.path.exists", return_value=False):
@@ -294,7 +300,7 @@ class TestPreprocessor(unittest.TestCase):
         # Create a header file (.h)
         header_path = "my_header.h"
         with open(header_path, "w") as f:
-            f.write("#define MY_MACRO 10\n")
+            f.write("#define JOIN(a, b) a ## b\n")
 
         # Fake clang -E output
         expanded = (
@@ -305,7 +311,10 @@ class TestPreprocessor(unittest.TestCase):
         mock_cache = MagicMock()
         mock_cache.get_lines.return_value = ["#define MY_MACRO 10"]
         
-        with patch("context_builder.preprocessor.run_command", return_value=expanded), \
+        with patch(
+            "context_builder.preprocessor._run_clang_preprocessor",
+            return_value=(expanded, "success"),
+        ), \
              patch("context_builder.preprocessor.os.path.exists", return_value=True):
             result = trace_macro_expansion("my_func", [header_path], file_cache=mock_cache)
             
@@ -315,18 +324,290 @@ class TestPreprocessor(unittest.TestCase):
         # Test case-insensitivity of macro expansion
         header_path_upper = "MY_HEADER.H"
         with open(header_path_upper, "w") as f:
-            f.write("#define MY_MACRO 10\n")
+            f.write("#define JOIN(a, b) a ## b\n")
             
         expanded_upper = (
             f'# 1 "{header_path_upper}"\n'
             "void my_func() {}\n"
         )
         
-        with patch("context_builder.preprocessor.run_command", return_value=expanded_upper), \
+        with patch(
+            "context_builder.preprocessor._run_clang_preprocessor",
+            return_value=(expanded_upper, "success"),
+        ), \
              patch("context_builder.preprocessor.os.path.exists", return_value=True):
             result_upper = trace_macro_expansion("my_func", [header_path_upper], file_cache=mock_cache)
             
         self.assertIn("MY_HEADER.H", result_upper)
+
+    def test_trace_macro_expansion_skips_safe_empty_prefilter(self):
+        """Literal and token-paste misses avoid exhaustive preprocessing."""
+        repo_files = ["one.h", "two.cpp"]
+        with patch(
+            "context_builder.preprocessor.ripgrep_filter",
+            side_effect=[[], []],
+        ) as mock_filter, patch(
+            "context_builder.preprocessor._process_single_macro_file",
+        ) as mock_process:
+            result = trace_macro_expansion(
+                "generated_symbol",
+                repo_files,
+                file_cache=MagicMock(),
+            )
+
+        self.assertEqual(result, {})
+        self.assertEqual(mock_filter.call_count, 2)
+        mock_filter.assert_any_call(
+            repo_files,
+            "generated_symbol",
+            fallback_hint="macro callers of 'generated_symbol'",
+        )
+        mock_filter.assert_any_call(
+            repo_files,
+            "##",
+            fallback_hint="token-pasting macros relevant to 'generated_symbol'",
+        )
+        mock_process.assert_not_called()
+
+    def test_trace_macro_expansion_scans_after_token_paste_match(self):
+        """Token-pasting can synthesize a symbol absent from source text."""
+        repo_files = ["macros.h", "main.cpp"]
+
+        with patch(
+            "context_builder.preprocessor.ripgrep_filter",
+            side_effect=[[], ["macros.h"]],
+        ), patch(
+            "context_builder.preprocessor._process_single_macro_file",
+        ) as mock_process:
+            trace_macro_expansion(
+                "generated_symbol",
+                repo_files,
+                file_cache=MagicMock(),
+            )
+
+        scanned_files = [call.args[0] for call in mock_process.call_args_list]
+        self.assertEqual(scanned_files, repo_files)
+
+    def test_trace_macro_expansion_scans_when_token_paste_check_fails(self):
+        """An unreliable safety check must preserve exhaustive preprocessing."""
+        repo_files = ["macros.h", "main.cpp"]
+        fallback_files = FileScanCandidates(
+            repo_files,
+            "token-pasting macros relevant to 'generated_symbol'",
+        )
+
+        with patch(
+            "context_builder.preprocessor.ripgrep_filter",
+            side_effect=[[], fallback_files],
+        ), patch(
+            "context_builder.preprocessor._process_single_macro_file",
+        ) as mock_process:
+            trace_macro_expansion(
+                "generated_symbol",
+                repo_files,
+                file_cache=MagicMock(),
+            )
+
+        scanned_files = [call.args[0] for call in mock_process.call_args_list]
+        self.assertEqual(scanned_files, repo_files)
+
+    def test_trace_macro_expansion_scans_callers_without_lexical_match(self):
+        """Header macro matches do not exclude source files that invoke the macro."""
+        repo_files = ["macros.h", "main.c"]
+
+        with patch(
+            "context_builder.preprocessor.ripgrep_filter",
+            return_value=["macros.h"],
+        ), patch(
+            "context_builder.preprocessor._process_single_macro_file",
+        ) as mock_process:
+            trace_macro_expansion("my_func", repo_files, file_cache=MagicMock())
+
+        scanned_files = [call.args[0] for call in mock_process.call_args_list]
+        self.assertEqual(scanned_files, ["macros.h", "main.c"])
+
+    def test_trace_macro_expansion_reuses_preprocessed_output(self):
+        """Multiple symbol searches preprocess each source snapshot only once."""
+        source_path = "main.c"
+        with open(source_path, "w", encoding="utf-8") as source_file:
+            source_file.write("#define BOTH() foo(); bar()\n")
+
+        expanded = "void test() { foo(); bar(); }\n"
+        with patch(
+            "context_builder.preprocessor.ripgrep_filter",
+            return_value=[source_path],
+        ), patch(
+            "context_builder.preprocessor._run_clang_preprocessor",
+            return_value=(expanded, "success"),
+        ) as mock_run, patch(
+            "context_builder.preprocessor._map_expanded_line_to_source",
+        ):
+            trace_macro_expansion("foo", [source_path], file_cache=MagicMock())
+            trace_macro_expansion("bar", [source_path], file_cache=MagicMock())
+
+        mock_run.assert_called_once_with(source_path)
+
+    def test_preprocessed_output_cache_invalidates_on_source_change(self):
+        """Changing a source file invalidates its cached preprocessor output."""
+        source_path = "main.c"
+        with open(source_path, "w", encoding="utf-8") as source_file:
+            source_file.write("int first;\n")
+
+        with patch(
+            "context_builder.preprocessor._run_clang_preprocessor",
+            side_effect=[
+                ("first expansion", "success"),
+                ("second expansion", "success"),
+            ],
+        ) as mock_run:
+            first = _preprocessor_mod._get_preprocessed_code(source_path)
+            with open(source_path, "w", encoding="utf-8") as source_file:
+                source_file.write("int second_value;\n")
+            second = _preprocessor_mod._get_preprocessed_code(source_path)
+
+        self.assertEqual(first, "first expansion")
+        self.assertEqual(second, "second expansion")
+        self.assertEqual(mock_run.call_count, 2)
+
+    def test_preprocessed_code_skips_clang_when_stat_fails(self):
+        """Missing or inaccessible candidates do not spawn clang."""
+        with patch(
+            "context_builder.preprocessor.os.stat",
+            side_effect=OSError("file unavailable"),
+        ), patch(
+            "context_builder.preprocessor._run_clang_preprocessor",
+        ) as mock_run:
+            expanded = _preprocessor_mod._get_preprocessed_code("missing.cpp")
+
+        self.assertEqual(expanded, "")
+        mock_run.assert_not_called()
+
+    def test_preprocessed_code_caches_successful_empty_output(self):
+        """A valid empty expansion is a reusable negative result."""
+        source_path = "empty.c"
+        with open(source_path, "w", encoding="utf-8"):
+            pass
+
+        with patch(
+            "context_builder.preprocessor._run_clang_preprocessor",
+            return_value=("", "success"),
+        ) as mock_run:
+            first = _preprocessor_mod._get_preprocessed_code(source_path)
+            second = _preprocessor_mod._get_preprocessed_code(source_path)
+
+        self.assertEqual(first, "")
+        self.assertEqual(second, "")
+        mock_run.assert_called_once_with(source_path)
+
+    def test_preprocessed_code_caches_deterministic_failure(self):
+        """A clang failure is not retried for an unchanged source snapshot."""
+        source_path = "invalid.c"
+        with open(source_path, "w", encoding="utf-8") as source_file:
+            source_file.write("#error invalid\n")
+
+        with patch(
+            "context_builder.preprocessor._run_clang_preprocessor",
+            return_value=("", "failed"),
+        ) as mock_run:
+            first = _preprocessor_mod._get_preprocessed_code(source_path)
+            second = _preprocessor_mod._get_preprocessed_code(source_path)
+
+        self.assertEqual(first, "")
+        self.assertEqual(second, "")
+        mock_run.assert_called_once_with(source_path)
+
+    def test_preprocessed_code_retries_timeout_once(self):
+        """A timeout gets one retry before its empty result is cached."""
+        source_path = "slow.c"
+        with open(source_path, "w", encoding="utf-8") as source_file:
+            source_file.write("#include \"slow.h\"\n")
+
+        with patch(
+            "context_builder.preprocessor._run_clang_preprocessor",
+            return_value=("", "timeout"),
+        ) as mock_run:
+            first = _preprocessor_mod._get_preprocessed_code(source_path)
+            second = _preprocessor_mod._get_preprocessed_code(source_path)
+            third = _preprocessor_mod._get_preprocessed_code(source_path)
+
+        self.assertEqual(first, "")
+        self.assertEqual(second, "")
+        self.assertEqual(third, "")
+        self.assertEqual(mock_run.call_count, 2)
+
+    def test_clang_preprocessor_reports_timeout_separately(self):
+        """The clang wrapper preserves timeout status for retry decisions."""
+        with patch(
+            "context_builder.preprocessor.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(["clang", "-E"], 5),
+        ), patch("context_builder.preprocessor.warn_once") as mock_warn:
+            output, status = _preprocessor_mod._run_clang_preprocessor("slow.c")
+
+        self.assertEqual(output, "")
+        self.assertEqual(status, "timeout")
+        mock_warn.assert_called_once()
+
+    def test_clang_preprocessor_reports_deterministic_failure(self):
+        """Non-timeout clang failures can be negatively cached."""
+        failure = subprocess.CalledProcessError(1, ["clang", "-E", "invalid.c"])
+        with patch(
+            "context_builder.preprocessor.subprocess.run",
+            side_effect=failure,
+        ):
+            output, status = _preprocessor_mod._run_clang_preprocessor("invalid.c")
+
+        self.assertEqual(output, "")
+        self.assertEqual(status, "failed")
+
+    def test_clang_preprocessor_replaces_undecodable_output(self):
+        """Clang output decoding is tolerant of legacy or invalid source bytes."""
+        replacement_output = "const char *value = \"\ufffd\";\n"
+
+        def decoding_sensitive_run(*_args, **kwargs):
+            self.assertEqual(kwargs.get("errors"), "replace")
+            return MagicMock(stdout=replacement_output)
+
+        with patch(
+            "context_builder.preprocessor.subprocess.run",
+            side_effect=decoding_sensitive_run,
+        ):
+            output, status = _preprocessor_mod._run_clang_preprocessor("legacy.c")
+
+        self.assertEqual(output, replacement_output)
+        self.assertEqual(status, "success")
+
+    def test_clang_preprocessor_caches_missing_executable_for_scan(self):
+        """A missing clang executable is probed only once per repository scan."""
+        with patch(
+            "context_builder.preprocessor.subprocess.run",
+            side_effect=FileNotFoundError("clang unavailable"),
+        ) as mock_run, patch(
+            "context_builder.preprocessor.warn_once",
+        ) as mock_warn:
+            first = _preprocessor_mod._run_clang_preprocessor("one.c")
+            second = _preprocessor_mod._run_clang_preprocessor("two.cpp")
+
+        self.assertEqual(first, ("", "failed"))
+        self.assertEqual(second, ("", "failed"))
+        mock_run.assert_called_once()
+        mock_warn.assert_called_once_with(
+            "clang_missing",
+            "clang is unavailable; continuing C/C++ analysis without macro expansion.",
+        )
+
+    def test_clear_preprocessed_cache_rechecks_clang_availability(self):
+        """A new repository scan gets one fresh chance to discover clang."""
+        with patch(
+            "context_builder.preprocessor.subprocess.run",
+            side_effect=FileNotFoundError("clang unavailable"),
+        ) as mock_run, patch(
+            "context_builder.preprocessor.warn_once",
+        ):
+            _preprocessor_mod._run_clang_preprocessor("one.c")
+            _preprocessor_mod.clear_preprocessed_cache()
+            _preprocessor_mod._run_clang_preprocessor("two.c")
+
+        self.assertEqual(mock_run.call_count, 2)
 
     def test_analyze_compile_commands_worktree_mapping(self):
         """Verify that when repo_root is passed, absolute paths in compile_commands.json
@@ -453,6 +734,7 @@ class TestPreprocessor(unittest.TestCase):
             
             # 2. Non-string pattern test
             CONFIG['ffi_patterns'] = [123, True, "fn\\s+([a-z]+)"]
+            CONFIG['ffi_rg_pattern'] = r"\bfn\b"
             with patch("context_builder.preprocessor.warn_once") as mock_warn:
                 symbols = build_ffi_registry([file_path], file_cache=cache)
                 self.assertIn("test", symbols)
@@ -460,6 +742,67 @@ class TestPreprocessor(unittest.TestCase):
                 mock_warn.assert_any_call("ffi_pattern_non_string", ANY)
         finally:
             reset_config()
+
+    def test_build_ffi_registry_forces_progress_without_prefilter(self):
+        """An exhaustive FFI registry scan shows progress when no rg pattern is configured."""
+        from context_builder.config import CONFIG
+        repo_files = ["one.rs", "two.cpp"]
+
+        with patch.dict(CONFIG, {"ffi_rg_pattern": None}), \
+             patch("context_builder.preprocessor.iter_scan_progress", return_value=[]) as mock_iter:
+            build_ffi_registry(repo_files, file_cache=MagicMock())
+
+        self.assertTrue(mock_iter.call_args.kwargs["force"])
+
+    def test_build_ffi_registry_trusts_empty_prefilter_result(self):
+        """A successful ripgrep miss avoids an exhaustive FFI registry scan."""
+        from context_builder.config import CONFIG
+        repo_files = ["one.rs", "two.cpp"]
+        mock_cache = MagicMock()
+
+        with patch.dict(
+            CONFIG,
+            {
+                "ffi_rg_pattern": "FFI_EXPORT",
+                "ffi_patterns": [r"FFI_EXPORT\s+([A-Za-z0-9_]+)"],
+            },
+        ), patch(
+            "context_builder.preprocessor.ripgrep_filter",
+            return_value=[],
+        ):
+            symbols = build_ffi_registry(repo_files, file_cache=mock_cache)
+
+        self.assertEqual(symbols, set())
+        mock_cache.get_content.assert_not_called()
+
+    def test_build_ffi_registry_scans_all_files_after_ripgrep_failure(self):
+        """Ripgrep fallback candidates preserve exhaustive FFI extraction."""
+        from context_builder.config import CONFIG
+        repo_files = ["one.rs", "two.cpp"]
+        fallback_files = FileScanCandidates(
+            repo_files,
+            "FFI export pre-computation",
+        )
+        mock_cache = MagicMock()
+        mock_cache.get_content.side_effect = [
+            "FFI_EXPORT exported_symbol",
+            "ordinary source",
+        ]
+
+        with patch.dict(
+            CONFIG,
+            {
+                "ffi_rg_pattern": "FFI_EXPORT",
+                "ffi_patterns": [r"FFI_EXPORT\s+([A-Za-z0-9_]+)"],
+            },
+        ), patch(
+            "context_builder.preprocessor.ripgrep_filter",
+            return_value=fallback_files,
+        ):
+            symbols = build_ffi_registry(repo_files, file_cache=mock_cache)
+
+        self.assertEqual(symbols, {"exported_symbol"})
+        self.assertEqual(mock_cache.get_content.call_count, len(repo_files))
 
     def test_analyze_compile_commands_include_with_directory_prefix(self):
         """Verify that translation units are successfully linked to target files

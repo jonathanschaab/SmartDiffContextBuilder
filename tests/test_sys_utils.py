@@ -1,8 +1,18 @@
+import os
+import subprocess
 import sys
+import tempfile
 import unittest
 from io import StringIO
 from unittest.mock import MagicMock, patch
-from context_builder.sys_utils import run_command, get_git_diff_files, get_git_tracked_files, ripgrep_filter
+import context_builder.sys_utils as sys_utils
+from context_builder.sys_utils import (
+    iter_scan_progress,
+    run_command,
+    get_git_diff_files,
+    get_git_tracked_files,
+    ripgrep_filter,
+)
 
 class TestSysUtils(unittest.TestCase):
     def test_run_command_success(self):
@@ -36,6 +46,9 @@ class TestSysUtils(unittest.TestCase):
 
         filtered = ripgrep_filter(["file1.py", "file2.py"], "query")
         self.assertEqual(filtered, ["file1.py"])
+        cmd = mock_run.call_args[0][0]
+        self.assertEqual(cmd[-3:], ["--", "file1.py", "file2.py"])
+        self.assertNotIn(".", cmd)
 
     def test_is_in_repo(self):
         import tempfile
@@ -93,8 +106,122 @@ class TestSysUtils(unittest.TestCase):
 
         files = ["src/a.py", "src/b.py", "src/c.py"]
         filtered = ripgrep_filter(files, "query")
-        
+
         self.assertEqual(filtered, ["src/a.py", "src/b.py"])
+
+    @patch("context_builder.sys_utils.HAS_RG", True)
+    @patch("subprocess.run")
+    def test_ripgrep_filter_searches_external_absolute_files(self, mock_run):
+        """Absolute candidates outside the working tree are passed directly to ripgrep."""
+        external_file = os.path.abspath(os.path.join(os.path.dirname(os.getcwd()), "file.py"))
+        mock_res = MagicMock()
+        mock_res.returncode = 0
+        mock_res.stdout = external_file + "\n"
+        mock_run.return_value = mock_res
+
+        filtered = ripgrep_filter([external_file], "query")
+
+        self.assertEqual(filtered, [external_file])
+        cmd = mock_run.call_args[0][0]
+        self.assertEqual(cmd[-2:], ["--", external_file])
+
+    @patch("context_builder.sys_utils.HAS_RG", True)
+    @patch("subprocess.run")
+    def test_ripgrep_filter_searches_external_relative_files(self, mock_run):
+        """Relative candidates escaping the working tree are passed directly to ripgrep."""
+        external_file = os.path.join("..", "sibling", "file.py")
+        mock_res = MagicMock()
+        mock_res.returncode = 0
+        mock_res.stdout = external_file + "\n"
+        mock_run.return_value = mock_res
+
+        filtered = ripgrep_filter([external_file], "query")
+
+        self.assertEqual(filtered, [external_file])
+        cmd = mock_run.call_args[0][0]
+        self.assertEqual(cmd[-2:], ["--", external_file])
+
+    @patch("context_builder.sys_utils.HAS_RG", True)
+    @patch("context_builder.sys_utils._build_rg_file_batches")
+    @patch("subprocess.run")
+    def test_ripgrep_filter_merges_explicit_file_batches(
+        self, mock_run, mock_batches
+    ):
+        """Matches from multiple explicit-file batches are merged in input order."""
+        files = ["one.py", "two.py", "three.py"]
+        mock_batches.return_value = [["one.py", "two.py"], ["three.py"]]
+        first_res = MagicMock(returncode=0, stdout="two.py\n")
+        second_res = MagicMock(returncode=0, stdout="three.py\n")
+        mock_run.side_effect = [first_res, second_res]
+
+        filtered = ripgrep_filter(files, "query")
+
+        self.assertEqual(filtered, ["two.py", "three.py"])
+        self.assertEqual(mock_run.call_count, 2)
+        self.assertEqual(
+            mock_run.call_args_list[0].args[0][-3:],
+            ["--", "one.py", "two.py"],
+        )
+        self.assertEqual(
+            mock_run.call_args_list[1].args[0][-2:],
+            ["--", "three.py"],
+        )
+
+    @patch("context_builder.sys_utils.HAS_RG", True)
+    @patch("subprocess.run")
+    def test_ripgrep_filter_replaces_undecodable_output(self, mock_run):
+        """Undecodable path bytes do not force an exhaustive fallback scan."""
+        replacement_path = "legacy-\ufffd.cpp"
+
+        def decoding_sensitive_run(*_args, **kwargs):
+            self.assertEqual(kwargs.get("errors"), "replace")
+            return MagicMock(
+                returncode=0,
+                stdout=replacement_path + "\n",
+                stderr="",
+            )
+
+        mock_run.side_effect = decoding_sensitive_run
+
+        filtered = ripgrep_filter([replacement_path, "other.cpp"], "query")
+
+        self.assertEqual(filtered, [replacement_path])
+        self.assertFalse(
+            getattr(filtered, "used_ripgrep_fallback", False),
+        )
+
+    @patch("context_builder.sys_utils.HAS_RG", True)
+    @patch("context_builder.sys_utils._build_rg_file_batches")
+    @patch("subprocess.run")
+    @patch("context_builder.sys_utils.warn_once")
+    def test_ripgrep_filter_later_batch_error_falls_back(
+        self, mock_warn, mock_run, mock_batches
+    ):
+        """A later batch error discards partial matches and scans all candidates."""
+        files = ["one.py", "two.py"]
+        mock_batches.return_value = [["one.py"], ["two.py"]]
+        first_res = MagicMock(returncode=0, stdout="one.py\n")
+        second_res = MagicMock(returncode=2, stdout="", stderr="batch failed")
+        mock_run.side_effect = [first_res, second_res]
+
+        filtered = ripgrep_filter(files, "query", fallback_hint="callers")
+
+        self.assertEqual(filtered, files)
+        mock_warn.assert_any_call("ripgrep_error", unittest.mock.ANY)
+        mock_warn.assert_any_call("ripgrep_fallback", unittest.mock.ANY)
+
+    def test_build_rg_file_batches_respects_character_budget(self):
+        """File batches split based on command length rather than file count."""
+        files = ["a.py", "longer-name.py", "third.py"]
+        base_cmd = ["rg", "-l", "-F", "query"]
+        single_batch_length = len(subprocess.list2cmdline(base_cmd + ["--", files[0]]))
+        batches = sys_utils._build_rg_file_batches(
+            base_cmd,
+            files,
+            max_chars=single_batch_length + 1,
+        )
+
+        self.assertEqual(batches, [["a.py"], ["longer-name.py"], ["third.py"]])
 
     def test_exit_on_fail_prints_error_before_exit(self):
         """When exit_on_fail=True, a helpful error message (with the command and
@@ -323,4 +450,199 @@ class TestSysUtils(unittest.TestCase):
         self.assertIn("unexpected return code 2", warn_msg)
         self.assertIn("Some internal rg error", warn_msg)
 
+    @patch("context_builder.sys_utils.HAS_RG", False)
+    @patch("context_builder.sys_utils.warn_once")
+    def test_ripgrep_filter_fallback_hint_no_rg(self, mock_warn):
+        """When HAS_RG is False and fallback_hint is provided, the fallback warning is printed."""
+        files = ["a.py", "b.py"]
+        result = ripgrep_filter(files, "my_func", fallback_hint="callers of 'my_func'")
+        self.assertEqual(result, files)
+        keys_warned = [c[0][0] for c in mock_warn.call_args_list]
+        self.assertIn("ripgrep_fallback", keys_warned)
+        hint_msg = [c[0][1] for c in mock_warn.call_args_list
+                    if c[0][0] == "ripgrep_fallback"][0]
+        self.assertIn("callers of 'my_func'", hint_msg)
+        self.assertTrue(result.used_ripgrep_fallback)
+        self.assertEqual(result.fallback_label, "callers of 'my_func'")
 
+    @patch("context_builder.sys_utils.HAS_RG", True)
+    @patch("subprocess.run")
+    @patch("context_builder.sys_utils.warn_once")
+    def test_ripgrep_filter_fallback_hint_on_timeout(self, mock_warn, mock_run):
+        """When rg times out and fallback_hint is provided, the fallback warning is printed."""
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd=["rg"], timeout=10)
+        files = ["a.py", "b.py"]
+        result = ripgrep_filter(files, "my_func", fallback_hint="callers of 'my_func'")
+        self.assertEqual(result, files)
+        keys_warned = [c[0][0] for c in mock_warn.call_args_list]
+        self.assertIn("ripgrep_timeout", keys_warned)
+        self.assertIn("ripgrep_fallback", keys_warned)
+
+    @patch("context_builder.sys_utils.HAS_RG", True)
+    @patch("subprocess.run")
+    @patch("context_builder.sys_utils.warn_once")
+    def test_ripgrep_filter_fallback_hint_on_error(self, mock_warn, mock_run):
+        """When rg exits unexpectedly and fallback_hint is provided, the fallback warning fires."""
+        mock_res = MagicMock()
+        mock_res.returncode = 5
+        mock_res.stderr = "something went wrong"
+        mock_run.return_value = mock_res
+        files = ["a.py", "b.py"]
+        result = ripgrep_filter(files, "my_func", fallback_hint="callers of 'my_func'")
+        self.assertEqual(result, files)
+        keys_warned = [c[0][0] for c in mock_warn.call_args_list]
+        self.assertIn("ripgrep_error", keys_warned)
+        self.assertIn("ripgrep_fallback", keys_warned)
+
+    @patch("context_builder.sys_utils.HAS_RG", False)
+    @patch("context_builder.sys_utils.warn_once")
+    def test_ripgrep_filter_no_hint_no_extra_warning(self, mock_warn):
+        """When fallback_hint is not provided, no fallback warning is emitted (silent fallback)."""
+        files = ["a.py", "b.py"]
+        result = ripgrep_filter(files, "my_func")
+        self.assertEqual(result, files)
+        # Only the ripgrep_missing warn from HAS_RG.__bool__ may fire; no ripgrep_fallback key
+        fallback_keys = [c[0][0] for c in mock_warn.call_args_list
+                         if c[0][0] == "ripgrep_fallback"]
+        self.assertEqual(fallback_keys, [])
+
+    @patch("context_builder.sys_utils.HAS_RG", False)
+    @patch("context_builder.sys_utils.warn_once")
+    def test_iter_scan_progress_reports_fallback_scan(self, _mock_warn):
+        """Fallback scans emit progress for long exhaustive file walks."""
+        files = [f"file_{idx}.py" for idx in range(120)]
+        result = ripgrep_filter(files, "my_func", fallback_hint="callers of 'my_func'")
+
+        with patch("sys.stderr", new_callable=StringIO) as mock_err:
+            scanned = list(iter_scan_progress(result, min_files=100))
+
+        self.assertEqual(scanned, files)
+        output = mock_err.getvalue()
+        self.assertIn("[Scanning 1/120]", output)
+        self.assertIn("callers of 'my_func'", output)
+        self.assertTrue(output.rstrip().endswith("[Scanning 120/120]  callers of 'my_func'"))
+
+    def test_iter_scan_progress_preserves_iterable_fallback_label(self):
+        """Materializing a custom iterable does not discard progress metadata."""
+        class FallbackIterable:
+            """Non-list fallback candidates carrying a progress label."""
+
+            fallback_label = "custom fallback scan"
+
+            def __iter__(self):
+                return iter(["one.py", "two.py"])
+
+        with patch("sys.stderr", new_callable=StringIO) as mock_err:
+            scanned = list(iter_scan_progress(FallbackIterable(), min_files=1))
+
+        self.assertEqual(scanned, ["one.py", "two.py"])
+        self.assertIn("custom fallback scan", mock_err.getvalue())
+
+    def test_iter_scan_progress_stays_quiet_for_fast_path_results(self):
+        """Regular filtered lists do not emit progress unless explicitly forced."""
+        files = [f"file_{idx}.py" for idx in range(120)]
+
+        with patch("sys.stderr", new_callable=StringIO) as mock_err:
+            scanned = list(iter_scan_progress(files, label="fast path", min_files=100))
+
+        self.assertEqual(scanned, files)
+        self.assertEqual(mock_err.getvalue(), "")
+
+    def test_iter_scan_progress_early_close_does_not_show_complete(self):
+        """Closing a progress iterator early does not report 100 percent completion."""
+        files = [f"file_{idx}.py" for idx in range(120)]
+
+        class TtyBuffer(StringIO):
+            """String buffer that behaves like an interactive terminal."""
+
+            def isatty(self):
+                return True
+
+        with patch("sys.stderr", new_callable=TtyBuffer) as mock_err:
+            progress_iter = iter_scan_progress(
+                files,
+                label="early exit",
+                min_files=100,
+                force=True,
+            )
+            self.assertEqual(next(progress_iter), "file_0.py")
+            progress_iter.close()
+
+        output = mock_err.getvalue()
+        self.assertNotIn("100%", output)
+        self.assertTrue(output.endswith("\n"))
+
+    def test_iter_scan_progress_zero_total_can_be_forced(self):
+        """Empty scans stay inactive even when min_files would otherwise enable progress."""
+        with patch("sys.stderr", new_callable=StringIO) as mock_err:
+            scanned = list(iter_scan_progress([], label="empty", min_files=0, force=True))
+
+        self.assertEqual(scanned, [])
+        self.assertEqual(mock_err.getvalue(), "")
+
+    def test_iter_scan_progress_handles_raising_isatty(self):
+        """Custom stderr wrappers cannot crash progress initialization."""
+        class RaisingStream(StringIO):
+            """Stream wrapper whose terminal probe is unsupported."""
+
+            def isatty(self):
+                raise RuntimeError("terminal state unavailable")
+
+        with patch("sys.stderr", new_callable=RaisingStream) as mock_err:
+            scanned = list(
+                iter_scan_progress(
+                    ["one.py", "two.py"],
+                    label="wrapped stream",
+                    min_files=1,
+                    force=True,
+                )
+            )
+
+        self.assertEqual(scanned, ["one.py", "two.py"])
+        self.assertIn("[Scanning 2/2]", mock_err.getvalue())
+
+    def test_stream_is_tty_handles_missing_method(self):
+        """Streams without isatty are treated as non-interactive."""
+        self.assertFalse(sys_utils._stream_is_tty(object()))
+
+    def test_normalized_search_paths_are_cached_per_cwd(self):
+        """Repeated path normalization avoids repeated abspath work."""
+        sys_utils._NORMALIZED_PATH_CACHE.clear()  # pylint: disable=protected-access
+        actual_abspath = os.path.abspath
+        cwd = os.path.normcase(actual_abspath(os.getcwd()))
+        expected_input = os.path.join(cwd, "src/a.py")
+
+        with patch(
+            "context_builder.sys_utils.os.path.abspath",
+            wraps=actual_abspath,
+        ) as mock_abspath:
+            first = sys_utils._normalize_search_result("src/a.py", cwd)
+            second = sys_utils._normalize_search_result("src/a.py", cwd)
+
+        self.assertEqual(first, second)
+        normalized_calls = [
+            call for call in mock_abspath.call_args_list
+            if call.args == (expected_input,)
+        ]
+        self.assertEqual(len(normalized_calls), 1)
+
+    def test_normalized_search_paths_resolve_relative_to_supplied_cwd(self):
+        """Relative results use the search cwd, not the process cwd."""
+        sys_utils._NORMALIZED_PATH_CACHE.clear()  # pylint: disable=protected-access
+        search_cwd = os.path.abspath(os.path.join(os.getcwd(), "search-root"))
+        expected = os.path.normcase(
+            os.path.abspath(os.path.join(search_cwd, "src", "a.py"))
+        ).replace("\\", "/")
+
+        with tempfile.TemporaryDirectory() as process_cwd:
+            old_cwd = os.getcwd()
+            try:
+                os.chdir(process_cwd)
+                normalized = sys_utils._normalize_search_result(
+                    os.path.join("src", "a.py"),
+                    search_cwd,
+                )
+            finally:
+                os.chdir(old_cwd)
+
+        self.assertEqual(normalized, expected)

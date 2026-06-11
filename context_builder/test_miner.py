@@ -9,7 +9,7 @@ import xml.etree.ElementTree as ET
 
 from .ast_engine import AST_ENGINE, extract_function_bounds_regex
 from .cache import get_global_cache
-from .sys_utils import HAS_RG, ripgrep_filter, warn_once
+from .sys_utils import iter_scan_progress, ripgrep_filter, warn_once
 
 
 def get_coverage_data():
@@ -196,11 +196,18 @@ def mine_relevant_unit_tests(
         rf"(?:\btest_|{lead_b}){re.escape(func_name)}(?:_[A-Za-z0-9_]+)?{trail_b}"
     )
 
-    files_to_scan = ripgrep_filter(repo_files, func_name) if HAS_RG else repo_files
+    files_to_scan = ripgrep_filter(
+        repo_files, func_name,
+        fallback_hint=f"tests referencing '{func_name}'"
+    )
     if current_source_file and current_source_file not in files_to_scan:
         files_to_scan.append(current_source_file)
 
-    for file_path in files_to_scan:
+    for file_path in iter_scan_progress(
+        files_to_scan,
+        label=f"Scanning tests referencing '{func_name}'",
+        min_files=100,
+    ):
         _mine_single_file(
             file_path,
             test_pattern,
