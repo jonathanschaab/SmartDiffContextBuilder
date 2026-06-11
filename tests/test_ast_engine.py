@@ -1109,8 +1109,3 @@ class TestAstEngine(unittest.TestCase):
         lines = text.splitlines()
         self.assertEqual(len(lines), 6)
         self.assertEqual(lines[-1], "        # ... [Data Structure Omitted] ...")
-
-# pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
-# pylint: disable=attribute-defined-outside-init,import-outside-toplevel,protected-access
-# pylint: disable=redefined-outer-name,reimported,too-many-lines,too-many-public-methods
-# pylint: disable=consider-using-with,line-too-long

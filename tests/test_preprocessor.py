@@ -1025,7 +1025,3 @@ helper.h"
             args = call_args[0]
             if len(args) >= 2:
                 self.assertNotEqual(args[1], "/path/to/repo")
-# pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
-# pylint: disable=attribute-defined-outside-init,import-outside-toplevel,unused-argument
-# pylint: disable=protected-access,redefined-outer-name,reimported,consider-using-with
-# pylint: disable=unspecified-encoding,line-too-long,too-many-lines,too-many-public-methods

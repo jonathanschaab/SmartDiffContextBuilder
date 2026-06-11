@@ -651,8 +651,3 @@ class TestSysUtils(unittest.TestCase):
                 os.chdir(old_cwd)
 
         self.assertEqual(normalized, expected)
-# pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
-# pylint: disable=attribute-defined-outside-init,import-outside-toplevel,protected-access
-# pylint: disable=redefined-outer-name,reimported,unused-argument,consider-using-from-import
-# pylint: disable=unspecified-encoding,too-few-public-methods,too-many-public-methods
-# pylint: disable=broad-exception-caught

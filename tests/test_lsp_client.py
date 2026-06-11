@@ -861,8 +861,3 @@ class TestLspClient(unittest.TestCase):
                 success = client.start()
                 self.assertFalse(success)
                 mock_cleanup.assert_called_once_with(force_kill=False)
-
-# pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
-# pylint: disable=attribute-defined-outside-init,import-outside-toplevel,unused-argument
-# pylint: disable=protected-access,redefined-outer-name,reimported,consider-using-with
-# pylint: disable=line-too-long,too-many-lines,too-many-public-methods,broad-exception-caught

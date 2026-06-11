@@ -133,6 +133,3 @@ class TestIntegration(unittest.TestCase):
 
         # Callers are omitted because caller-depth = 0
         self.assertNotIn("- `app.py` (L5, Distance 1)", payload)
-
-# pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
-# pylint: disable=attribute-defined-outside-init,consider-using-with,line-too-long

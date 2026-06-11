@@ -156,4 +156,3 @@ class TestSafetyRefactors(unittest.TestCase):
             finally:
                 if orig_patterns is not None:
                     CONFIG["ffi_patterns"] = orig_patterns
-# pylint: disable=import-outside-toplevel,too-few-public-methods

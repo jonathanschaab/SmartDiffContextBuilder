@@ -125,8 +125,3 @@ class TestLRUFileCache(unittest.TestCase):
 
         cache.resize(-1.0)
         self.assertEqual(cache.max_size_bytes, 200 * 1024 * 1024)
-
-
-
-# pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
-# pylint: disable=attribute-defined-outside-init,import-outside-toplevel,consider-using-with

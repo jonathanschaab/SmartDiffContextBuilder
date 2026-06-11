@@ -132,4 +132,3 @@ class TestLanguageProfiles(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-# pylint: disable=too-many-public-methods

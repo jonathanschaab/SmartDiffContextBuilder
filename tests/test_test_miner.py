@@ -159,5 +159,3 @@ class TestTestMiner(unittest.TestCase):
         # Should match the JS test that has both 'it(' and 'operator+' on the first line
         self.assertEqual(len(tests), 1)
         self.assertEqual(tests[0]["file"], file_path)
-# pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
-# pylint: disable=attribute-defined-outside-init,consider-using-with,line-too-long

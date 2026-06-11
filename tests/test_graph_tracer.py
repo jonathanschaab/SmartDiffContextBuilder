@@ -431,7 +431,3 @@ class TestCallGraphTracer(unittest.TestCase):
         )
         mock_macro.assert_called_once()
         mock_ffi.assert_called_once()
-
-
-# pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
-# pylint: disable=attribute-defined-outside-init,unused-argument,consider-using-with

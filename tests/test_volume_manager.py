@@ -84,6 +84,3 @@ class TestVolumeManager(unittest.TestCase):
         idx1 = content.find("caller1.py")
         idx2 = content.find("caller2.py")
         self.assertTrue(idx1 < idx2)
-
-# pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
-# pylint: disable=attribute-defined-outside-init,consider-using-with,line-too-long

@@ -1015,7 +1015,3 @@ class TestCLI(unittest.TestCase):
         with self.assertRaises(SystemExit) as cm:
             main()
         self.assertEqual(cm.exception.code, 1)
-# pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
-# pylint: disable=attribute-defined-outside-init,import-outside-toplevel,unused-argument
-# pylint: disable=protected-access,redefined-outer-name,reimported,consider-using-with
-# pylint: disable=line-too-long,too-many-lines,too-many-public-methods,broad-exception-caught

@@ -102,6 +102,3 @@ class TestConfig(unittest.TestCase):
         # Test update
         proxy.update({".py": "python"})
         self.assertEqual(proxy[".py"], "python")
-# pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
-# pylint: disable=attribute-defined-outside-init,import-outside-toplevel,consider-using-with
-# pylint: disable=unspecified-encoding

@@ -159,5 +159,3 @@ class TestCommitRangeIntegration(unittest.TestCase):
         )
         self.assertNotEqual(res.returncode, 0)
         self.assertIn("Invalid commit range", res.stdout)
-# pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
-# pylint: disable=attribute-defined-outside-init,consider-using-with,line-too-long
