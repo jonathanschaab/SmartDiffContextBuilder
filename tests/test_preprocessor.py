@@ -1,4 +1,5 @@
 import os
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch, MagicMock, ANY
@@ -207,7 +208,10 @@ class TestPreprocessor(unittest.TestCase):
         mock_cache = MagicMock()
         mock_cache.get_lines.return_value = []
 
-        with patch("context_builder.preprocessor.run_command", return_value=expanded), \
+        with patch(
+            "context_builder.preprocessor._run_clang_preprocessor",
+            return_value=(expanded, "success"),
+        ), \
              patch("context_builder.preprocessor.os.path.relpath",
                    side_effect=ValueError("path is on mount 'D:'")) as mock_rp, \
              patch("context_builder.preprocessor.os.path.exists", return_value=False):
@@ -307,7 +311,10 @@ class TestPreprocessor(unittest.TestCase):
         mock_cache = MagicMock()
         mock_cache.get_lines.return_value = ["#define MY_MACRO 10"]
         
-        with patch("context_builder.preprocessor.run_command", return_value=expanded), \
+        with patch(
+            "context_builder.preprocessor._run_clang_preprocessor",
+            return_value=(expanded, "success"),
+        ), \
              patch("context_builder.preprocessor.os.path.exists", return_value=True):
             result = trace_macro_expansion("my_func", [header_path], file_cache=mock_cache)
             
@@ -324,7 +331,10 @@ class TestPreprocessor(unittest.TestCase):
             "void my_func() {}\n"
         )
         
-        with patch("context_builder.preprocessor.run_command", return_value=expanded_upper), \
+        with patch(
+            "context_builder.preprocessor._run_clang_preprocessor",
+            return_value=(expanded_upper, "success"),
+        ), \
              patch("context_builder.preprocessor.os.path.exists", return_value=True):
             result_upper = trace_macro_expansion("my_func", [header_path_upper], file_cache=mock_cache)
             
@@ -427,15 +437,15 @@ class TestPreprocessor(unittest.TestCase):
             "context_builder.preprocessor.ripgrep_filter",
             return_value=[source_path],
         ), patch(
-            "context_builder.preprocessor.run_command",
-            return_value=expanded,
+            "context_builder.preprocessor._run_clang_preprocessor",
+            return_value=(expanded, "success"),
         ) as mock_run, patch(
             "context_builder.preprocessor._map_expanded_line_to_source",
         ):
             trace_macro_expansion("foo", [source_path], file_cache=MagicMock())
             trace_macro_expansion("bar", [source_path], file_cache=MagicMock())
 
-        mock_run.assert_called_once_with(["clang", "-E", source_path], timeout=5)
+        mock_run.assert_called_once_with(source_path)
 
     def test_preprocessed_output_cache_invalidates_on_source_change(self):
         """Changing a source file invalidates its cached preprocessor output."""
@@ -444,8 +454,11 @@ class TestPreprocessor(unittest.TestCase):
             source_file.write("int first;\n")
 
         with patch(
-            "context_builder.preprocessor.run_command",
-            side_effect=["first expansion", "second expansion"],
+            "context_builder.preprocessor._run_clang_preprocessor",
+            side_effect=[
+                ("first expansion", "success"),
+                ("second expansion", "success"),
+            ],
         ) as mock_run:
             first = _preprocessor_mod._get_preprocessed_code(source_path)
             with open(source_path, "w", encoding="utf-8") as source_file:
@@ -462,12 +475,89 @@ class TestPreprocessor(unittest.TestCase):
             "context_builder.preprocessor.os.stat",
             side_effect=OSError("file unavailable"),
         ), patch(
-            "context_builder.preprocessor.run_command",
+            "context_builder.preprocessor._run_clang_preprocessor",
         ) as mock_run:
             expanded = _preprocessor_mod._get_preprocessed_code("missing.cpp")
 
         self.assertEqual(expanded, "")
         mock_run.assert_not_called()
+
+    def test_preprocessed_code_caches_successful_empty_output(self):
+        """A valid empty expansion is a reusable negative result."""
+        source_path = "empty.c"
+        with open(source_path, "w", encoding="utf-8"):
+            pass
+
+        with patch(
+            "context_builder.preprocessor._run_clang_preprocessor",
+            return_value=("", "success"),
+        ) as mock_run:
+            first = _preprocessor_mod._get_preprocessed_code(source_path)
+            second = _preprocessor_mod._get_preprocessed_code(source_path)
+
+        self.assertEqual(first, "")
+        self.assertEqual(second, "")
+        mock_run.assert_called_once_with(source_path)
+
+    def test_preprocessed_code_caches_deterministic_failure(self):
+        """A clang failure is not retried for an unchanged source snapshot."""
+        source_path = "invalid.c"
+        with open(source_path, "w", encoding="utf-8") as source_file:
+            source_file.write("#error invalid\n")
+
+        with patch(
+            "context_builder.preprocessor._run_clang_preprocessor",
+            return_value=("", "failed"),
+        ) as mock_run:
+            first = _preprocessor_mod._get_preprocessed_code(source_path)
+            second = _preprocessor_mod._get_preprocessed_code(source_path)
+
+        self.assertEqual(first, "")
+        self.assertEqual(second, "")
+        mock_run.assert_called_once_with(source_path)
+
+    def test_preprocessed_code_retries_timeout_once(self):
+        """A timeout gets one retry before its empty result is cached."""
+        source_path = "slow.c"
+        with open(source_path, "w", encoding="utf-8") as source_file:
+            source_file.write("#include \"slow.h\"\n")
+
+        with patch(
+            "context_builder.preprocessor._run_clang_preprocessor",
+            return_value=("", "timeout"),
+        ) as mock_run:
+            first = _preprocessor_mod._get_preprocessed_code(source_path)
+            second = _preprocessor_mod._get_preprocessed_code(source_path)
+            third = _preprocessor_mod._get_preprocessed_code(source_path)
+
+        self.assertEqual(first, "")
+        self.assertEqual(second, "")
+        self.assertEqual(third, "")
+        self.assertEqual(mock_run.call_count, 2)
+
+    def test_clang_preprocessor_reports_timeout_separately(self):
+        """The clang wrapper preserves timeout status for retry decisions."""
+        with patch(
+            "context_builder.preprocessor.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(["clang", "-E"], 5),
+        ), patch("context_builder.preprocessor.warn_once") as mock_warn:
+            output, status = _preprocessor_mod._run_clang_preprocessor("slow.c")
+
+        self.assertEqual(output, "")
+        self.assertEqual(status, "timeout")
+        mock_warn.assert_called_once()
+
+    def test_clang_preprocessor_reports_deterministic_failure(self):
+        """Non-timeout clang failures can be negatively cached."""
+        failure = subprocess.CalledProcessError(1, ["clang", "-E", "invalid.c"])
+        with patch(
+            "context_builder.preprocessor.subprocess.run",
+            side_effect=failure,
+        ):
+            output, status = _preprocessor_mod._run_clang_preprocessor("invalid.c")
+
+        self.assertEqual(output, "")
+        self.assertEqual(status, "failed")
 
     def test_analyze_compile_commands_worktree_mapping(self):
         """Verify that when repo_root is passed, absolute paths in compile_commands.json

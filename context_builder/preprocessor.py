@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import subprocess
 from collections import OrderedDict
 
 from .cache import get_global_cache
@@ -11,19 +12,24 @@ from .sys_utils import (
     get_comment_prefix,
     iter_scan_progress,
     ripgrep_filter,
-    run_command,
     warn_once,
 )
 
+# This cache is cleared at the start of each repository scan, where source
+# snapshots are assumed stable. The byte limit bounds successful expansions;
+# the entry limit also bounds empty negative results, which consume no byte budget.
 _PREPROCESSED_CACHE_MAX_BYTES = 64 * 1024 * 1024
+_PREPROCESSED_CACHE_MAX_ENTRIES = 4096
 _PREPROCESSED_CACHE = OrderedDict()
 _PREPROCESSED_CACHE_STATE = {"size_bytes": 0}
+_PREPROCESS_TIMEOUT_COUNTS = {}
 
 
 def clear_preprocessed_cache():
     """Clear cached preprocessor output before starting a new repository scan."""
     _PREPROCESSED_CACHE.clear()
     _PREPROCESSED_CACHE_STATE["size_bytes"] = 0
+    _PREPROCESS_TIMEOUT_COUNTS.clear()
 
 
 def _cache_preprocessed_code(cache_key, signature, expanded_code):
@@ -40,10 +46,33 @@ def _cache_preprocessed_code(cache_key, signature, expanded_code):
 
     while (
         _PREPROCESSED_CACHE
-        and _PREPROCESSED_CACHE_STATE["size_bytes"] > _PREPROCESSED_CACHE_MAX_BYTES
+        and (
+            _PREPROCESSED_CACHE_STATE["size_bytes"] > _PREPROCESSED_CACHE_MAX_BYTES
+            or len(_PREPROCESSED_CACHE) > _PREPROCESSED_CACHE_MAX_ENTRIES
+        )
     ):
         _, evicted = _PREPROCESSED_CACHE.popitem(last=False)
         _PREPROCESSED_CACHE_STATE["size_bytes"] -= len(evicted["code"])
+
+
+def _run_clang_preprocessor(file_path):
+    """Run clang preprocessing and distinguish retryable timeouts from results."""
+    cmd = ["clang", "-E", file_path]
+    try:
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True,
+            timeout=5,
+        )
+        return result.stdout, "success"
+    except subprocess.TimeoutExpired:
+        warn_once("timeout_clang", f"Command '{' '.join(cmd)}' timed out.")
+        return "", "timeout"
+    except (subprocess.CalledProcessError, OSError):
+        return "", "failed"
 
 
 def _get_preprocessed_code(file_path):
@@ -63,9 +92,22 @@ def _get_preprocessed_code(file_path):
         _PREPROCESSED_CACHE.move_to_end(cache_key)
         return cached["code"]
 
-    expanded_code = run_command(["clang", "-E", file_path], timeout=5)
-    if expanded_code:
-        _cache_preprocessed_code(cache_key, signature, expanded_code)
+    expanded_code, status = _run_clang_preprocessor(file_path)
+    timeout_key = (cache_key, signature)
+    if status == "timeout":
+        timeout_count = _PREPROCESS_TIMEOUT_COUNTS.get(timeout_key, 0) + 1
+        _PREPROCESS_TIMEOUT_COUNTS[timeout_key] = timeout_count
+        if timeout_count < 2:
+            # Unlike a deterministic clang failure, a timeout may be transient.
+            # Permit one recovery attempt, then favor bounded scan time over
+            # repeatedly spending the full timeout on this unchanged snapshot.
+            return ""
+
+    # Successful empty output and deterministic failures are stable negative
+    # results for this scan. A second timeout is also cached after its retry
+    # allowance is exhausted, preventing repeated expensive subprocesses.
+    _PREPROCESS_TIMEOUT_COUNTS.pop(timeout_key, None)
+    _cache_preprocessed_code(cache_key, signature, expanded_code)
     return expanded_code
 
 
