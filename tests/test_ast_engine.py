@@ -1,3 +1,8 @@
+# pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
+# pylint: disable=attribute-defined-outside-init,import-outside-toplevel,protected-access
+# pylint: disable=redefined-outer-name,reimported,too-many-lines,too-many-public-methods
+# pylint: disable=consider-using-with,line-too-long,consider-using-from-import
+
 import os
 import unittest
 from unittest.mock import ANY, patch, MagicMock
@@ -147,32 +152,32 @@ class TestAstEngine(unittest.TestCase):
         mock_parser = MagicMock()
         mock_tree = MagicMock()
         mock_node = MagicMock()
-        
+
         # Delete text attribute from mock node to simulate older py-tree-sitter versions
         del mock_node.text
-        
+
         mock_tree.root_node.children = [mock_node]
         mock_node.start_point = (1, 0)
         mock_node.end_point = (2, 0)
-        
+
         mock_parser.parse.return_value = mock_tree
         mock_ast_engine.parsers = {".py": mock_parser}
         mock_ast_engine.is_supported.return_value = True
-        
+
         mock_lang = MagicMock()
         mock_query = MagicMock()
         mock_query.captures.return_value = [(mock_node, "id")]
         mock_lang.query.return_value = mock_query
         mock_ast_engine.languages = {".py": mock_lang}
-        
+
         from context_builder.ast_engine import extract_callees_ast
-        
+
         mock_cache = MagicMock()
         mock_cache.get_bytes.return_value = b"def foo():\n    bar()\n"
-        
+
         with self.assertRaises(AttributeError) as ctx:
             extract_callees_ast("dummy.py", 1, 3, ".py", mock_cache)
-            
+
         self.assertIn("Node object lacks '.text' attribute", str(ctx.exception))
 
     @patch("context_builder.ast_engine.AST_ENGINE")
@@ -191,23 +196,23 @@ class TestAstEngine(unittest.TestCase):
             "    # line 5\n"
             "    pass\n"
         )
-        
+
         mock_parser = MagicMock()
         mock_tree = MagicMock()
         mock_child = MagicMock()
-        
+
         mock_tree.root_node.children = [mock_child]
         mock_child.type = "function_definition"
         mock_child.start_point = (0, 0)
         mock_child.end_point = (11, 0)
-        
+
         mock_parser.parse.return_value = mock_tree
         mock_ast_engine.parsers = {".py": mock_parser}
         mock_ast_engine.is_supported.return_value = True
-        
+
         # We truncate with max_lines=7. The body is larger (12 lines), so it should be semantically truncated.
         res = split_massive_block_ast(source, "test.py", max_lines=7)
-        
+
         self.assertEqual(len(res), 1)
         truncated_text = res[0]["text"]
         self.assertIn("@decorator", truncated_text)
@@ -231,22 +236,22 @@ class TestAstEngine(unittest.TestCase):
             "    # line 5\n"
             "    pass\n"
         )
-        
+
         mock_parser = MagicMock()
         mock_tree = MagicMock()
         mock_child = MagicMock()
-        
+
         mock_tree.root_node.children = [mock_child]
         mock_child.type = "function_definition"
         mock_child.start_point = (0, 0)
         mock_child.end_point = (11, 0)
-        
+
         mock_parser.parse.return_value = mock_tree
         mock_ast_engine.parsers = {".py": mock_parser}
         mock_ast_engine.is_supported.return_value = True
-        
+
         res = split_massive_block_ast(source, "test.py", max_lines=6)
-        
+
         self.assertEqual(len(res), 1)
         truncated_text = res[0]["text"]
         # It should contain the full signature:
@@ -265,20 +270,20 @@ class TestAstEngine(unittest.TestCase):
             "        console.log(x);\n"
             "    }\n"
         )
-        
+
         mock_parser = MagicMock()
         mock_tree = MagicMock()
         mock_child = MagicMock()
-        
+
         mock_tree.root_node.children = [mock_child]
         mock_child.type = "method_definition"
         mock_child.start_point = (0, 0)
         mock_child.end_point = (4, 0)
-        
+
         mock_parser.parse.return_value = mock_tree
         mock_ast_engine.parsers = {".js": mock_parser}
         mock_ast_engine.is_supported.return_value = True
-        
+
         res = split_massive_block_ast(source, "test.js", max_lines=3)
         self.assertEqual(len(res), 1)
         truncated_text = res[0]["text"]
@@ -339,20 +344,20 @@ class TestAstEngine(unittest.TestCase):
         # A function declaration in C++ does not have a body or a brace.
         # It should not have a dangling brace appended when truncated.
         source = "void my_func_decl(int x);\n"
-        
+
         mock_parser = MagicMock()
         mock_tree = MagicMock()
         mock_child = MagicMock()
-        
+
         mock_tree.root_node.children = [mock_child]
         mock_child.type = "function_declaration"
         mock_child.start_point = (0, 0)
         mock_child.end_point = (0, 0)
-        
+
         mock_parser.parse.return_value = mock_tree
         mock_ast_engine.parsers = {".cpp": mock_parser}
         mock_ast_engine.is_supported.return_value = True
-        
+
         res = split_massive_block_ast(source, "test.cpp", max_lines=1)
         self.assertEqual(len(res), 1)
         truncated_text = res[0]["text"]
@@ -373,19 +378,19 @@ class TestAstEngine(unittest.TestCase):
         file_path = os.path.join(self.temp_dir.name, "methods.cpp")
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(code)
-        
+
         self.cache.get_content(file_path)
-        
+
         # Test constructor
         path, line = find_callee_definition("MyClass", [file_path], file_cache=self.cache)
         self.assertEqual(path, file_path)
         self.assertEqual(line, 1) # first match
-        
+
         # Test destructor
         path, line = find_callee_definition("~MyClass", [file_path], file_cache=self.cache)
         self.assertEqual(path, file_path)
         self.assertEqual(line, 3)
-        
+
         # Test multiline
         path, line = find_callee_definition("my_multiline_func", [file_path], file_cache=self.cache)
         self.assertEqual(path, file_path)
@@ -402,9 +407,9 @@ class TestAstEngine(unittest.TestCase):
         file_path = os.path.join(self.temp_dir.name, "regex_exclude.cpp")
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(code)
-            
+
         self.cache.get_content(file_path)
-        
+
         callers = trace_lexical_dependencies_regex("my_func", [file_path], file_cache=self.cache)
         self.assertIn(file_path, callers)
         # Should only find 1 caller (line 2), not line 1 (the definition)
@@ -426,21 +431,21 @@ class TestAstEngine(unittest.TestCase):
         mock_capture_node = MagicMock()
         mock_capture_node.parent = None
         mock_capture_node.start_point = (0, 0)
-        
+
         mock_query = MagicMock()
         mock_query.captures.return_value = [(mock_capture_node, "id")]
-        
+
         mock_parser.parse.return_value = mock_tree
         mock_ast_engine.parsers = {".py": mock_parser}
         mock_ast_engine.languages = {".py": MagicMock()}
         mock_ast_engine.languages[".py"].query.return_value = mock_query
         mock_ast_engine.is_supported.return_value = True
-        
+
         cache = LRUFileCache(capacity=5)
         cache.get_content = MagicMock(return_value="my_func()")
         cache.get_bytes = MagicMock(return_value=b"my_func()")
         cache.get_lines = MagicMock(return_value=["my_func()"])
-        
+
         # It should run without raising AttributeError due to capture_node.parent being None
         res = trace_lexical_dependencies_ast("my_func", ["test.py"], file_cache=cache)
         self.assertEqual(res, {})
@@ -453,12 +458,12 @@ class TestAstEngine(unittest.TestCase):
         mock_child.type = "function_definition"
         mock_child.start_point = (10, 0)
         mock_child.end_point = (5, 0) # start > end, making sig_lines empty
-        
+
         mock_tree.root_node.children = [mock_child]
         mock_parser.parse.return_value = mock_tree
         mock_ast_engine.parsers = {".py": mock_parser}
         mock_ast_engine.is_supported.return_value = True
-        
+
         source = "def foo():\n    pass\n"
         # It should run successfully without raising an IndexError.
         res = split_massive_block_ast(source, "test.py", max_lines=1)
@@ -470,12 +475,12 @@ class TestAstEngine(unittest.TestCase):
         it propagates as a RuntimeError, which is caught by extract_callees
         to trigger the regex-based fallback extraction."""
         mock_ast_engine.is_supported.return_value = True
-        
+
         mock_lang = MagicMock()
         # Raise an exception (e.g. tree-sitter QuerySyntaxError or similar) when compiling query
         mock_lang.query.side_effect = Exception("Query syntax error")
         mock_ast_engine.languages = {".py": mock_lang}
-        
+
         mock_parser = MagicMock()
         mock_parser.parse.return_value = MagicMock()
         mock_ast_engine.parsers = {".py": mock_parser}
@@ -493,7 +498,7 @@ class TestAstEngine(unittest.TestCase):
 
         # Call extract_callees. It should catch the RuntimeError and fall back to regex
         callees = extract_callees(file_path, 0, 3, file_cache=self.cache)
-        
+
         # Verify it successfully extracted the callees via regex fallback
         self.assertIn("bar", callees)
         self.assertIn("baz", callees)
@@ -503,28 +508,28 @@ class TestAstEngine(unittest.TestCase):
         """Verify that when func_name contains regex metacharacters (e.g., C++ operator+),
         the query string is escaped and double-escaped correctly for the tree-sitter query engine."""
         from context_builder.ast_engine import trace_lexical_dependencies_ast
-        
+
         mock_ast_engine.is_supported.return_value = True
         mock_parser = MagicMock()
         mock_tree = MagicMock()
         mock_parser.parse.return_value = mock_tree
         mock_ast_engine.parsers = {".cpp": mock_parser}
-        
+
         mock_lang = MagicMock()
         mock_query = MagicMock()
         mock_query.captures.return_value = []
         mock_lang.query.return_value = mock_query
         mock_ast_engine.languages = {".cpp": mock_lang}
-        
+
         mock_cache = MagicMock()
         mock_cache.get_bytes.return_value = b"void operator+();"
-        
+
         with patch(
             "context_builder.ast_engine.ripgrep_filter",
             return_value=["file.cpp"],
         ):
             trace_lexical_dependencies_ast("operator+", ["file.cpp"], file_cache=mock_cache)
-        
+
         # Verify that AST_ENGINE.languages[".cpp"].query was called with double-escaped operator\\+
         mock_lang.query.assert_called_once()
         query_str = mock_lang.query.call_args[0][0]
@@ -543,9 +548,9 @@ class TestAstEngine(unittest.TestCase):
         file_path = os.path.join(self.temp_dir.name, "operators.cpp")
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(code)
-            
+
         self.cache.get_content(file_path)
-        
+
         # We search for "operator+"
         callers = trace_lexical_dependencies_regex("operator+", [file_path], file_cache=self.cache)
         self.assertIn(file_path, callers)
@@ -559,22 +564,22 @@ class TestAstEngine(unittest.TestCase):
         against a long line of words/spaces without an opening parenthesis (."""
         import time
         from context_builder.ast_engine import extract_function_bounds_regex
-        
+
         # A long line of words and spaces that does NOT end with '('.
         # Under the old regex, this would cause catastrophic backtracking and hang the process.
         long_line = "a " * 50 + "b"
-        
+
         file_path = os.path.join(self.temp_dir.name, "backtrack.cpp")
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(long_line + "\n")
-            
+
         self.cache.get_content(file_path)
-        
+
         start_time = time.time()
         # Call extract_function_bounds_regex, which runs func_decl_pattern
         extract_function_bounds_regex(file_path, 1, file_cache=self.cache)
         elapsed = time.time() - start_time
-        
+
         # Verify it completed almost instantly (e.g. well under 0.1 seconds)
         self.assertLess(elapsed, 0.1)
 
@@ -583,7 +588,7 @@ class TestAstEngine(unittest.TestCase):
         from context_builder.ast_engine import AstEngine, CONFIG, HAS_TREESITTER
         engine = AstEngine()
         self.assertFalse(engine._initialized)
-        
+
         # Override bindings in CONFIG to test it's read
         orig_bindings = CONFIG['bindings'].copy()
         try:
@@ -603,13 +608,13 @@ class TestAstEngine(unittest.TestCase):
         try:
             CONFIG['func_decl_pattern'] = r'\bMY_SPECIAL_DECL\b'
             CONFIG['callee_pattern'] = r'\bMY_SPECIAL_CALLEE\b'
-            
+
             decl_re = _get_func_decl_pattern()
             callee_re = _get_callee_pattern()
-            
+
             self.assertIsNotNone(decl_re.search("MY_SPECIAL_DECL"))
             self.assertIsNone(decl_re.search("def foo()"))
-            
+
             self.assertIsNotNone(callee_re.search("MY_SPECIAL_CALLEE"))
             self.assertIsNone(callee_re.search("foo()"))
         finally:
@@ -620,7 +625,7 @@ class TestAstEngine(unittest.TestCase):
         """Verify that warn_once is called if bindings are configured incorrectly."""
         from context_builder.ast_engine import AstEngine, CONFIG
         engine = AstEngine()
-        
+
         orig_bindings = CONFIG['bindings'].copy()
         try:
             CONFIG['bindings'] = {'.dummy': 'invalid_string_instead_of_tuple'}
@@ -673,29 +678,31 @@ class TestAstEngine(unittest.TestCase):
         from context_builder.ast_engine import trace_lexical_dependencies_ast, find_callee_definition, CONFIG
         from context_builder.config import reset_config
         reset_config()
-        
+
         CONFIG['def_pattern_template'] = r'{lead_b}{escaped_callee}[a-z]{1,5}'
         CONFIG['cpp_def_pattern_template'] = r'{lead_b}{escaped_callee}[a-z]{1,5}'
         CONFIG['dependency_query_strings'] = {
             '.cpp': '(call_expression function: [(identifier) @id] (#match? @id ".*({escaped_func_name}|[a-z]{1,3}).*"))'
         }
-        
+
         file_path = os.path.join(self.temp_dir.name, "quantifier.cpp")
         with open(file_path, "w", encoding="utf-8") as f:
             f.write("void fooabc() {}\n")
-        
+
         self.cache.get_content(file_path)
-        
-        res_file, res_line = find_callee_definition("foo", [file_path], file_cache=self.cache)
+
+        res_file, _res_line = find_callee_definition(
+            "foo", [file_path], file_cache=self.cache
+        )
         self.assertEqual(res_file, file_path)
-        
+
         mock_lang = MagicMock()
         mock_query = MagicMock()
         mock_query.captures.return_value = []
         mock_lang.query.return_value = mock_query
-        
+
         mock_parser = MagicMock()
-        
+
         from context_builder.ast_engine import AST_ENGINE
         with patch.dict(AST_ENGINE.languages, {".cpp": mock_lang}), \
              patch.dict(AST_ENGINE.parsers, {".cpp": mock_parser}), \
@@ -754,55 +761,55 @@ class TestAstEngine(unittest.TestCase):
             "    # unique body 3\n"
             "    pass\n"
         )
-        
+
         mock_parser = MagicMock()
         mock_tree = MagicMock()
-        
+
         mock_child1 = MagicMock()
         mock_child1.type = "function_definition"
         mock_child1.start_point = (0, 0)
         mock_child1.end_point = (10, 0)
-        
+
         mock_child2 = MagicMock()
         mock_child2.type = "function_definition"
         mock_child2.start_point = (11, 0)
         mock_child2.end_point = (15, 0)
-        
+
         mock_child3 = MagicMock()
         mock_child3.type = "function_definition"
         mock_child3.start_point = (16, 0)
         mock_child3.end_point = (20, 0)
-        
+
         mock_tree.root_node.children = [mock_child1, mock_child2, mock_child3]
         mock_parser.parse.return_value = mock_tree
         mock_ast_engine.parsers = {".py": mock_parser}
         mock_ast_engine.is_supported.return_value = True
-        
+
         # Call split_massive_block_ast with max_lines=11.
         # total_min_lines is 3 + 3 + 3 = 9. remaining_budget = 2.
         # method_one upgrade cost is 8 -> does not upgrade.
         # method_two upgrade cost is 2 -> upgrades.
         # method_three upgrade cost is 2 -> does not upgrade.
         res = split_massive_block_ast(source, "test.py", max_lines=11)
-        
+
         self.assertEqual(len(res), 1)
         text = res[0]["text"]
-        
+
         # Verify method_one is truncated to its signature
         self.assertIn("def method_one():", text)
         self.assertIn("# ... [Inner Body Omitted for Context Preservation] ...", text)
         self.assertNotIn("# body line 1", text)
-        
+
         # Verify method_two has its full body printed
         self.assertIn("def method_two():", text)
         self.assertIn("# body 1", text)
         self.assertIn("# body 2", text)
         self.assertIn("# body 3", text)
-        
+
         # Verify method_three is truncated to its signature
         self.assertIn("def method_three():", text)
         self.assertNotIn("# unique body 1", text)
-        
+
         # Verify both methods' signatures exist (so they are not omitted completely)
         self.assertTrue(text.count("def method_two():") == 1)
         self.assertTrue(text.count("def method_three():") == 1)
@@ -817,26 +824,26 @@ class TestAstEngine(unittest.TestCase):
         )
         mock_parser = MagicMock()
         mock_tree = MagicMock()
-        
+
         mock_child1 = MagicMock()
         mock_child1.type = "function_definition"
         mock_child1.start_point = (0, 0)
         mock_child1.end_point = (1, 0)
-        
+
         mock_child2 = MagicMock()
         mock_child2.type = "function_definition"
         mock_child2.start_point = (2, 0)
         mock_child2.end_point = (3, 0)
-        
+
         mock_tree.root_node.children = [mock_child1, mock_child2]
         mock_parser.parse.return_value = mock_tree
         mock_ast_engine.parsers = {".py": mock_parser}
         mock_ast_engine.is_supported.return_value = True
-        
+
         res = split_massive_block_ast(source, "test.py", max_lines=3)
         self.assertEqual(len(res), 1)
         text = res[0]["text"]
-        
+
         # Verify that the output was sliced to exactly 3 lines
         self.assertEqual(len(text.splitlines()), 3)
         # Verify no inner body omission comments exist (since min_lines was optimized to the full body)
@@ -862,12 +869,12 @@ class TestAstEngine(unittest.TestCase):
         mock_child.type = "decorated_definition"
         mock_child.start_point = (0, 0)
         mock_child.end_point = (7, 0)
-        
+
         mock_tree.root_node.children = [mock_child]
         mock_parser.parse.return_value = mock_tree
         mock_ast_engine.parsers = {".py": mock_parser}
         mock_ast_engine.is_supported.return_value = True
-        
+
         # Using a budget of 5 lines. Since it is recognized as a definition,
         # it should get semantically truncated (signature + omission comment).
         res = split_massive_block_ast(source_py, "test.py", max_lines=5)
@@ -895,7 +902,7 @@ class TestAstEngine(unittest.TestCase):
 
         mock_tree.root_node.children = [mock_child_js]
         mock_ast_engine.parsers = {".js": mock_parser}
-        
+
         res = split_massive_block_ast(source_js, "test.js", max_lines=4)
         self.assertEqual(len(res), 1)
         text_js = res[0]["text"]
@@ -918,7 +925,7 @@ class TestAstEngine(unittest.TestCase):
         mock_child_js2.end_point = (6, 0)
 
         mock_tree.root_node.children = [mock_child_js2]
-        
+
         res = split_massive_block_ast(source_js2, "test.js", max_lines=4)
         self.assertEqual(len(res), 1)
         text_js2 = res[0]["text"]
@@ -935,7 +942,7 @@ class TestAstEngine(unittest.TestCase):
         mock_parser.parse.return_value = mock_tree
         mock_ast_engine.parsers = {".py": mock_parser}
         mock_ast_engine.is_supported.return_value = True
-        
+
         # It should fall back to plain truncation instead of returning empty string
         res = split_massive_block_ast(source, "test.py", max_lines=2)
         self.assertEqual(len(res), 1)
@@ -960,26 +967,26 @@ class TestAstEngine(unittest.TestCase):
         )
         mock_parser = MagicMock()
         mock_tree = MagicMock()
-        
+
         mock_child1 = MagicMock()
         mock_child1.type = "function_definition"
         mock_child1.start_point = (0, 0)
         mock_child1.end_point = (4, 0)
-        
+
         mock_child2 = MagicMock()
         mock_child2.type = "function_definition"
         mock_child2.start_point = (5, 0)
         mock_child2.end_point = (9, 0)
-        
+
         mock_tree.root_node.children = [mock_child1, mock_child2]
         mock_parser.parse.return_value = mock_tree
         mock_ast_engine.parsers = {".py": mock_parser}
         mock_ast_engine.is_supported.return_value = True
-        
+
         res = split_massive_block_ast(source, "test.py", max_lines=4)
         self.assertEqual(len(res), 1)
         text = res[0]["text"]
-        
+
         # Verify the omission comment replaced the last line to respect budget of 4
         lines = text.splitlines()
         self.assertEqual(len(lines), 4)
@@ -998,22 +1005,22 @@ class TestAstEngine(unittest.TestCase):
         )
         mock_parser = MagicMock()
         mock_tree = MagicMock()
-        
+
         mock_child1 = MagicMock()
         mock_child1.type = "function_definition"
         mock_child1.start_point = (0, 0)
         mock_child1.end_point = (4, 0)
-        
+
         mock_child2 = MagicMock()
         mock_child2.type = "function_definition"
         mock_child2.start_point = (5, 0)
         mock_child2.end_point = (6, 0)
-        
+
         mock_tree.root_node.children = [mock_child1, mock_child2]
         mock_parser.parse.return_value = mock_tree
         mock_ast_engine.parsers = {".py": mock_parser}
         mock_ast_engine.is_supported.return_value = True
-        
+
         res = split_massive_block_ast(source, "test.py", max_lines=4)
         self.assertEqual(len(res), 1)
         text = res[0]["text"]
@@ -1032,36 +1039,36 @@ class TestAstEngine(unittest.TestCase):
         )
         mock_parser = MagicMock()
         mock_tree = MagicMock()
-        
+
         # Sibling 1: import os (line 0)
         mock_child1 = MagicMock()
         mock_child1.type = "import_statement"
         mock_child1.start_point = (0, 0)
         mock_child1.end_point = (0, 9)
-        
+
         # Sibling 2: import sys (line 0)
         mock_child2 = MagicMock()
         mock_child2.type = "import_statement"
         mock_child2.start_point = (0, 11)
         mock_child2.end_point = (0, 21)
-        
+
         # Sibling 3: trailing comment (line 0)
         mock_child3 = MagicMock()
         mock_child3.type = "comment"
         mock_child3.start_point = (0, 23)
         mock_child3.end_point = (0, 39)
-        
+
         # Sibling 4: function definition (lines 1-2)
         mock_child4 = MagicMock()
         mock_child4.type = "function_definition"
         mock_child4.start_point = (1, 0)
         mock_child4.end_point = (2, 8)
-        
+
         mock_tree.root_node.children = [mock_child1, mock_child2, mock_child3, mock_child4]
         mock_parser.parse.return_value = mock_tree
         mock_ast_engine.parsers = {".py": mock_parser}
         mock_ast_engine.is_supported.return_value = True
-        
+
         # Truncating with budget of 3. They should fit without duplication or omission comments.
         res = split_massive_block_ast(source, "test.py", max_lines=3)
         self.assertEqual(len(res), 1)
@@ -1090,12 +1097,12 @@ class TestAstEngine(unittest.TestCase):
         mock_child_dict.type = "assignment"
         mock_child_dict.start_point = (0, 0)
         mock_child_dict.end_point = (7, 5)
-        
+
         mock_tree.root_node.children = [mock_child_dict]
         mock_parser.parse.return_value = mock_tree
         mock_ast_engine.parsers = {".py": mock_parser}
         mock_ast_engine.is_supported.return_value = True
-        
+
         res = split_massive_block_ast(source_dict, "test.py", max_lines=6)
         self.assertEqual(len(res), 1)
         text = res[0]["text"]
@@ -1103,3 +1110,7 @@ class TestAstEngine(unittest.TestCase):
         self.assertEqual(len(lines), 6)
         self.assertEqual(lines[-1], "        # ... [Data Structure Omitted] ...")
 
+# pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
+# pylint: disable=attribute-defined-outside-init,import-outside-toplevel,protected-access
+# pylint: disable=redefined-outer-name,reimported,too-many-lines,too-many-public-methods
+# pylint: disable=consider-using-with,line-too-long

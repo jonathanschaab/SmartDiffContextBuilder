@@ -1,3 +1,5 @@
+# pylint: disable=too-many-public-methods
+
 """Tests for language profile resolution and fallback behavior."""
 
 import unittest
@@ -130,3 +132,4 @@ class TestLanguageProfiles(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+# pylint: disable=too-many-public-methods

@@ -1,5 +1,7 @@
+# pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
+# pylint: disable=attribute-defined-outside-init,consider-using-with,line-too-long
+
 import os
-import shutil
 import subprocess
 import tempfile
 import unittest
@@ -57,13 +59,14 @@ class TestCommitRangeIntegration(unittest.TestCase):
             ["python", self.script_path, "--base-name", "LensDots", "--no-language-server", "--commit-range", f"{self.commit_a}..{self.commit_c}"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True
+            text=True,
+            check=False,
         )
         self.assertEqual(res.returncode, 0, f"Script failed: {res.stderr}")
-        
+
         output_file = "LensDots_final.md"
         self.assertTrue(os.path.exists(output_file))
-        
+
         with open(output_file, "r", encoding="utf-8") as f:
             payload = f.read()
 
@@ -82,13 +85,14 @@ class TestCommitRangeIntegration(unittest.TestCase):
             ["python", self.script_path, "--base-name", "LensMinus", "--no-language-server", "--commit-range", "-2"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True
+            text=True,
+            check=False,
         )
         self.assertEqual(res.returncode, 0, f"Script failed: {res.stderr}")
-        
+
         output_file = "LensMinus_final.md"
         self.assertTrue(os.path.exists(output_file))
-        
+
         with open(output_file, "r", encoding="utf-8") as f:
             payload = f.read()
 
@@ -104,13 +108,14 @@ class TestCommitRangeIntegration(unittest.TestCase):
             ["python", self.script_path, "--base-name", "LensPlus", "--no-language-server", "--commit-range", f"{self.commit_a}+2"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True
+            text=True,
+            check=False,
         )
         self.assertEqual(res.returncode, 0, f"Script failed: {res.stderr}")
-        
+
         output_file = "LensPlus_final.md"
         self.assertTrue(os.path.exists(output_file))
-        
+
         with open(output_file, "r", encoding="utf-8") as f:
             payload = f.read()
 
@@ -126,13 +131,14 @@ class TestCommitRangeIntegration(unittest.TestCase):
             ["python", self.script_path, "--base-name", "LensEndMinus", "--no-language-server", "--commit-range", f"{self.commit_c}-2"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True
+            text=True,
+            check=False,
         )
         self.assertEqual(res.returncode, 0, f"Script failed: {res.stderr}")
-        
+
         output_file = "LensEndMinus_final.md"
         self.assertTrue(os.path.exists(output_file))
-        
+
         with open(output_file, "r", encoding="utf-8") as f:
             payload = f.read()
 
@@ -148,7 +154,10 @@ class TestCommitRangeIntegration(unittest.TestCase):
             ["python", self.script_path, "--commit-range", "non_existent_ref..HEAD"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True
+            text=True,
+            check=False,
         )
         self.assertNotEqual(res.returncode, 0)
         self.assertIn("Invalid commit range", res.stdout)
+# pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
+# pylint: disable=attribute-defined-outside-init,consider-using-with,line-too-long

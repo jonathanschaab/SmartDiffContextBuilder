@@ -1,6 +1,11 @@
+# pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
+# pylint: disable=attribute-defined-outside-init,import-outside-toplevel,protected-access
+# pylint: disable=redefined-outer-name,reimported,unused-argument,consider-using-from-import
+# pylint: disable=unspecified-encoding,too-few-public-methods,too-many-public-methods
+# pylint: disable=broad-exception-caught
+
 import os
 import subprocess
-import sys
 import tempfile
 import unittest
 from io import StringIO
@@ -63,21 +68,21 @@ class TestSysUtils(unittest.TestCase):
                 in_repo_file = "file.py"
                 with open(in_repo_file, "w") as f:
                     f.write("pass")
-                
+
                 # Create a file in an ignored path
                 ignored_dir = os.path.join(temp_dir, "node_modules")
                 os.makedirs(ignored_dir, exist_ok=True)
                 ignored_file = os.path.join(ignored_dir, "lib.js")
                 with open(ignored_file, "w") as f:
                     f.write("console.log(1)")
-                
+
                 # Check results
                 self.assertTrue(is_in_repo(in_repo_file))
                 self.assertFalse(is_in_repo("nonexistent.py"))
                 self.assertFalse(is_in_repo(ignored_file))
                 # Check external file
                 self.assertFalse(is_in_repo("/usr/include/stdio.h"))
-                
+
                 # Check sibling directory with matching prefix (e.g., project vs project_extra)
                 sibling_dir = temp_dir + "_extra"
                 os.makedirs(sibling_dir, exist_ok=True)
@@ -262,7 +267,7 @@ class TestSysUtils(unittest.TestCase):
         with patch("sys.stdout", new_callable=StringIO) as mock_out, \
              self.assertRaises(SystemExit) as ctx:
             run_command(["nonexistent_binary"], exit_on_fail=True)
-            
+
         self.assertEqual(ctx.exception.code, 1)
         self.assertIn("Executable not found: nonexistent_binary", mock_out.getvalue())
 
@@ -646,3 +651,8 @@ class TestSysUtils(unittest.TestCase):
                 os.chdir(old_cwd)
 
         self.assertEqual(normalized, expected)
+# pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
+# pylint: disable=attribute-defined-outside-init,import-outside-toplevel,protected-access
+# pylint: disable=redefined-outer-name,reimported,unused-argument,consider-using-from-import
+# pylint: disable=unspecified-encoding,too-few-public-methods,too-many-public-methods
+# pylint: disable=broad-exception-caught

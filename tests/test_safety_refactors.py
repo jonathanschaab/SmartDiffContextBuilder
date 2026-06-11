@@ -1,3 +1,6 @@
+# pylint: disable=import-outside-toplevel,too-few-public-methods
+# pylint: disable=consider-using-from-import,missing-function-docstring
+
 """Unit tests covering dotted imports, UTF-8 BOM, config dictionary exceptions,
 and FFI None capture guards.
 """
@@ -153,3 +156,4 @@ class TestSafetyRefactors(unittest.TestCase):
             finally:
                 if orig_patterns is not None:
                     CONFIG["ffi_patterns"] = orig_patterns
+# pylint: disable=import-outside-toplevel,too-few-public-methods

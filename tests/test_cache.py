@@ -1,3 +1,6 @@
+# pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
+# pylint: disable=attribute-defined-outside-init,import-outside-toplevel,consider-using-with
+
 import os
 import tempfile
 import unittest
@@ -125,3 +128,5 @@ class TestLRUFileCache(unittest.TestCase):
 
 
 
+# pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
+# pylint: disable=attribute-defined-outside-init,import-outside-toplevel,consider-using-with

@@ -29,7 +29,7 @@ jobs:
 
     - name: Run Pylint
       run: |
-        pylint context_builder
+        pylint context_builder tests/* smart_diff_context_builder.py
 
     - name: Run Tests
       run: |

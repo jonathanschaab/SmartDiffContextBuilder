@@ -1,3 +1,7 @@
+# pylint: disable=missing-class-docstring,missing-function-docstring
+# pylint: disable=attribute-defined-outside-init,unused-argument,consider-using-with
+# pylint: disable=import-outside-toplevel,protected-access,too-few-public-methods
+
 """Unit tests for CallGraphTracer."""
 
 import unittest
@@ -429,3 +433,5 @@ class TestCallGraphTracer(unittest.TestCase):
         mock_ffi.assert_called_once()
 
 
+# pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
+# pylint: disable=attribute-defined-outside-init,unused-argument,consider-using-with
