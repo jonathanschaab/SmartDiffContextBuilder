@@ -669,7 +669,12 @@ def main():
         help="JSON list of callee ignored keywords",
     )
     parser.add_argument("--ffi-patterns", type=str, default=None, help="JSON list of FFI patterns")
-    parser.add_argument("--ffi-rg-pattern", type=str, default=None)
+    parser.add_argument(
+        "--ffi-rg-pattern",
+        type=str,
+        default=None,
+        help="Ripgrep prefilter that must match every file eligible for --ffi-patterns",
+    )
 
     args = parser.parse_args()
 

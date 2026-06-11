@@ -197,10 +197,6 @@ def build_ffi_registry(repo_files, file_cache=None):
             fixed_strings=False,
             fallback_hint="FFI export pre-computation",
         )
-        if not fast_files:
-            # Custom extraction patterns may be broader than ffi_rg_pattern.
-            # Preserve correctness when the optimization finds no candidates.
-            fast_files = repo_files
     else:
         fast_files = repo_files
 

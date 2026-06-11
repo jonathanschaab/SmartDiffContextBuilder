@@ -5,6 +5,7 @@ from unittest.mock import patch, MagicMock, ANY
 import json
 from context_builder.cache import LRUFileCache
 import context_builder.preprocessor as _preprocessor_mod
+from context_builder.sys_utils import FileScanCandidates
 from context_builder.preprocessor import (
     analyze_compile_commands,
     build_ffi_registry,
@@ -518,6 +519,7 @@ class TestPreprocessor(unittest.TestCase):
             
             # 2. Non-string pattern test
             CONFIG['ffi_patterns'] = [123, True, "fn\\s+([a-z]+)"]
+            CONFIG['ffi_rg_pattern'] = r"\bfn\b"
             with patch("context_builder.preprocessor.warn_once") as mock_warn:
                 symbols = build_ffi_registry([file_path], file_cache=cache)
                 self.assertIn("test", symbols)
@@ -536,6 +538,56 @@ class TestPreprocessor(unittest.TestCase):
             build_ffi_registry(repo_files, file_cache=MagicMock())
 
         self.assertTrue(mock_iter.call_args.kwargs["force"])
+
+    def test_build_ffi_registry_trusts_empty_prefilter_result(self):
+        """A successful ripgrep miss avoids an exhaustive FFI registry scan."""
+        from context_builder.config import CONFIG
+        repo_files = ["one.rs", "two.cpp"]
+        mock_cache = MagicMock()
+
+        with patch.dict(
+            CONFIG,
+            {
+                "ffi_rg_pattern": "FFI_EXPORT",
+                "ffi_patterns": [r"FFI_EXPORT\s+([A-Za-z0-9_]+)"],
+            },
+        ), patch(
+            "context_builder.preprocessor.ripgrep_filter",
+            return_value=[],
+        ):
+            symbols = build_ffi_registry(repo_files, file_cache=mock_cache)
+
+        self.assertEqual(symbols, set())
+        mock_cache.get_content.assert_not_called()
+
+    def test_build_ffi_registry_scans_all_files_after_ripgrep_failure(self):
+        """Ripgrep fallback candidates preserve exhaustive FFI extraction."""
+        from context_builder.config import CONFIG
+        repo_files = ["one.rs", "two.cpp"]
+        fallback_files = FileScanCandidates(
+            repo_files,
+            "FFI export pre-computation",
+        )
+        mock_cache = MagicMock()
+        mock_cache.get_content.side_effect = [
+            "FFI_EXPORT exported_symbol",
+            "ordinary source",
+        ]
+
+        with patch.dict(
+            CONFIG,
+            {
+                "ffi_rg_pattern": "FFI_EXPORT",
+                "ffi_patterns": [r"FFI_EXPORT\s+([A-Za-z0-9_]+)"],
+            },
+        ), patch(
+            "context_builder.preprocessor.ripgrep_filter",
+            return_value=fallback_files,
+        ):
+            symbols = build_ffi_registry(repo_files, file_cache=mock_cache)
+
+        self.assertEqual(symbols, {"exported_symbol"})
+        self.assertEqual(mock_cache.get_content.call_count, len(repo_files))
 
     def test_analyze_compile_commands_include_with_directory_prefix(self):
         """Verify that translation units are successfully linked to target files
