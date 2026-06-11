@@ -71,4 +71,5 @@ jobs:
         file: coverage.xml
         language: Python
         label: pytest-coverage
+        fail-on-error: false
 
