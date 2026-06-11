@@ -46,7 +46,7 @@ class TestIntegration(unittest.TestCase):
         with open("app.py", "w", encoding="utf-8") as f:
             f.write(modified_code)
 
-        # 5. Invoke the ContextLens tool via subprocess
+        # 5. Invoke SmartDiffContextBuilder via subprocess
         # Pass the path to the main script wrapper
         script_path = os.path.join(self.old_cwd, "smart_diff_context_builder.py")
         
@@ -61,7 +61,7 @@ class TestIntegration(unittest.TestCase):
         # Ensure command completed successfully
         self.assertEqual(res.returncode, 0, f"Script failed: {res.stderr}")
         
-        # 6. Validate the output file ContextLens_final.md
+        # 6. Validate the generated payload
         output_file = "LensIntegration_final.md"
         self.assertTrue(os.path.exists(output_file))
         
@@ -106,7 +106,7 @@ class TestIntegration(unittest.TestCase):
         with open("app.py", "w", encoding="utf-8") as f:
             f.write(modified_code)
 
-        # 5. Invoke ContextLens with --caller-depth 0
+        # 5. Invoke SmartDiffContextBuilder with --caller-depth 0
         script_path = os.path.join(self.old_cwd, "smart_diff_context_builder.py")
         res = subprocess.run(
             ["python", script_path, "--base-name", "LensDepthZero", "--no-language-server", "--caller-depth", "0"],

@@ -1,5 +1,6 @@
 import unittest
 import asyncio
+import concurrent.futures
 import time
 import os
 from io import BytesIO
@@ -37,19 +38,25 @@ class TestLspClient(unittest.TestCase):
         mock_client = MagicMock()
         mock_lc_class.return_value = mock_client
         mock_client.stopped = False
-        
-        async def mock_references_hang(*args, **kwargs):
-            await asyncio.sleep(5.0)
-            return []
-        mock_client.text_document_references_async = mock_references_hang
+        mock_client.text_document_references_async = AsyncMock()
         
         client = MinimalLSPClient(["some_lsp_binary"])
         client.client = mock_client
         client.start = MagicMock(return_value=True)
-        
+
+        def mock_run_coroutine(coro, _loop):
+            coro.close()
+            future = concurrent.futures.Future()
+            future.set_exception(concurrent.futures.TimeoutError())
+            return future
+
         start = time.time()
         # Query with a very small timeout
-        refs = client.get_references("file.py", 10, 0, timeout=0.05)
+        with patch(
+            "asyncio.run_coroutine_threadsafe",
+            side_effect=mock_run_coroutine,
+        ):
+            refs = client.get_references("file.py", 10, 0, timeout=0.05)
         duration = time.time() - start
         
         self.assertEqual(refs, [])
@@ -314,23 +321,21 @@ class TestLspClient(unittest.TestCase):
         mock_client.stopped = False
 
         client = MinimalLSPClient(["some_lsp_binary"])
-        
-        # Safely execute the background coroutine synchronously so its internal logic 
-        # (like catching the TimeoutError and calling stop()) actually runs!
-        def mock_run_coroutine(coro, loop):
-            import asyncio
-            import concurrent.futures
-            
+
+        # Execute the coroutine synchronously, but preserve the Future contract:
+        # coroutine errors surface when MinimalLSPClient calls future.result().
+        def mock_run_coroutine(coro, _loop):
+            future = concurrent.futures.Future()
             new_loop = asyncio.new_event_loop()
             try:
-                # This executes _async_start, hits the mock timeout, and triggers stop()
-                res = new_loop.run_until_complete(coro)
+                result = new_loop.run_until_complete(coro)
+            except BaseException as exc:
+                future.set_exception(exc)
+            else:
+                future.set_result(result)
             finally:
                 new_loop.close()
-            
-            f = concurrent.futures.Future()
-            f.set_result(res)
-            return f
+            return future
 
         with patch("asyncio.run_coroutine_threadsafe", side_effect=mock_run_coroutine):
             success = client.start()
@@ -762,11 +767,13 @@ class TestLspClient(unittest.TestCase):
 
     @patch("context_builder.lsp_client.LanguageClient")
     def test_lsp_client_startup_timeout_triggers_force_kill(self, mock_lc_class):
-        import concurrent.futures
         client = MinimalLSPClient(["some_lsp_binary"])
-        
-        # Mock run_coroutine_threadsafe to raise concurrent.futures.TimeoutError
-        with patch("asyncio.run_coroutine_threadsafe", side_effect=concurrent.futures.TimeoutError("Timeout!")):
+
+        def mock_timeout(coro, _loop):
+            coro.close()
+            raise concurrent.futures.TimeoutError("Timeout!")
+
+        with patch("asyncio.run_coroutine_threadsafe", side_effect=mock_timeout):
             with patch.object(client, "cleanup") as mock_cleanup:
                 success = client.start()
                 self.assertFalse(success)
@@ -775,8 +782,12 @@ class TestLspClient(unittest.TestCase):
     @patch("context_builder.lsp_client.LanguageClient")
     def test_lsp_client_startup_generic_error_triggers_normal_cleanup(self, mock_lc_class):
         client = MinimalLSPClient(["some_lsp_binary"])
-        
-        with patch("asyncio.run_coroutine_threadsafe", side_effect=RuntimeError("Some error")):
+
+        def mock_error(coro, _loop):
+            coro.close()
+            raise RuntimeError("Some error")
+
+        with patch("asyncio.run_coroutine_threadsafe", side_effect=mock_error):
             with patch.object(client, "cleanup") as mock_cleanup:
                 success = client.start()
                 self.assertFalse(success)

@@ -1,6 +1,6 @@
 # SmartDiffContextBuilder
 
-`SmartDiffContextBuilder` is a command-line tool that compiles context-aware git diff payloads optimized for LLMs. By analyzing a git diff, it automatically extracts modified function blocks, traces upstream callers and downstream callees, mines relevant unit tests, tracks cross-language FFI boundaries, and performs macro expansion. The result is serialized into a highly optimized context payload structured across hierarchical volumes.
+`SmartDiffContextBuilder` is a command-line tool that compiles context-aware git diff payloads optimized for LLMs. By analyzing a git diff, it automatically extracts modified function blocks, traces upstream callers and downstream callees, mines relevant unit tests, tracks cross-language FFI boundaries, and performs macro expansion. The result is serialized into a structured context payload.
 
 ---
 
@@ -27,8 +27,8 @@ To leverage the full suite of SmartDiffContextBuilder features, ensure the follo
 - **Python**: Version `3.12` or newer (required).
 
 ### Python Libraries
-- **py-tree-sitter**: Version `0.21.0` or newer (required for AST parsing and downstream callee extraction; Node `.text` attributes are not present in older versions).
-- **tree-sitter-languages** (e.g. `tree-sitter-python`, `tree-sitter-rust`, etc. for supported languages).
+- Install the required runtime packages with `pip install -r requirements.txt`.
+- **Optional AST support**: `tree-sitter` 0.21.0 or newer plus the language-specific bindings used by your repository (for example, `tree-sitter-python` or `tree-sitter-rust`). Without them, analysis falls back to regex-based parsing.
 
 ### External Toolchains (Optional but highly recommended)
 - **ripgrep (`rg`)**: Used for fast dependency and test filtering. Falls back to manual scanning if not installed.
@@ -85,10 +85,10 @@ python smart_diff_context_builder.py --commit-range -3
 > **Note:** When running in a clean worktree, starting a language server may take several minutes
 > while the project is indexed. Use `--no-language-server` to skip LSP and avoid this delay.
 
-### Output Format & Volume Limits
-Generate JSON output and restrict volume sizes:
+### Output Limits
+Restrict source-block and payload sizes:
 ```bash
-python smart_diff_context_builder.py --format json --max-lines 800 --max-mb 1.5
+python smart_diff_context_builder.py --max-lines 800 --max-mb 1.5
 ```
 
 ### Skipping Language Server / FFI / Macro Expansion
@@ -111,17 +111,17 @@ python smart_diff_context_builder.py --config .smdc_config.json
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--format` | `md` \| `json` | `md` | Output format |
-| `--max-lines` | int | `1500` | Maximum lines per output volume |
-| `--max-mb` | float | `2.0` | Maximum size in MB per output volume |
+| `--format` | `md` \| `json` | `md` | Requested format; the current serializer writes Markdown |
+| `--max-lines` | int | `1500` | Maximum source-block size before semantic pruning |
+| `--max-mb` | float | `2.0` | Maximum payload size before truncation |
 | `--base-name` | str | `SmartDiffContextBuilder` | Base name for the output file (`{base-name}_final.md`) |
 
 ### Analysis Depth
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--caller-depth` | int | `3` | BFS depth for upstream caller tracing |
-| `--callee-depth` | int | `2` | BFS depth for downstream callee tracing |
+| `--caller-depth` | int | `1` | BFS depth for upstream caller tracing |
+| `--callee-depth` | int | `1` | BFS depth for downstream callee tracing |
 | `--max-interface-depth` | int | `15` | Maximum interface/inheritance depth |
 
 ### Language Server (LSP)
@@ -129,7 +129,7 @@ python smart_diff_context_builder.py --config .smdc_config.json
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--no-language-server` | flag | off | Disable LSP for caller tracing (falls back to AST/regex) |
-| `--lsp-timeout` | int | `30` | LSP query timeout in seconds |
+| `--lsp-timeout` | int | `45` | LSP query timeout in seconds |
 | `--disable-pruning` | flag | off | Disable caller graph pruning (may significantly increase output size) |
 
 ### Performance
@@ -189,4 +189,4 @@ The payload is written to `{base-name}_final.md` (default: `SmartDiffContextBuil
 5. **Upstream Dependent Callers**: Functions that call into the modified logic.
 6. **Cross-Language FFI Linkages**: FFI call-site locations across language boundaries.
 
-When the payload exceeds the configured size limits, it is automatically split into numbered volumes (`{base-name}_vol1.md`, `{base-name}_vol2.md`, etc.).
+When the payload exceeds `--max-mb`, lower-priority sections are truncated and the output includes a warning notice.

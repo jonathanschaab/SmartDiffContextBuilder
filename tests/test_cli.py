@@ -660,6 +660,65 @@ class TestCLI(unittest.TestCase):
         # Verify that run_scan was called directly
         mock_run_scan.assert_called_once_with(mock_args, start_ref="sha_start", end_ref="sha_end")
 
+    @patch("context_builder.cli._cleanup_temp_worktree")
+    @patch("context_builder.cli._setup_temp_worktree")
+    @patch("context_builder.cli.run_scan")
+    @patch("context_builder.cli.parse_and_resolve_range")
+    @patch("context_builder.cli.subprocess.run")
+    def test_worktree_warns_when_lsp_is_enabled(
+        self,
+        mock_sub_run,
+        mock_resolve_range,
+        mock_run_scan,
+        _mock_setup,
+        _mock_cleanup,
+    ):
+        """Detached worktree scans explain the potential LSP indexing delay."""
+        from context_builder.cli import _run_commit_range_worktree
+
+        args = CliNamespace(no_language_server=False)
+        mock_resolve_range.return_value = ("start_sha", "end_sha")
+        mock_sub_run.return_value = MagicMock(stdout="other_sha\n")
+
+        with patch("context_builder.cli.os.chdir"), patch(
+            "builtins.print"
+        ) as mock_print:
+            _run_commit_range_worktree(args, "start..end")
+
+        output = "\n".join(str(call.args[0]) for call in mock_print.call_args_list)
+        self.assertIn("may take several minutes", output)
+        self.assertIn("--no-language-server", output)
+        mock_run_scan.assert_called_once()
+
+    @patch("context_builder.cli._cleanup_temp_worktree")
+    @patch("context_builder.cli._setup_temp_worktree")
+    @patch("context_builder.cli.run_scan")
+    @patch("context_builder.cli.parse_and_resolve_range")
+    @patch("context_builder.cli.subprocess.run")
+    def test_worktree_omits_lsp_warning_when_disabled(
+        self,
+        mock_sub_run,
+        mock_resolve_range,
+        mock_run_scan,
+        _mock_setup,
+        _mock_cleanup,
+    ):
+        """The indexing warning stays quiet when LSP was explicitly disabled."""
+        from context_builder.cli import _run_commit_range_worktree
+
+        args = CliNamespace(no_language_server=True)
+        mock_resolve_range.return_value = ("start_sha", "end_sha")
+        mock_sub_run.return_value = MagicMock(stdout="other_sha\n")
+
+        with patch("context_builder.cli.os.chdir"), patch(
+            "builtins.print"
+        ) as mock_print:
+            _run_commit_range_worktree(args, "start..end")
+
+        output = "\n".join(str(call.args[0]) for call in mock_print.call_args_list)
+        self.assertNotIn("may take several minutes", output)
+        mock_run_scan.assert_called_once()
+
     @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
     @patch("context_builder.cli.run_scan")
     def test_cli_config_file_loading_and_merging(self, mock_run_scan, mock_parse_args):
