@@ -84,7 +84,8 @@ class TestLspClient(unittest.TestCase):
         output = stream.getvalue()
         self.assertIn("[############------------]", output)
         self.assertIn("50%", output)
-        self.assertIn("\r  [LSP] Indexing: complete", output)
+        self.assertIn("crates\033[K", output)
+        self.assertIn("\r  [LSP] Indexing: complete\033[K", output)
 
     def test_register_lsp_progress_handlers_routes_standard_messages(self):
         handlers = {}

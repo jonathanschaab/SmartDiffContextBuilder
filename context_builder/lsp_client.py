@@ -115,7 +115,7 @@ class LSPProgressReporter:
                 )
                 print(
                     f"\r  [{progress_bar}] {percentage:3d}%  [LSP] {title}"
-                    f"{': ' + message if message else ''}",
+                    f"{': ' + message if message else ''}\033[K",
                     end="",
                     file=sys.stderr,
                     flush=True,
@@ -138,8 +138,9 @@ class LSPProgressReporter:
         title = state.get("title", f"{self.server_name} indexing")
         message = _progress_field(value, "message") or "complete"
         prefix = "\r" if self._is_tty else ""
+        clear_line = "\033[K" if self._is_tty else ""
         print(
-            f"{prefix}  [LSP] {title}: {message}",
+            f"{prefix}  [LSP] {title}: {message}{clear_line}",
             file=sys.stderr,
             flush=self._is_tty,
         )
