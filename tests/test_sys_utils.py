@@ -540,6 +540,31 @@ class TestSysUtils(unittest.TestCase):
         self.assertEqual(scanned, [])
         self.assertEqual(mock_err.getvalue(), "")
 
+    def test_iter_scan_progress_handles_raising_isatty(self):
+        """Custom stderr wrappers cannot crash progress initialization."""
+        class RaisingStream(StringIO):
+            """Stream wrapper whose terminal probe is unsupported."""
+
+            def isatty(self):
+                raise RuntimeError("terminal state unavailable")
+
+        with patch("sys.stderr", new_callable=RaisingStream) as mock_err:
+            scanned = list(
+                iter_scan_progress(
+                    ["one.py", "two.py"],
+                    label="wrapped stream",
+                    min_files=1,
+                    force=True,
+                )
+            )
+
+        self.assertEqual(scanned, ["one.py", "two.py"])
+        self.assertIn("[Scanning 2/2]", mock_err.getvalue())
+
+    def test_stream_is_tty_handles_missing_method(self):
+        """Streams without isatty are treated as non-interactive."""
+        self.assertFalse(sys_utils._stream_is_tty(object()))
+
     def test_normalized_search_paths_are_cached_per_cwd(self):
         """Repeated path normalization avoids repeated abspath work."""
         sys_utils._NORMALIZED_PATH_CACHE.clear()  # pylint: disable=protected-access

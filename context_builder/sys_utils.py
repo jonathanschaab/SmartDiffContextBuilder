@@ -117,6 +117,14 @@ _RG_COMMAND_MAX_CHARS = 24000
 _NORMALIZED_PATH_CACHE = {}
 
 
+def _stream_is_tty(stream):
+    """Return whether a stream is interactive without trusting custom wrappers."""
+    try:
+        return bool(stream.isatty())
+    except Exception:  # pylint: disable=broad-exception-caught
+        return False
+
+
 class FileScanCandidates(list):
     """List of files returned by ripgrep_filter with scan metadata attached."""
 
@@ -152,11 +160,7 @@ class ScanProgressBar:  # pylint: disable=too-few-public-methods
         self.total = total
         self.label = label
         self.active = total > 0 and total >= min_files
-        self._is_tty = (
-            self.active
-            and hasattr(sys.stderr, "isatty")
-            and sys.stderr.isatty()
-        )
+        self._is_tty = self.active and _stream_is_tty(sys.stderr)
         self._last_pct = -1
         self._last_count = 0
         # Emit roughly 20 periodic lines for non-tty output
