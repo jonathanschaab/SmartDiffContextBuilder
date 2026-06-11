@@ -22,30 +22,30 @@ from .config import CONFIG, ConfigDictProxy
 
 LANG_MAP = ConfigDictProxy('lang_map')
 
-_FUNC_DECL_RE = None
-_FUNC_DECL_STR = None
-_CALLEE_RE = None
-_CALLEE_STR = None
+_CONFIG_PATTERN_CACHE = {}
+
+
+def _get_config_pattern(config_key, flags=0):
+    """Retrieve a regex cached against its current configuration value."""
+    pattern_text = CONFIG[config_key]
+    cache_key = (config_key, flags)
+    cached_text, cached_pattern = _CONFIG_PATTERN_CACHE.get(
+        cache_key, (None, None)
+    )
+    if cached_pattern is None or cached_text != pattern_text:
+        cached_pattern = re.compile(pattern_text, flags)
+        _CONFIG_PATTERN_CACHE[cache_key] = (pattern_text, cached_pattern)
+    return cached_pattern
 
 
 def _get_func_decl_pattern():
     """Retrieve or compile the cached regex for function declarations."""
-    global _FUNC_DECL_RE, _FUNC_DECL_STR  # pylint: disable=global-statement
-    current_str = CONFIG['func_decl_pattern']
-    if _FUNC_DECL_RE is None or _FUNC_DECL_STR != current_str:
-        _FUNC_DECL_RE = re.compile(current_str, re.MULTILINE)
-        _FUNC_DECL_STR = current_str
-    return _FUNC_DECL_RE
+    return _get_config_pattern('func_decl_pattern', re.MULTILINE)
 
 
 def _get_callee_pattern():
     """Retrieve or compile the cached regex for callee matching."""
-    global _CALLEE_RE, _CALLEE_STR  # pylint: disable=global-statement
-    current_str = CONFIG['callee_pattern']
-    if _CALLEE_RE is None or _CALLEE_STR != current_str:
-        _CALLEE_RE = re.compile(current_str)
-        _CALLEE_STR = current_str
-    return _CALLEE_RE
+    return _get_config_pattern('callee_pattern')
 
 
 class AstEngine:

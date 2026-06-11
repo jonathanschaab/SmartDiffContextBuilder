@@ -40,6 +40,11 @@ class CallGraphTracer:
         self.vm = vm
         self.args = args
 
+    def _arg_or_default(self, name, default):
+        """Return an argument value, treating missing and explicit None alike."""
+        value = getattr(self.args, name, None)
+        return default if value is None else value
+
     def _process_single_caller_reference(
         self, ref_path, occurrences, processed_spans, queue, depth
     ):
@@ -80,25 +85,13 @@ class CallGraphTracer:
 
     def _resolve_references(self, curr_file, curr_line, curr_func):
         """Retrieve raw reference list from LSP, AST, or Regex fallback."""
-        lsp_timeout = getattr(self.args, "lsp_timeout", 45)
-        if lsp_timeout is None:
-            lsp_timeout = 45
-
-        max_interface_depth = getattr(self.args, "max_interface_depth", 15)
-        if max_interface_depth is None:
-            max_interface_depth = 15
-
-        disable_pruning = getattr(self.args, "disable_pruning", False)
-        if disable_pruning is None:
-            disable_pruning = False
-
         callers = get_lsp_references(
             curr_file,
             curr_line,
             curr_func,
-            lsp_timeout,
-            max_interface_depth,
-            disable_pruning,
+            self._arg_or_default("lsp_timeout", 45),
+            self._arg_or_default("max_interface_depth", 15),
+            self._arg_or_default("disable_pruning", False),
             file_cache=self.file_cache,
         )
         if callers is None:
@@ -115,29 +108,22 @@ class CallGraphTracer:
 
     def _merge_macro_and_build_linkages(self, curr_file, curr_func, ext, callers):
         """Merge macro expansion and C++ build system compilation linkages into callers."""
-        skip_macro_expansion = getattr(self.args, "skip_macro_expansion", False)
-        if skip_macro_expansion is None:
-            skip_macro_expansion = False
-
         if (
-            not skip_macro_expansion
+            not self._arg_or_default("skip_macro_expansion", False)
             and get_language_profile(ext).supports_macro_expansion
         ):
             macro_results = trace_macro_expansion(
                 curr_func, self.all_repo_files, file_cache=self.file_cache
             )
             for f_path, matches in macro_results.items():
-                if f_path not in callers:
-                    callers[f_path] = []
+                existing_matches = callers.setdefault(f_path, [])
                 for m in matches:
-                    if not any(c['line'] == m['line'] for c in callers[f_path]):
-                        callers[f_path].append(m)
+                    if not any(c['line'] == m['line'] for c in existing_matches):
+                        existing_matches.append(m)
 
         if curr_file in self.cpp_linkages:
             for req in self.cpp_linkages[curr_file]:
-                if req not in callers:
-                    callers[req] = []
-                callers[req].extend(self.cpp_linkages[curr_file][req])
+                callers.setdefault(req, []).extend(self.cpp_linkages[curr_file][req])
 
     def _process_caller_depth_step(
         self, curr_file, curr_line, curr_func, depth, processed_spans, queue
@@ -160,11 +146,10 @@ class CallGraphTracer:
             distance=depth + 1,
         )
 
-        skip_ffi = getattr(self.args, "skip_ffi", False)
-        if skip_ffi is None:
-            skip_ffi = False
-
-        if not skip_ffi and curr_func in self.ffi_exports:
+        if (
+            not self._arg_or_default("skip_ffi", False)
+            and curr_func in self.ffi_exports
+        ):
             ffi_callers = trace_ffi_callers(
                 curr_func,
                 self.all_repo_files,
@@ -183,9 +168,7 @@ class CallGraphTracer:
 
     def trace_callers(self, queue, processed_spans):
         """Perform BFS queue traversal for tracing function callers."""
-        caller_depth = getattr(self.args, "caller_depth", 0)
-        if caller_depth is None:
-            caller_depth = 0
+        caller_depth = self._arg_or_default("caller_depth", 0)
 
         while queue:
             curr_file, curr_line, curr_func, depth = queue.popleft()
@@ -219,9 +202,7 @@ class CallGraphTracer:
             return
 
         func_chunk = "".join(ref_lines[def_start:def_end])
-        max_lines_val = getattr(self.args, "max_lines", 1000)
-        if max_lines_val is None:
-            max_lines_val = 1000
+        max_lines_val = self._arg_or_default("max_lines", 1000)
         subunits = split_massive_block_ast(
             func_chunk, def_file, max(1, max_lines_val - 100)
         )
@@ -238,9 +219,7 @@ class CallGraphTracer:
     def trace_callees(self, callee_queue, processed_spans):
         """Perform BFS queue traversal for tracing function callees."""
         processed_callee_spans = set(processed_spans)
-        callee_depth = getattr(self.args, "callee_depth", 0)
-        if callee_depth is None:
-            callee_depth = 0
+        callee_depth = self._arg_or_default("callee_depth", 0)
 
         while callee_queue:
             curr_file, curr_line, _, depth = callee_queue.popleft()

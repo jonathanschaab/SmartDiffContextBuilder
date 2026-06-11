@@ -291,47 +291,59 @@ def _validate_config_type(k, v):
     """Validate type of config value v against default in CONFIG."""
     if k not in CONFIG:
         return
-    # If the default value is None, we only validate that it is a string if it's set
-    if CONFIG[k] is None:
-        if v is not None and not isinstance(v, str):
-            print(
-                f"[SmartDiffContextBuilder Error] Config key '{k}' must be "
-                f"a string, got {type(v).__name__}"
-            )
-            sys.exit(1)
+    default = CONFIG[k]
+    expected_phrase = None
+    is_valid = True
+
+    if default is None:
+        expected_phrase = "a string"
+        is_valid = v is None or isinstance(v, str)
+    elif isinstance(default, str):
+        expected_phrase = "a string"
+        is_valid = isinstance(v, str)
+    elif isinstance(default, bool):
+        expected_phrase = "a boolean"
+        is_valid = isinstance(v, bool)
+    elif isinstance(default, int):
+        expected_phrase = "an integer"
+        is_valid = isinstance(v, int) and not isinstance(v, bool)
+    elif isinstance(default, float):
+        expected_phrase = "a float"
+        is_valid = isinstance(v, (int, float)) and not isinstance(v, bool)
+
+    if expected_phrase and not is_valid:
+        print(
+            f"[SmartDiffContextBuilder Error] Config key '{k}' must be "
+            f"{expected_phrase}, got {type(v).__name__}"
+        )
+        sys.exit(1)
+
+
+def _apply_config_override(key, value, error_subject="Config key"):
+    """Validate and apply one config override using collection merge semantics."""
+    current = CONFIG[key]
+    if isinstance(current, dict):
+        expected_type = "dictionary"
+        valid = isinstance(value, dict)
+    elif isinstance(current, list):
+        expected_type = "list"
+        valid = isinstance(value, list)
+    else:
+        _validate_config_type(key, value)
+        CONFIG[key] = value
         return
 
-    # Check bool first because bool is a subclass of int
-    if isinstance(CONFIG[k], bool):
-        if not isinstance(v, bool):
-            print(
-                f"[SmartDiffContextBuilder Error] Config key '{k}' must be "
-                f"a boolean, got {type(v).__name__}"
-            )
-            sys.exit(1)
-    elif isinstance(CONFIG[k], int):
-        # explicitly reject bool for int
-        if not isinstance(v, int) or isinstance(v, bool):
-            print(
-                f"[SmartDiffContextBuilder Error] Config key '{k}' must be "
-                f"an integer, got {type(v).__name__}"
-            )
-            sys.exit(1)
-    elif isinstance(CONFIG[k], float):
-        # accept float or int, reject bool
-        if (not isinstance(v, (int, float))) or isinstance(v, bool):
-            print(
-                f"[SmartDiffContextBuilder Error] Config key '{k}' must be "
-                f"a float, got {type(v).__name__}"
-            )
-            sys.exit(1)
-    elif isinstance(CONFIG[k], str):
-        if not isinstance(v, str):
-            print(
-                f"[SmartDiffContextBuilder Error] Config key '{k}' must be "
-                f"a string, got {type(v).__name__}"
-            )
-            sys.exit(1)
+    if not valid:
+        print(
+            f"[SmartDiffContextBuilder Error] {error_subject} '{key}' must be "
+            f"a {expected_type}, got {type(value).__name__}"
+        )
+        sys.exit(1)
+
+    if isinstance(current, dict):
+        current.update(value)
+    else:
+        CONFIG[key] = value
 
 
 def _parse_config_file(args_config):
@@ -350,25 +362,7 @@ def _parse_config_file(args_config):
             if k not in CONFIG:
                 print(f"[Warning] Unknown config key: {k}")
                 continue
-            if isinstance(CONFIG[k], dict):
-                if not isinstance(v, dict):
-                    print(
-                        f"[SmartDiffContextBuilder Error] Config key '{k}' must be "
-                        f"a dictionary, got {type(v).__name__}"
-                    )
-                    sys.exit(1)
-                CONFIG[k].update(v)
-            elif isinstance(CONFIG[k], list):
-                if not isinstance(v, list):
-                    print(
-                        f"[SmartDiffContextBuilder Error] Config key '{k}' must be "
-                        f"a list, got {type(v).__name__}"
-                    )
-                    sys.exit(1)
-                CONFIG[k] = v
-            else:
-                _validate_config_type(k, v)
-                CONFIG[k] = v
+            _apply_config_override(k, v)
     except Exception as e:  # pylint: disable=broad-exception-caught
         if isinstance(e, SystemExit):
             raise
@@ -404,8 +398,7 @@ def _merge_cli_mappings(args, active_overrides):
     for arg_name, cfg_key in cli_mappings.items():
         val = getattr(args, arg_name, None)
         if val is not None:
-            _validate_config_type(cfg_key, val)
-            CONFIG[cfg_key] = val
+            _apply_config_override(cfg_key, val)
             active_overrides.append(cfg_key)
 
 
@@ -433,27 +426,11 @@ def _merge_json_mappings(args, active_overrides):
         val = getattr(args, arg_name, None)
         if val is not None:
             parsed = parse_cli_json(val, f"--{arg_name.replace('_', '-')}")
-            if isinstance(CONFIG[cfg_key], dict):
-                if isinstance(parsed, dict):
-                    CONFIG[cfg_key].update(parsed)
-                else:
-                    print(
-                        f"[SmartDiffContextBuilder Error] CLI override for key '{cfg_key}' must be "
-                        f"a dictionary, got {type(parsed).__name__}"
-                    )
-                    sys.exit(1)
-            elif isinstance(CONFIG[cfg_key], list):
-                if isinstance(parsed, list):
-                    CONFIG[cfg_key] = parsed
-                else:
-                    print(
-                        f"[SmartDiffContextBuilder Error] CLI override for key '{cfg_key}' must be "
-                        f"a list, got {type(parsed).__name__}"
-                    )
-                    sys.exit(1)
-            else:
-                _validate_config_type(cfg_key, parsed)
-                CONFIG[cfg_key] = parsed
+            _apply_config_override(
+                cfg_key,
+                parsed,
+                error_subject="CLI override for key",
+            )
             active_overrides.append(cfg_key)
 
 
