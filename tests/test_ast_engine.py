@@ -632,27 +632,37 @@ class TestAstEngine(unittest.TestCase):
         finally:
             CONFIG['bindings'] = orig_bindings
 
-    @patch("context_builder.ast_engine.importlib.import_module")
-    def test_failed_parser_setup_does_not_register_language(self, mock_import_module):
+    def test_failed_parser_setup_does_not_register_language(self):
         """A language is registered only after parser configuration succeeds."""
-        from context_builder.ast_engine import AstEngine, CONFIG
+        import context_builder.ast_engine as ast_engine
 
         mock_module = MagicMock()
         mock_module.language.return_value = object()
-        mock_import_module.return_value = mock_module
         mock_tree_sitter = MagicMock()
         mock_tree_sitter.Language.return_value = MagicMock()
         mock_tree_sitter.Parser.return_value.set_language.side_effect = RuntimeError("bad parser")
 
-        engine = AstEngine()
-        orig_bindings = CONFIG["bindings"].copy()
+        engine = ast_engine.AstEngine()
+        orig_bindings = ast_engine.CONFIG["bindings"].copy()
         try:
-            CONFIG["bindings"] = {".dummy": ("pkg.sub", "language")}
-            with patch("context_builder.ast_engine.HAS_TREESITTER", True), \
-                 patch("context_builder.ast_engine.tree_sitter", mock_tree_sitter, create=True):
+            ast_engine.CONFIG["bindings"] = {".dummy": ("pkg.sub", "language")}
+            with patch.object(
+                ast_engine.importlib,
+                "import_module",
+                return_value=mock_module,
+            ), patch.object(
+                ast_engine,
+                "HAS_TREESITTER",
+                True,
+            ), patch.object(
+                ast_engine,
+                "tree_sitter",
+                mock_tree_sitter,
+                create=True,
+            ):
                 engine.initialize()
         finally:
-            CONFIG["bindings"] = orig_bindings
+            ast_engine.CONFIG["bindings"] = orig_bindings
 
         self.assertNotIn(".dummy", engine.languages)
         self.assertNotIn(".dummy", engine.parsers)
