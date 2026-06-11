@@ -86,6 +86,10 @@ def trace_macro_expansion(func_name, repo_files, file_cache=None):
         repo_files, func_name,
         fallback_hint=f"macro callers of '{func_name}'"
     )
+    if not fast_files:
+        # Macro expansion can introduce the symbol even when it is absent from
+        # the original source, so an empty lexical prefilter is not conclusive.
+        fast_files = repo_files
 
     # We dynamically construct boundaries so \b is only applied if the adjacent character
     # is a word character (alphanumeric or underscore). This avoids boundary mismatch for C++
@@ -126,6 +130,10 @@ def build_ffi_registry(repo_files, file_cache=None):
             fixed_strings=False,
             fallback_hint="FFI export pre-computation",
         )
+        if not fast_files:
+            # Custom extraction patterns may be broader than ffi_rg_pattern.
+            # Preserve correctness when the optimization finds no candidates.
+            fast_files = repo_files
     else:
         fast_files = repo_files
 

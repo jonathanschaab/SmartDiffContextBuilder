@@ -519,7 +519,11 @@ class TestAstEngine(unittest.TestCase):
         mock_cache = MagicMock()
         mock_cache.get_bytes.return_value = b"void operator+();"
         
-        trace_lexical_dependencies_ast("operator+", ["file.cpp"], file_cache=mock_cache)
+        with patch(
+            "context_builder.ast_engine.ripgrep_filter",
+            return_value=["file.cpp"],
+        ):
+            trace_lexical_dependencies_ast("operator+", ["file.cpp"], file_cache=mock_cache)
         
         # Verify that AST_ENGINE.languages[".cpp"].query was called with double-escaped operator\\+
         mock_lang.query.assert_called_once()

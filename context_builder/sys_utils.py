@@ -148,11 +148,11 @@ class ScanProgressBar:  # pylint: disable=too-few-public-methods
         """
         self.total = total
         self.label = label
-        self.active = total >= min_files
+        self.active = total > 0 and total >= min_files
         self._is_tty = (
             self.active
-            and hasattr(sys.stdout, "isatty")
-            and sys.stdout.isatty()
+            and hasattr(sys.stderr, "isatty")
+            and sys.stderr.isatty()
         )
         self._last_pct = -1
         # Emit roughly 20 periodic lines for non-tty output
@@ -174,20 +174,27 @@ class ScanProgressBar:  # pylint: disable=too-few-public-methods
                 print(
                     f"\r  [{progress_bar}] {pct:3d}%  {self.label}  [{idx + 1}/{self.total}]",
                     end="",
+                    file=sys.stderr,
                     flush=True,
                 )
                 self._last_pct = pct
         else:
             if idx % self._interval == 0:
-                print(f"  [Scanning {idx + 1}/{self.total}]  {self.label}")
+                print(f"  [Scanning {idx + 1}/{self.total}]  {self.label}", file=sys.stderr)
 
-    def finish(self):
+    def finish(self, completed=True):
         """Finalize the progress indicator after all files have been processed."""
         if not self.active:
             return
         if self._is_tty:
-            progress_bar = "#" * _PROGRESS_BAR_WIDTH
-            print(f"\r  [{progress_bar}] 100%  {self.label}  [{self.total}/{self.total}]")
+            if completed:
+                progress_bar = "#" * _PROGRESS_BAR_WIDTH
+                print(
+                    f"\r  [{progress_bar}] 100%  {self.label}  [{self.total}/{self.total}]",
+                    file=sys.stderr,
+                )
+            else:
+                print(file=sys.stderr)
 
 
 def iter_scan_progress(files, label=None, min_files=100, force=False):
@@ -212,17 +219,40 @@ def iter_scan_progress(files, label=None, min_files=100, force=False):
         min_files=min_files,
     )
     progress.active = progress.active and should_show
+    completed = False
     try:
         for idx, file_path in enumerate(scan_files):
             yield file_path
             progress.update(idx)
+        completed = True
     finally:
-        progress.finish()
+        progress.finish(completed=completed)
 
 
 def _fallback_candidates(files, fallback_hint):
     """Return all files with metadata indicating ripgrep fallback was used."""
     return FileScanCandidates(files, fallback_hint)
+
+
+def _get_external_search_paths(files):
+    """Return absolute candidate files that are outside the current directory."""
+    cwd = os.path.abspath(os.getcwd())
+    external_paths = []
+    for file_path in files:
+        if not os.path.isabs(file_path):
+            continue
+        abs_path = os.path.abspath(file_path)
+        try:
+            if os.path.commonpath([cwd, abs_path]) != cwd:
+                external_paths.append(file_path)
+        except ValueError:
+            external_paths.append(file_path)
+    return external_paths
+
+
+def _normalize_search_result(file_path):
+    """Normalize a candidate or ripgrep result for reliable path comparison."""
+    return os.path.normcase(os.path.abspath(file_path)).replace("\\", "/")
 
 
 def ripgrep_filter(files, token, fixed_strings=True, fallback_hint=None):
@@ -267,6 +297,12 @@ def ripgrep_filter(files, token, fixed_strings=True, fallback_hint=None):
             # -F treats the token as a literal fixed string rather than a regular expression
             cmd.append("-F")
         cmd.append(token)
+        external_paths = _get_external_search_paths(files)
+        has_local_candidates = len(external_paths) < len(files)
+        cmd.append("--")
+        if has_local_candidates:
+            cmd.append(".")
+        cmd.extend(external_paths)
         res = subprocess.run(
             cmd,
             stdout=subprocess.PIPE,
@@ -277,9 +313,15 @@ def ripgrep_filter(files, token, fixed_strings=True, fallback_hint=None):
         )
         # rg exits with 0 if matches are found, 1 if no matches are found, and 2 if an error occurs.
         if res.returncode == 0:
-            # Normalize path separators to forward slashes to prevent mismatches on Windows
-            rg_files = {f.replace("\\", "/") for f in res.stdout.splitlines()}
-            return [f for f in files if f.replace("\\", "/") in rg_files]
+            rg_files = {
+                _normalize_search_result(file_path)
+                for file_path in res.stdout.splitlines()
+            }
+            return [
+                file_path
+                for file_path in files
+                if _normalize_search_result(file_path) in rg_files
+            ]
         if res.returncode == 1:
             return []
         warn_once(

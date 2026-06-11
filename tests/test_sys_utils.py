@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 import unittest
@@ -100,8 +101,24 @@ class TestSysUtils(unittest.TestCase):
 
         files = ["src/a.py", "src/b.py", "src/c.py"]
         filtered = ripgrep_filter(files, "query")
-        
+
         self.assertEqual(filtered, ["src/a.py", "src/b.py"])
+
+    @patch("context_builder.sys_utils.HAS_RG", True)
+    @patch("subprocess.run")
+    def test_ripgrep_filter_searches_external_absolute_files(self, mock_run):
+        """Absolute candidates outside the working tree are passed directly to ripgrep."""
+        external_file = os.path.abspath(os.path.join(os.path.dirname(os.getcwd()), "file.py"))
+        mock_res = MagicMock()
+        mock_res.returncode = 0
+        mock_res.stdout = external_file + "\n"
+        mock_run.return_value = mock_res
+
+        filtered = ripgrep_filter([external_file], "query")
+
+        self.assertEqual(filtered, [external_file])
+        cmd = mock_run.call_args[0][0]
+        self.assertEqual(cmd[-2:], ["--", external_file])
 
     def test_exit_on_fail_prints_error_before_exit(self):
         """When exit_on_fail=True, a helpful error message (with the command and
@@ -393,11 +410,11 @@ class TestSysUtils(unittest.TestCase):
         files = [f"file_{idx}.py" for idx in range(120)]
         result = ripgrep_filter(files, "my_func", fallback_hint="callers of 'my_func'")
 
-        with patch("sys.stdout", new_callable=StringIO) as mock_out:
+        with patch("sys.stderr", new_callable=StringIO) as mock_err:
             scanned = list(iter_scan_progress(result, min_files=100))
 
         self.assertEqual(scanned, files)
-        output = mock_out.getvalue()
+        output = mock_err.getvalue()
         self.assertIn("[Scanning 1/120]", output)
         self.assertIn("callers of 'my_func'", output)
 
@@ -405,8 +422,40 @@ class TestSysUtils(unittest.TestCase):
         """Regular filtered lists do not emit progress unless explicitly forced."""
         files = [f"file_{idx}.py" for idx in range(120)]
 
-        with patch("sys.stdout", new_callable=StringIO) as mock_out:
+        with patch("sys.stderr", new_callable=StringIO) as mock_err:
             scanned = list(iter_scan_progress(files, label="fast path", min_files=100))
 
         self.assertEqual(scanned, files)
-        self.assertEqual(mock_out.getvalue(), "")
+        self.assertEqual(mock_err.getvalue(), "")
+
+    def test_iter_scan_progress_early_close_does_not_show_complete(self):
+        """Closing a progress iterator early does not report 100 percent completion."""
+        files = [f"file_{idx}.py" for idx in range(120)]
+
+        class TtyBuffer(StringIO):
+            """String buffer that behaves like an interactive terminal."""
+
+            def isatty(self):
+                return True
+
+        with patch("sys.stderr", new_callable=TtyBuffer) as mock_err:
+            progress_iter = iter_scan_progress(
+                files,
+                label="early exit",
+                min_files=100,
+                force=True,
+            )
+            self.assertEqual(next(progress_iter), "file_0.py")
+            progress_iter.close()
+
+        output = mock_err.getvalue()
+        self.assertNotIn("100%", output)
+        self.assertTrue(output.endswith("\n"))
+
+    def test_iter_scan_progress_zero_total_can_be_forced(self):
+        """Empty scans stay inactive even when min_files would otherwise enable progress."""
+        with patch("sys.stderr", new_callable=StringIO) as mock_err:
+            scanned = list(iter_scan_progress([], label="empty", min_files=0, force=True))
+
+        self.assertEqual(scanned, [])
+        self.assertEqual(mock_err.getvalue(), "")
