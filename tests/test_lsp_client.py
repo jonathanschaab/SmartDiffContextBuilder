@@ -311,7 +311,11 @@ class TestLspClient(unittest.TestCase):
 
         mock_client.start_io = AsyncMock()
 
+        observed_loop = None
+
         async def mock_initialize_timeout(*args, **kwargs):
+            nonlocal observed_loop
+            observed_loop = asyncio.get_event_loop()
             raise asyncio.TimeoutError()
 
         mock_client.initialize_async = mock_initialize_timeout
@@ -327,6 +331,7 @@ class TestLspClient(unittest.TestCase):
         def mock_run_coroutine(coro, _loop):
             future = concurrent.futures.Future()
             new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
             try:
                 result = new_loop.run_until_complete(coro)
             except BaseException as exc:
@@ -334,6 +339,7 @@ class TestLspClient(unittest.TestCase):
             else:
                 future.set_result(result)
             finally:
+                asyncio.set_event_loop(None)
                 new_loop.close()
             return future
 
@@ -344,6 +350,8 @@ class TestLspClient(unittest.TestCase):
         self.assertIsNone(client.client)
         mock_shutdown.assert_not_called()
         mock_client.stop.assert_called_once()
+        self.assertIsNotNone(observed_loop)
+        self.assertTrue(observed_loop.is_closed())
 
     @patch("context_builder.lsp_client.USE_LSP", True)
     @patch("context_builder.lsp_client.LSP_INSTANCES")
