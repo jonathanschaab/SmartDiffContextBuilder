@@ -7,7 +7,7 @@ and callee analysis.
 import os
 import re
 import importlib
-from .sys_utils import warn_once, ripgrep_filter
+from .sys_utils import iter_scan_progress, warn_once, ripgrep_filter
 from .cache import get_global_cache
 
 try:
@@ -80,10 +80,15 @@ class AstEngine:
             module_name, func_name = val
             try:
                 mod = importlib.import_module(module_name)
-                lang_obj = tree_sitter.Language(getattr(mod, func_name)())
+                binding = getattr(mod, func_name)
+                binding_obj = binding() if callable(binding) else binding
+                try:
+                    lang_obj = tree_sitter.Language(binding_obj)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    lang_obj = binding_obj
+                self.languages[ext] = lang_obj
                 parser = tree_sitter.Parser()
                 parser.set_language(lang_obj)
-                self.languages[ext] = lang_obj
                 self.parsers[ext] = parser
             except Exception:  # pylint: disable=broad-exception-caught
                 self.missing_bindings[ext] = module_name
@@ -276,10 +281,11 @@ def trace_lexical_dependencies_ast(func_name, repo_files, file_cache=None):
         fallback_hint=f"callers of '{func_name}' (AST pass)"
     )
 
-    total = len(fast_files)
-    for idx, file_path in enumerate(fast_files):
-        if total > 200 and idx % 100 == 0:
-            print(f"  [Scanning {idx + 1}/{total} files for '{func_name}'...]")
+    for file_path in iter_scan_progress(
+        fast_files,
+        label=f"Scanning callers of '{func_name}' (AST pass)",
+        min_files=100,
+    ):
         _trace_file_ast_dependencies(file_path, func_name, file_cache, callers)
 
     return callers
@@ -334,10 +340,11 @@ def trace_lexical_dependencies_regex(func_name, repo_files, file_cache=None):
     def_cpp_pattern = re.compile(
         r'^\s*(?:[A-Za-z0-9_<>:]+(?:\s+\*?\s*)*)?' + lead_b + escaped_name + r'\s*\('
     )
-    total = len(fast_files)
-    for idx, file_path in enumerate(fast_files):
-        if total > 200 and idx % 100 == 0:
-            print(f"  [Scanning {idx + 1}/{total} files for '{func_name}'...]")
+    for file_path in iter_scan_progress(
+        fast_files,
+        label=f"Scanning callers of '{func_name}' (regex pass)",
+        min_files=100,
+    ):
         ext = os.path.splitext(file_path)[1]
         if ext not in LANG_MAP or file_path.endswith('.md'):
             continue
@@ -652,7 +659,11 @@ def find_callee_definition(callee_name, all_repo_files, file_cache=None):
         "{trail_b}", trail_b
     )
 
-    for file_path in candidate_files:
+    for file_path in iter_scan_progress(
+        candidate_files,
+        label=f"Scanning definition of '{callee_name}'",
+        min_files=100,
+    ):
         ext = os.path.splitext(file_path)[1]
         if ext not in LANG_MAP:
             continue

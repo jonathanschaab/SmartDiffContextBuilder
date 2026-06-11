@@ -3,7 +3,13 @@ import sys
 import unittest
 from io import StringIO
 from unittest.mock import MagicMock, patch
-from context_builder.sys_utils import run_command, get_git_diff_files, get_git_tracked_files, ripgrep_filter
+from context_builder.sys_utils import (
+    iter_scan_progress,
+    run_command,
+    get_git_diff_files,
+    get_git_tracked_files,
+    ripgrep_filter,
+)
 
 class TestSysUtils(unittest.TestCase):
     def test_run_command_success(self):
@@ -336,6 +342,8 @@ class TestSysUtils(unittest.TestCase):
         hint_msg = [c[0][1] for c in mock_warn.call_args_list
                     if c[0][0] == "ripgrep_fallback"][0]
         self.assertIn("callers of 'my_func'", hint_msg)
+        self.assertTrue(result.used_ripgrep_fallback)
+        self.assertEqual(result.fallback_label, "callers of 'my_func'")
 
     @patch("context_builder.sys_utils.HAS_RG", True)
     @patch("subprocess.run")
@@ -377,3 +385,28 @@ class TestSysUtils(unittest.TestCase):
         fallback_keys = [c[0][0] for c in mock_warn.call_args_list
                          if c[0][0] == "ripgrep_fallback"]
         self.assertEqual(fallback_keys, [])
+
+    @patch("context_builder.sys_utils.HAS_RG", False)
+    @patch("context_builder.sys_utils.warn_once")
+    def test_iter_scan_progress_reports_fallback_scan(self, _mock_warn):
+        """Fallback scans emit progress for long exhaustive file walks."""
+        files = [f"file_{idx}.py" for idx in range(120)]
+        result = ripgrep_filter(files, "my_func", fallback_hint="callers of 'my_func'")
+
+        with patch("sys.stdout", new_callable=StringIO) as mock_out:
+            scanned = list(iter_scan_progress(result, min_files=100))
+
+        self.assertEqual(scanned, files)
+        output = mock_out.getvalue()
+        self.assertIn("[Scanning 1/120]", output)
+        self.assertIn("callers of 'my_func'", output)
+
+    def test_iter_scan_progress_stays_quiet_for_fast_path_results(self):
+        """Regular filtered lists do not emit progress unless explicitly forced."""
+        files = [f"file_{idx}.py" for idx in range(120)]
+
+        with patch("sys.stdout", new_callable=StringIO) as mock_out:
+            scanned = list(iter_scan_progress(files, label="fast path", min_files=100))
+
+        self.assertEqual(scanned, files)
+        self.assertEqual(mock_out.getvalue(), "")

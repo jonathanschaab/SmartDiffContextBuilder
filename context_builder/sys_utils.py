@@ -108,8 +108,122 @@ class RipgrepChecker:  # pylint: disable=too-few-public-methods
                 )
         return self._has_rg
 
-
 HAS_RG = RipgrepChecker()
+
+
+_PROGRESS_BAR_WIDTH = 25
+
+
+class FileScanCandidates(list):
+    """List of files returned by ripgrep_filter with scan metadata attached."""
+
+    def __init__(self, files, fallback_label=None):
+        """Initialize candidate list.
+
+        Args:
+            files (iterable): File paths to scan.
+            fallback_label (str, optional): Description for fallback scans.
+        """
+        super().__init__(files)
+        self.fallback_label = fallback_label
+        self.used_ripgrep_fallback = fallback_label is not None
+
+
+class ScanProgressBar:  # pylint: disable=too-few-public-methods
+    """Renders a lightweight progress indicator for long-running file scans.
+
+    On interactive terminals (tty): rewrites the same line using carriage
+    return so progress is shown without cluttering the log.
+    On non-interactive output (CI, redirected): emits periodic status lines
+    instead, avoiding escape sequences in log files.
+    """
+
+    def __init__(self, total, label, min_files=100):
+        """Initialize the progress bar.
+
+        Args:
+            total (int): Total number of files to scan.
+            label (str): Description shown alongside the progress indicator.
+            min_files (int): Minimum file count required to activate the bar.
+        """
+        self.total = total
+        self.label = label
+        self.active = total >= min_files
+        self._is_tty = (
+            self.active
+            and hasattr(sys.stdout, "isatty")
+            and sys.stdout.isatty()
+        )
+        self._last_pct = -1
+        # Emit roughly 20 periodic lines for non-tty output
+        self._interval = max(1, total // 20) if self.active else 1
+
+    def update(self, idx):
+        """Update the progress indicator after processing the file at position idx.
+
+        Args:
+            idx (int): Zero-based index of the file just processed.
+        """
+        if not self.active:
+            return
+        if self._is_tty:
+            pct = ((idx + 1) * 100) // self.total
+            if pct != self._last_pct:
+                filled = (pct * _PROGRESS_BAR_WIDTH) // 100
+                progress_bar = "#" * filled + "-" * (_PROGRESS_BAR_WIDTH - filled)
+                print(
+                    f"\r  [{progress_bar}] {pct:3d}%  {self.label}  [{idx + 1}/{self.total}]",
+                    end="",
+                    flush=True,
+                )
+                self._last_pct = pct
+        else:
+            if idx % self._interval == 0:
+                print(f"  [Scanning {idx + 1}/{self.total}]  {self.label}")
+
+    def finish(self):
+        """Finalize the progress indicator after all files have been processed."""
+        if not self.active:
+            return
+        if self._is_tty:
+            progress_bar = "#" * _PROGRESS_BAR_WIDTH
+            print(f"\r  [{progress_bar}] 100%  {self.label}  [{self.total}/{self.total}]")
+
+
+def iter_scan_progress(files, label=None, min_files=100, force=False):
+    """Yield files while displaying progress for long-running scans.
+
+    Args:
+        files (iterable): File paths to scan.
+        label (str, optional): Description shown alongside progress.
+        min_files (int): Minimum file count required to activate progress.
+        force (bool): Show progress regardless of whether ripgrep fell back.
+
+    Yields:
+        str: File paths from files.
+    """
+    scan_files = files if isinstance(files, list) else list(files)
+    fallback_label = getattr(scan_files, "fallback_label", None)
+    progress_label = label or fallback_label
+    should_show = force or bool(fallback_label)
+    progress = ScanProgressBar(
+        len(scan_files),
+        progress_label or "Scanning files",
+        min_files=min_files,
+    )
+    progress.active = progress.active and should_show
+    try:
+        for idx, file_path in enumerate(scan_files):
+            yield file_path
+            progress.update(idx)
+    finally:
+        progress.finish()
+
+
+def _fallback_candidates(files, fallback_hint):
+    """Return all files with metadata indicating ripgrep fallback was used."""
+    return FileScanCandidates(files, fallback_hint)
+
 
 def ripgrep_filter(files, token, fixed_strings=True, fallback_hint=None):
     """Filter list of files to only those containing the given token using ripgrep.
@@ -133,9 +247,10 @@ def ripgrep_filter(files, token, fixed_strings=True, fallback_hint=None):
             warn_once(
                 "ripgrep_fallback",
                 f"Fast-path search unavailable. Falling back to exhaustive repository scan "
-                f"for {fallback_hint}. This may take a while in large repositories.",
+                f"for {fallback_hint}. This may take a while in large repositories; "
+                "progress will be shown for long scans.",
             )
-        return files
+        return _fallback_candidates(files, fallback_hint)
     from .config import CONFIG  # pylint: disable=import-outside-toplevel
 
     timeout = CONFIG.get("ripgrep_timeout", 10)
@@ -180,20 +295,21 @@ def ripgrep_filter(files, token, fixed_strings=True, fallback_hint=None):
             "You can increase this limit by using the --ripgrep-timeout option "
             "or by setting 'ripgrep_timeout' in your config file."
         )
-    except Exception as e:  # pylint: disable=broad-exception-caught
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         warn_once(
             "ripgrep_fail",
-            f"ripgrep failed unexpectedly: {e}. Falling back to manual scanning."
+            f"ripgrep failed unexpectedly: {exc}. Falling back to manual scanning."
         )
-    # Fallback: rg failed or timed out — warn and return the unfiltered list so the
+    # Fallback: rg failed or timed out; warn and return the unfiltered list so the
     # caller can proceed with an exhaustive scan rather than silently dropping results.
     if fallback_hint:
         warn_once(
             "ripgrep_fallback",
             f"Falling back to exhaustive repository scan for {fallback_hint}. "
-            "This may take a while in large repositories.",
+            "This may take a while in large repositories; progress will be shown "
+            "for long scans.",
         )
-    return files
+    return _fallback_candidates(files, fallback_hint)
 
 
 def is_in_repo(file_path):

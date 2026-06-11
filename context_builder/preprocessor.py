@@ -6,7 +6,13 @@ import re
 
 from .cache import get_global_cache
 from .config import CONFIG
-from .sys_utils import HAS_RG, get_comment_prefix, ripgrep_filter, run_command, warn_once
+from .sys_utils import (
+    get_comment_prefix,
+    iter_scan_progress,
+    ripgrep_filter,
+    run_command,
+    warn_once,
+)
 
 
 def _add_macro_caller(orig_file, orig_line, callers, file_cache):
@@ -43,14 +49,14 @@ def _map_expanded_line_to_source(expanded_lines, idx, callers, file_cache):
         break
 
 
-def _process_single_macro_file(f, func_pattern, callers, file_cache):
+def _process_single_macro_file(file_path, func_pattern, callers, file_cache):
     """Process a single file for macro expansion mapping."""
-    ext = os.path.splitext(f)[1].lower()
+    ext = os.path.splitext(file_path)[1].lower()
     if ext not in [".c", ".cpp", ".hpp", ".h"]:
         return
 
     # Pass 1: Expand
-    expanded_code = run_command(["clang", "-E", f], timeout=5)
+    expanded_code = run_command(["clang", "-E", file_path], timeout=5)
     if not expanded_code:
         return
 
@@ -88,13 +94,12 @@ def trace_macro_expansion(func_name, repo_files, file_cache=None):
     trail_b = r"\b" if func_name and (func_name[-1].isalnum() or func_name[-1] == "_") else ""
     func_pattern = re.compile(lead_b + re.escape(func_name) + trail_b)
 
-    total = len(fast_files)
-    for idx, f in enumerate(fast_files):
-        # Each iteration invokes clang -E, which is expensive. Report frequently so the
-        # user knows the tool is active rather than appearing to hang between intervals.
-        if total > 50 and idx % 10 == 0:
-            print(f"  [Scanning {idx + 1}/{total} files for '{func_name}'...]")
-        _process_single_macro_file(f, func_pattern, callers, file_cache)
+    for file_path in iter_scan_progress(
+        fast_files,
+        label=f"Scanning macro callers of '{func_name}'",
+        min_files=50,
+    ):
+        _process_single_macro_file(file_path, func_pattern, callers, file_cache)
     return callers
 
 
@@ -114,8 +119,13 @@ def build_ffi_registry(repo_files, file_cache=None):
     print(" [FFI] Running pre-computation pass for cross-language boundaries...")
 
     ffi_rg_pattern = CONFIG.get("ffi_rg_pattern")
-    if HAS_RG and ffi_rg_pattern:
-        fast_files = ripgrep_filter(repo_files, ffi_rg_pattern, fixed_strings=False)
+    if ffi_rg_pattern:
+        fast_files = ripgrep_filter(
+            repo_files,
+            ffi_rg_pattern,
+            fixed_strings=False,
+            fallback_hint="FFI export pre-computation",
+        )
     else:
         fast_files = repo_files
 
@@ -127,16 +137,23 @@ def build_ffi_registry(repo_files, file_cache=None):
             continue
         try:
             compiled_patterns.append(re.compile(pat, re.DOTALL))
-        except (re.error, TypeError) as e:
-            warn_once("ffi_regex_compile_fail", f"Failed to compile FFI regex pattern '{pat}': {e}")
+        except (re.error, TypeError) as exc:
+            warn_once(
+                "ffi_regex_compile_fail",
+                f"Failed to compile FFI regex pattern '{pat}': {exc}",
+            )
 
-    for f in fast_files:
-        content = file_cache.get_content(f)
+    for file_path in iter_scan_progress(
+        fast_files,
+        label="Scanning FFI export pre-computation",
+        min_files=100,
+    ):
+        content = file_cache.get_content(file_path)
         for pattern in compiled_patterns:
-            for m in re.finditer(pattern, content):
+            for match in re.finditer(pattern, content):
                 # Ensure the pattern actually captured at least one group and is not None
-                if m.groups() and m.group(1) is not None:
-                    ffi_symbols.add(m.group(1))
+                if match.groups() and match.group(1) is not None:
+                    ffi_symbols.add(match.group(1))
 
     if ffi_symbols:
         print(f" [FFI] Registered {len(ffi_symbols)} exported symbols.")
@@ -170,18 +187,22 @@ def trace_ffi_callers(func_name, repo_files, source_ext, file_cache=None):
     trail_b = r"\b" if func_name and (func_name[-1].isalnum() or func_name[-1] == "_") else ""
     func_pattern = re.compile(lead_b + re.escape(func_name) + trail_b)
 
-    for f in fast_files:
-        ext = os.path.splitext(f)[1].lower()
+    for file_path in iter_scan_progress(
+        fast_files,
+        label=f"Scanning FFI callers of '{func_name}'",
+        min_files=100,
+    ):
+        ext = os.path.splitext(file_path)[1].lower()
         if ext == source_ext.lower():
             continue
-        lines = file_cache.get_lines(f)
+        lines = file_cache.get_lines(file_path)
         for idx, line in enumerate(lines):
             # Match using word boundaries to prevent substring false-positives
             if func_pattern.search(line):
-                if f not in callers:
-                    callers[f] = []
-                comment_prefix = get_comment_prefix(f)
-                callers[f].append({
+                if file_path not in callers:
+                    callers[file_path] = []
+                comment_prefix = get_comment_prefix(file_path)
+                callers[file_path].append({
                     "line": idx + 1,
                     "code": f"{comment_prefix} [FFI Bridge] {line.strip()}",
                 })
