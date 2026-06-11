@@ -51,7 +51,10 @@ def _get_preprocessed_code(file_path):
     try:
         stat = os.stat(file_path)
     except OSError:
-        return run_command(["clang", "-E", file_path], timeout=5)
+        # Repository candidates can become stale or inaccessible during a scan.
+        # If Python cannot stat the file, spawning clang for the same path only
+        # adds subprocess overhead and cannot produce a cacheable snapshot.
+        return ""
 
     cache_key = os.path.normcase(os.path.abspath(file_path))
     signature = (stat.st_mtime_ns, stat.st_size)

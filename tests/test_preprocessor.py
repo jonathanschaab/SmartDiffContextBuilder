@@ -456,6 +456,19 @@ class TestPreprocessor(unittest.TestCase):
         self.assertEqual(second, "second expansion")
         self.assertEqual(mock_run.call_count, 2)
 
+    def test_preprocessed_code_skips_clang_when_stat_fails(self):
+        """Missing or inaccessible candidates do not spawn clang."""
+        with patch(
+            "context_builder.preprocessor.os.stat",
+            side_effect=OSError("file unavailable"),
+        ), patch(
+            "context_builder.preprocessor.run_command",
+        ) as mock_run:
+            expanded = _preprocessor_mod._get_preprocessed_code("missing.cpp")
+
+        self.assertEqual(expanded, "")
+        mock_run.assert_not_called()
+
     def test_analyze_compile_commands_worktree_mapping(self):
         """Verify that when repo_root is passed, absolute paths in compile_commands.json
         pointing to the original repo are mapped to the active worktree (CWD) and read correctly."""
