@@ -1,10 +1,15 @@
 # pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
 # pylint: disable=attribute-defined-outside-init,consider-using-with,line-too-long
+# pylint: disable=protected-access
 
 import os
 import unittest
 import tempfile
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
+
 from context_builder.cache import LRUFileCache
+from context_builder import test_miner
 from context_builder.test_miner import get_coverage_data, mine_relevant_unit_tests
 
 class TestTestMiner(unittest.TestCase):
@@ -106,6 +111,175 @@ class TestTestMiner(unittest.TestCase):
         cov = get_coverage_data()
         self.assertIn("src/a.py", cov)
         self.assertEqual(cov["src/a.py"], [5])
+
+    @patch("context_builder.test_miner.warn_once")
+    def test_get_coverage_data_warns_for_malformed_xml(self, mock_warn):
+        with open("coverage.xml", "w", encoding="utf-8") as coverage_file:
+            coverage_file.write("<coverage>")
+
+        self.assertEqual(get_coverage_data(), {})
+        mock_warn.assert_called_once()
+        self.assertEqual(mock_warn.call_args.args[0], "coverage_xml_parse_fail")
+
+    def test_process_ast_capture_deduplicates_function_body(self):
+        source = b"fn test_target() {\n    target();\n}\n"
+        function_node = SimpleNamespace(
+            type="function_item",
+            parent=None,
+            start_byte=0,
+            end_byte=len(source),
+            start_point=(0, 0),
+            end_point=(2, 1),
+        )
+        capture = SimpleNamespace(type="identifier", parent=function_node)
+        discovered = []
+        seen = set()
+        pattern = test_miner.re.compile(r"\btarget\b")
+        lines = source.decode("utf-8").splitlines(keepends=True)
+
+        test_miner._process_ast_capture(
+            capture, source, pattern, lines, seen, discovered, "tests.rs"
+        )
+        test_miner._process_ast_capture(
+            capture, source, pattern, lines, seen, discovered, "tests.rs"
+        )
+
+        self.assertEqual(discovered, [{
+            "file": "tests.rs",
+            "line": 1,
+            "code": source.decode("utf-8"),
+        }])
+
+    def test_process_ast_capture_ignores_unscoped_and_unrelated_nodes(self):
+        source = b"fn helper() {}\n"
+        lines = source.decode("utf-8").splitlines(keepends=True)
+        discovered = []
+        pattern = test_miner.re.compile(r"\btarget\b")
+        unscoped = SimpleNamespace(type="identifier", parent=None)
+        function_node = SimpleNamespace(
+            type="function_definition",
+            parent=None,
+            start_byte=0,
+            end_byte=len(source),
+            start_point=(0, 0),
+            end_point=(0, 14),
+        )
+
+        test_miner._process_ast_capture(
+            unscoped, source, pattern, lines, set(), discovered, "test.py"
+        )
+        test_miner._process_ast_capture(
+            function_node, source, pattern, lines, set(), discovered, "test.py"
+        )
+
+        self.assertEqual(discovered, [])
+
+    @patch("context_builder.test_miner.get_language_profile")
+    def test_mine_ast_tests_processes_query_captures(self, mock_profile):
+        source = b"fn test_target() {\n    target();\n}\n"
+        function_node = SimpleNamespace(
+            type="function_item",
+            parent=None,
+            start_byte=0,
+            end_byte=len(source),
+            start_point=(0, 0),
+            end_point=(2, 1),
+        )
+        capture = SimpleNamespace(type="identifier", parent=function_node)
+        query = Mock()
+        query.captures.return_value = [(capture, "name")]
+        language = Mock()
+        language.query.return_value = query
+        parser = Mock()
+        parser.parse.return_value = SimpleNamespace(root_node=object())
+        mock_profile.return_value.test_query = "(function_item) @test"
+
+        with patch.dict(test_miner.AST_ENGINE.parsers, {".rs": parser}), \
+                patch.dict(test_miner.AST_ENGINE.languages, {".rs": language}):
+            discovered = []
+            success = test_miner._mine_ast_tests(
+                "tests.rs",
+                ".rs",
+                test_miner.re.compile(r"\btarget\b"),
+                source,
+                source.decode("utf-8").splitlines(keepends=True),
+                set(),
+                discovered,
+            )
+
+        self.assertTrue(success)
+        self.assertEqual(discovered[0]["line"], 1)
+        language.query.assert_called_once_with("(function_item) @test")
+
+    @patch("context_builder.test_miner.warn_once")
+    @patch("context_builder.test_miner.get_language_profile")
+    def test_mine_ast_tests_reports_query_failure(self, mock_profile, mock_warn):
+        parser = Mock()
+        parser.parse.return_value = SimpleNamespace(root_node=object())
+        language = Mock()
+        language.query.side_effect = RuntimeError("bad query")
+        mock_profile.return_value.test_query = "(broken"
+
+        with patch.dict(test_miner.AST_ENGINE.parsers, {".py": parser}), \
+                patch.dict(test_miner.AST_ENGINE.languages, {".py": language}):
+            success = test_miner._mine_ast_tests(
+                "test_bad.py", ".py", Mock(), b"", [], set(), []
+            )
+
+        self.assertFalse(success)
+        mock_warn.assert_called_once()
+        self.assertIn("test_bad.py", mock_warn.call_args.args[1])
+
+    @patch("context_builder.test_miner._mine_regex_tests")
+    @patch("context_builder.test_miner._mine_ast_tests", return_value=False)
+    @patch.object(test_miner.AST_ENGINE, "is_supported", return_value=True)
+    def test_mine_single_file_falls_back_when_ast_query_fails(
+        self, _mock_supported, mock_ast_mine, mock_regex_mine
+    ):
+        file_cache = Mock()
+        file_cache.get_lines.return_value = ["def test_target():\n", "    target()\n"]
+        file_cache.get_bytes.return_value = b"def test_target():\n    target()\n"
+
+        test_miner._mine_single_file(
+            "test_target.py",
+            test_miner.re.compile(r"\btarget\b"),
+            None,
+            set(),
+            [],
+            file_cache,
+        )
+
+        mock_ast_mine.assert_called_once()
+        mock_regex_mine.assert_called_once()
+
+    @patch("context_builder.test_miner._mine_regex_tests")
+    def test_mine_single_file_skips_non_test_files(self, mock_regex_mine):
+        test_miner._mine_single_file(
+            "production.py", Mock(), None, set(), [], Mock()
+        )
+
+        mock_regex_mine.assert_not_called()
+
+    @patch("context_builder.test_miner._mine_single_file")
+    @patch("context_builder.test_miner.iter_scan_progress", side_effect=lambda files, **_: files)
+    @patch("context_builder.test_miner.ripgrep_filter", return_value=[])
+    def test_current_rust_source_is_scanned_without_ripgrep_match(
+        self, _mock_filter, _mock_progress, mock_mine
+    ):
+        cache = Mock()
+
+        result = mine_relevant_unit_tests(
+            "target", ["lib.rs"], current_source_file="lib.rs", file_cache=cache
+        )
+
+        self.assertEqual(result, [])
+        mock_mine.assert_called_once()
+        self.assertEqual(mock_mine.call_args.args[0], "lib.rs")
+
+    @patch("context_builder.test_miner.ripgrep_filter")
+    def test_short_function_name_avoids_repository_scan(self, mock_filter):
+        self.assertEqual(mine_relevant_unit_tests("id", ["test_a.py"]), [])
+        mock_filter.assert_not_called()
 
     def test_mine_relevant_unit_tests_descriptive_suffixes(self):
         # Test that functions with descriptive suffixes like test_greet_behavior,

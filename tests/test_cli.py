@@ -8,6 +8,8 @@ import os
 import unittest
 from unittest.mock import patch, MagicMock, ANY
 import argparse
+from collections import deque
+
 from context_builder.cli import main
 
 class CliNamespace(argparse.Namespace):
@@ -544,6 +546,174 @@ class TestCLI(unittest.TestCase):
         # Test case 3: neither exist (fallback to main)
         mock_run.side_effect = lambda cmd, **kwargs: ""
         self.assertEqual(get_default_branch(), "main")
+
+    @patch("context_builder.cli.run_command")
+    def test_resolve_commit_ref_retries_without_verify(self, mock_run):
+        from context_builder.cli import resolve_commit_ref
+
+        mock_run.side_effect = ["", " resolved-sha\n"]
+
+        self.assertEqual(resolve_commit_ref("topic"), "resolved-sha")
+        self.assertEqual(
+            mock_run.call_args_list[0].args[0],
+            ["git", "rev-parse", "--verify", "topic"],
+        )
+        self.assertEqual(
+            mock_run.call_args_list[1].args[0],
+            ["git", "rev-parse", "topic"],
+        )
+
+    @patch("context_builder.cli.resolve_commit_ref")
+    def test_parse_and_resolve_range_relative_and_explicit_formats(
+        self, mock_resolve
+    ):
+        from context_builder.cli import parse_and_resolve_range
+
+        mock_resolve.side_effect = lambda ref: f"sha:{ref}"
+
+        self.assertEqual(
+            parse_and_resolve_range("-3"),
+            ("sha:HEAD~3", "sha:HEAD"),
+        )
+        self.assertEqual(
+            parse_and_resolve_range("release-2"),
+            ("sha:release~2", "sha:release"),
+        )
+        self.assertEqual(
+            parse_and_resolve_range("base..tip"),
+            ("sha:base", "sha:tip"),
+        )
+
+    @patch("context_builder.cli.get_default_branch", return_value="main")
+    @patch("context_builder.cli.run_command")
+    @patch("context_builder.cli.resolve_commit_ref", return_value="start-sha")
+    def test_parse_start_plus_count_falls_back_to_default_branch(
+        self, _mock_resolve, mock_run, _mock_default
+    ):
+        from context_builder.cli import parse_and_resolve_range
+
+        mock_run.side_effect = ["next-one\n", "next-one\nnext-two\n"]
+
+        self.assertEqual(
+            parse_and_resolve_range("base+2"),
+            ("start-sha", "start-sha"),
+        )
+        self.assertIn("start-sha..main", mock_run.call_args_list[1].args[0])
+
+    @patch("context_builder.cli.get_default_branch", return_value="main")
+    @patch("context_builder.cli.run_command", return_value="")
+    @patch("context_builder.cli.resolve_commit_ref", return_value="start-sha")
+    def test_parse_start_plus_count_rejects_insufficient_history(
+        self, _mock_resolve, _mock_run, _mock_default
+    ):
+        from context_builder.cli import parse_and_resolve_range
+
+        with self.assertRaisesRegex(ValueError, "Not enough commits"):
+            parse_and_resolve_range("base+2")
+
+    @patch("context_builder.cli.resolve_commit_ref")
+    def test_parse_and_resolve_range_rejects_invalid_and_unresolved_refs(
+        self, mock_resolve
+    ):
+        from context_builder.cli import parse_and_resolve_range
+
+        with self.assertRaisesRegex(ValueError, "Invalid commit range"):
+            parse_and_resolve_range("single-ref")
+
+        mock_resolve.side_effect = ["start-sha", ""]
+        with self.assertRaisesRegex(ValueError, "Could not resolve end commit"):
+            parse_and_resolve_range("base..missing")
+
+    @patch("context_builder.cli.run_command")
+    def test_extract_line_numbers_from_diff_parses_hunks(self, mock_run):
+        from context_builder.cli import _extract_line_numbers_from_diff
+
+        mock_run.return_value = (
+            "@@ -1,2 +4,3 @@\n"
+            "@@ -8 +12 @@\n"
+            "@@ malformed @@\n"
+        )
+
+        self.assertEqual(
+            _extract_line_numbers_from_diff("source.py", "base", "tip"),
+            [4, 5, 6, 12],
+        )
+        self.assertEqual(
+            mock_run.call_args.args[0],
+            ["git", "diff", "-U0", "base", "tip", "--", "source.py"],
+        )
+
+    @patch("context_builder.cli.extract_function_bounds", return_value=(0, 2))
+    def test_process_single_diff_line_skips_already_processed_span(
+        self, _mock_bounds
+    ):
+        from context_builder.cli import _process_single_diff_line
+
+        vm = MagicMock()
+        queue = deque()
+        callee_queue = deque()
+        processed = {"source.py::line_0_to_2"}
+
+        _process_single_diff_line(
+            "source.py",
+            1,
+            ["def target():\n", "    pass\n"],
+            {},
+            processed,
+            vm,
+            queue,
+            callee_queue,
+            ["source.py"],
+            MagicMock(),
+        )
+
+        vm.add_modified_object.assert_not_called()
+        self.assertEqual(queue, deque())
+        self.assertEqual(callee_queue, deque())
+
+    @patch("context_builder.cli._process_single_diff_line")
+    @patch("context_builder.cli.os.path.exists", return_value=False)
+    @patch("context_builder.cli._extract_line_numbers_from_diff")
+    def test_process_diff_files_skips_unmodified_and_missing_files(
+        self, mock_line_numbers, _mock_exists, mock_process
+    ):
+        from context_builder.cli import _process_diff_files
+
+        mock_line_numbers.side_effect = [[], [3]]
+        _process_diff_files(
+            ["unchanged.py", "missing.py"],
+            None,
+            None,
+            MagicMock(),
+            {},
+            set(),
+            MagicMock(),
+            deque(),
+            deque(),
+            [],
+        )
+
+        mock_process.assert_not_called()
+
+    @patch("context_builder.cli.get_git_diff_files", return_value=[])
+    @patch("context_builder.cli.clear_preprocessed_cache")
+    @patch("context_builder.cli.get_global_cache")
+    def test_run_scan_returns_early_for_clean_workspace(
+        self, _mock_cache, mock_clear, _mock_diff
+    ):
+        from context_builder.cli import run_scan
+
+        args = CliNamespace(
+            max_cache_size_mb=10,
+            no_language_server=True,
+            format="md",
+        )
+
+        with patch("builtins.print") as mock_print:
+            run_scan(args)
+
+        mock_clear.assert_called_once()
+        mock_print.assert_any_call("Workspace is clean.")
 
     @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
     @patch("context_builder.cli.parse_and_resolve_range")

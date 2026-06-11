@@ -4,6 +4,8 @@
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
+
 from context_builder.cache import LRUFileCache
 
 
@@ -67,6 +69,15 @@ class TestLRUFileCache(unittest.TestCase):
         self.assertEqual(cache.get_lines(bad_path), [])
         self.assertEqual(cache.get_content(bad_path), "")
         self.assertEqual(cache.get_bytes(bad_path), b"")
+
+    def test_unreadable_file_returns_empty_entry_without_caching(self):
+        cache = LRUFileCache(max_size_mb=5)
+
+        with patch("builtins.open", side_effect=OSError("access denied")):
+            self.assertEqual(cache.get_content(self.file_path), "")
+
+        self.assertNotIn(self.file_path, cache.cache)
+        self.assertEqual(cache.current_size_bytes, 0)
 
     def test_defensive_initialization_none(self):
         """Verify that passing None capacity and None max_size_mb defaults to 200 MB."""
