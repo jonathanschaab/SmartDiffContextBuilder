@@ -11,10 +11,14 @@ jobs:
   test:
     name: Run Pytest (Python 3.12)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
     - name: Checkout Code
       uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
     - name: Set up Python 3.12
       uses: actions/setup-python@v5
@@ -33,5 +37,39 @@ jobs:
 
     - name: Run Tests
       run: |
-        python -m pytest
+        python -m pytest \
+          --cov=context_builder \
+          --cov-report=term-missing \
+          --cov-report=xml:coverage.xml
+
+    - name: Store Code Coverage Report
+      if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-report
+        path: coverage.xml
+
+  upload-coverage:
+    name: Upload Code Coverage
+    needs: test
+    if: ${{ !cancelled() && needs.test.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      code-quality: write
+
+    steps:
+    - name: Download Code Coverage Report
+      uses: actions/download-artifact@v4
+      with:
+        name: coverage-report
+
+    - name: Upload Code Coverage
+      uses: actions/upload-code-coverage@v1
+      with:
+        file: coverage.xml
+        language: Python
+        label: pytest-coverage
+        fail-on-error: false
 

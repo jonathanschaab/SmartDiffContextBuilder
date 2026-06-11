@@ -1,4 +1,7 @@
 __pycache__/
 .pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
 *.pyc
 *_final.md
