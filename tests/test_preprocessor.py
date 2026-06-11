@@ -296,7 +296,7 @@ class TestPreprocessor(unittest.TestCase):
         # Create a header file (.h)
         header_path = "my_header.h"
         with open(header_path, "w") as f:
-            f.write("#define MY_MACRO 10\n")
+            f.write("#define JOIN(a, b) a ## b\n")
 
         # Fake clang -E output
         expanded = (
@@ -317,7 +317,7 @@ class TestPreprocessor(unittest.TestCase):
         # Test case-insensitivity of macro expansion
         header_path_upper = "MY_HEADER.H"
         with open(header_path_upper, "w") as f:
-            f.write("#define MY_MACRO 10\n")
+            f.write("#define JOIN(a, b) a ## b\n")
             
         expanded_upper = (
             f'# 1 "{header_path_upper}"\n'
@@ -330,14 +330,76 @@ class TestPreprocessor(unittest.TestCase):
             
         self.assertIn("MY_HEADER.H", result_upper)
 
-    def test_trace_macro_expansion_forces_progress_after_empty_prefilter(self):
-        """An exhaustive macro scan shows progress when ripgrep finds no source match."""
+    def test_trace_macro_expansion_skips_safe_empty_prefilter(self):
+        """Literal and token-paste misses avoid exhaustive preprocessing."""
         repo_files = ["one.h", "two.cpp"]
-        with patch("context_builder.preprocessor.ripgrep_filter", return_value=[]), \
-             patch("context_builder.preprocessor.iter_scan_progress", return_value=[]) as mock_iter:
-            trace_macro_expansion("generated_symbol", repo_files, file_cache=MagicMock())
+        with patch(
+            "context_builder.preprocessor.ripgrep_filter",
+            side_effect=[[], []],
+        ) as mock_filter, patch(
+            "context_builder.preprocessor._process_single_macro_file",
+        ) as mock_process:
+            result = trace_macro_expansion(
+                "generated_symbol",
+                repo_files,
+                file_cache=MagicMock(),
+            )
 
-        self.assertTrue(mock_iter.call_args.kwargs["force"])
+        self.assertEqual(result, {})
+        self.assertEqual(mock_filter.call_count, 2)
+        mock_filter.assert_any_call(
+            repo_files,
+            "generated_symbol",
+            fallback_hint="macro callers of 'generated_symbol'",
+        )
+        mock_filter.assert_any_call(
+            repo_files,
+            "##",
+            fallback_hint="token-pasting macros relevant to 'generated_symbol'",
+        )
+        mock_process.assert_not_called()
+
+    def test_trace_macro_expansion_scans_after_token_paste_match(self):
+        """Token-pasting can synthesize a symbol absent from source text."""
+        repo_files = ["macros.h", "main.cpp"]
+
+        with patch(
+            "context_builder.preprocessor.ripgrep_filter",
+            side_effect=[[], ["macros.h"]],
+        ), patch(
+            "context_builder.preprocessor._process_single_macro_file",
+        ) as mock_process:
+            trace_macro_expansion(
+                "generated_symbol",
+                repo_files,
+                file_cache=MagicMock(),
+            )
+
+        scanned_files = [call.args[0] for call in mock_process.call_args_list]
+        self.assertEqual(scanned_files, repo_files)
+
+    def test_trace_macro_expansion_scans_when_token_paste_check_fails(self):
+        """An unreliable safety check must preserve exhaustive preprocessing."""
+        repo_files = ["macros.h", "main.cpp"]
+        fallback_files = FileScanCandidates(
+            repo_files,
+            "token-pasting macros relevant to 'generated_symbol'",
+        )
+
+        with patch(
+            "context_builder.preprocessor.ripgrep_filter",
+            side_effect=[[], fallback_files],
+        ), patch(
+            "context_builder.preprocessor._process_single_macro_file",
+        ) as mock_process:
+            trace_macro_expansion(
+                "generated_symbol",
+                repo_files,
+                file_cache=MagicMock(),
+            )
+
+        scanned_files = [call.args[0] for call in mock_process.call_args_list]
+        self.assertEqual(scanned_files, repo_files)
 
     def test_trace_macro_expansion_scans_callers_without_lexical_match(self):
         """Header macro matches do not exclude source files that invoke the macro."""

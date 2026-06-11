@@ -133,16 +133,34 @@ def trace_macro_expansion(func_name, repo_files, file_cache=None):
         file_cache = get_global_cache()
     callers = {}
     print(f" [Pre-Expansion] Searching expanded ASTs for {func_name}...")
-    fast_files = ripgrep_filter(
-        repo_files, func_name,
-        fallback_hint=f"macro callers of '{func_name}'"
-    )
     macro_extensions = {".c", ".cpp", ".hpp", ".h"}
     macro_files = [
         file_path
         for file_path in repo_files
         if os.path.splitext(file_path)[1].lower() in macro_extensions
     ]
+    fast_files = ripgrep_filter(
+        repo_files, func_name,
+        fallback_hint=f"macro callers of '{func_name}'"
+    )
+
+    if not fast_files and not getattr(fast_files, "used_ripgrep_fallback", False):
+        # A literal miss normally means preprocessing cannot produce func_name.
+        # Token-pasting macros are the important exception: `prefix ## suffix`
+        # can synthesize an identifier that never appears verbatim in source.
+        # Keep the expensive scan whenever `##` exists or its safety check fails;
+        # only skip when both ripgrep searches completed successfully with no match.
+        token_paste_files = ripgrep_filter(
+            macro_files,
+            "##",
+            fallback_hint=f"token-pasting macros relevant to '{func_name}'",
+        )
+        if (
+            not token_paste_files
+            and not getattr(token_paste_files, "used_ripgrep_fallback", False)
+        ):
+            return callers
+
     fast_file_set = set(fast_files)
     scan_files = [
         file_path
