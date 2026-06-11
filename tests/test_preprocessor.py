@@ -559,6 +559,23 @@ class TestPreprocessor(unittest.TestCase):
         self.assertEqual(output, "")
         self.assertEqual(status, "failed")
 
+    def test_clang_preprocessor_replaces_undecodable_output(self):
+        """Clang output decoding is tolerant of legacy or invalid source bytes."""
+        replacement_output = "const char *value = \"\ufffd\";\n"
+
+        def decoding_sensitive_run(*_args, **kwargs):
+            self.assertEqual(kwargs.get("errors"), "replace")
+            return MagicMock(stdout=replacement_output)
+
+        with patch(
+            "context_builder.preprocessor.subprocess.run",
+            side_effect=decoding_sensitive_run,
+        ):
+            output, status = _preprocessor_mod._run_clang_preprocessor("legacy.c")
+
+        self.assertEqual(output, replacement_output)
+        self.assertEqual(status, "success")
+
     def test_clang_preprocessor_caches_missing_executable_for_scan(self):
         """A missing clang executable is probed only once per repository scan."""
         with patch(

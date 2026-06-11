@@ -67,6 +67,9 @@ def _run_clang_preprocessor(file_path):
             cmd,
             capture_output=True,
             text=True,
+            # Preprocessor output may contain source bytes outside the locale
+            # encoding. Preserve the scan by replacing only undecodable bytes.
+            errors="replace",
             check=True,
             timeout=5,
         )

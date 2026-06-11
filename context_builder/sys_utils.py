@@ -297,6 +297,10 @@ def _run_rg_batches(base_cmd, files, cwd, timeout):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            # A path with undecodable bytes should not crash the batch and force
+            # an exhaustive scan. Replacement may prevent that one path from
+            # matching exactly, but keeps all normally decoded results usable.
+            errors="replace",
             check=False,
             timeout=batch_timeout,
         )

@@ -168,6 +168,29 @@ class TestSysUtils(unittest.TestCase):
         )
 
     @patch("context_builder.sys_utils.HAS_RG", True)
+    @patch("subprocess.run")
+    def test_ripgrep_filter_replaces_undecodable_output(self, mock_run):
+        """Undecodable path bytes do not force an exhaustive fallback scan."""
+        replacement_path = "legacy-\ufffd.cpp"
+
+        def decoding_sensitive_run(*_args, **kwargs):
+            self.assertEqual(kwargs.get("errors"), "replace")
+            return MagicMock(
+                returncode=0,
+                stdout=replacement_path + "\n",
+                stderr="",
+            )
+
+        mock_run.side_effect = decoding_sensitive_run
+
+        filtered = ripgrep_filter([replacement_path, "other.cpp"], "query")
+
+        self.assertEqual(filtered, [replacement_path])
+        self.assertFalse(
+            getattr(filtered, "used_ripgrep_fallback", False),
+        )
+
+    @patch("context_builder.sys_utils.HAS_RG", True)
     @patch("context_builder.sys_utils._build_rg_file_batches")
     @patch("subprocess.run")
     @patch("context_builder.sys_utils.warn_once")
