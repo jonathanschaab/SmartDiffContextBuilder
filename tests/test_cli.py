@@ -5,6 +5,7 @@
 # pylint: disable=too-few-public-methods,no-else-return
 
 import os
+import tempfile
 import unittest
 from unittest.mock import patch, MagicMock, ANY
 import argparse
@@ -1221,3 +1222,56 @@ class TestCLI(unittest.TestCase):
         with self.assertRaises(SystemExit) as cm:
             main()
         self.assertEqual(cm.exception.code, 1)
+
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    @patch("context_builder.cli.run_scan")
+    def test_cli_lsp_timeout_mappings(self, mock_run_scan, mock_parse_args):
+        from context_builder.config import CONFIG, reset_config
+
+        reset_config()
+        mock_args = CliNamespace(
+            lsp_init_timeout=72.5,
+            lsp_timeout=185.5,
+        )
+        mock_parse_args.return_value = mock_args
+
+        main()
+
+        self.assertEqual(CONFIG["lsp_init_timeout"], 72.5)
+        self.assertEqual(CONFIG["lsp_timeout"], 185.5)
+        args_passed = mock_run_scan.call_args.args[0]
+        self.assertEqual(args_passed.lsp_init_timeout, 72.5)
+        self.assertEqual(args_passed.lsp_timeout, 185.5)
+        reset_config()
+
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    @patch("context_builder.cli.run_scan")
+    def test_config_file_lsp_timeout_mappings(
+        self, mock_run_scan, mock_parse_args
+    ):
+        from context_builder.config import CONFIG, reset_config
+
+        reset_config()
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=".json",
+            delete=False,
+            encoding="utf-8",
+        ) as config_file:
+            config_file.write(
+                '{"lsp_init_timeout": 80.5, "lsp_timeout": 210.5}'
+            )
+            config_path = config_file.name
+
+        try:
+            mock_parse_args.return_value = CliNamespace(config=config_path)
+            main()
+
+            self.assertEqual(CONFIG["lsp_init_timeout"], 80.5)
+            self.assertEqual(CONFIG["lsp_timeout"], 210.5)
+            args_passed = mock_run_scan.call_args.args[0]
+            self.assertEqual(args_passed.lsp_init_timeout, 80.5)
+            self.assertEqual(args_passed.lsp_timeout, 210.5)
+        finally:
+            os.remove(config_path)
+            reset_config()

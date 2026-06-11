@@ -450,8 +450,12 @@ class TestLspClient(unittest.TestCase):
         client = MinimalLSPClient(["some_lsp_binary"])
         client.client = mock_client
 
-        refs = client.get_references("file.py", 10, 0, timeout=1.0)
+        with patch("context_builder.lsp_client.warn_once") as mock_warn:
+            refs = client.get_references("file.py", 10, 0, timeout=1.0)
         self.assertEqual(refs, [])
+        mock_warn.assert_called_once()
+        self.assertEqual(mock_warn.call_args.args[0], "lsp_query_fail")
+        self.assertIn("Broken pipe", mock_warn.call_args.args[1])
 
     @patch("context_builder.lsp_client.LanguageClient")
     def test_lsp_client_startup_timeout_returns_false(self, mock_lc_class):
@@ -492,7 +496,10 @@ class TestLspClient(unittest.TestCase):
                 new_loop.close()
             return future
 
-        with patch("asyncio.run_coroutine_threadsafe", side_effect=mock_run_coroutine):
+        with patch(
+            "asyncio.run_coroutine_threadsafe",
+            side_effect=mock_run_coroutine,
+        ), patch("context_builder.lsp_client.warn_once") as mock_warn:
             success = client.start()
 
         self.assertFalse(success)
@@ -501,6 +508,11 @@ class TestLspClient(unittest.TestCase):
         mock_client.stop.assert_called_once()
         self.assertIsNotNone(observed_loop)
         self.assertTrue(observed_loop.is_closed())
+        self.assertEqual(mock_warn.call_args.args[0], "lsp_init_timeout")
+        warning = mock_warn.call_args.args[1]
+        self.assertIn("60.0 seconds", warning)
+        self.assertIn("--lsp-init-timeout", warning)
+        self.assertIn("'lsp_init_timeout'", warning)
 
     @patch("context_builder.lsp_client.asyncio.wait_for", new_callable=AsyncMock)
     @patch("context_builder.lsp_client.LanguageClient")
@@ -532,6 +544,47 @@ class TestLspClient(unittest.TestCase):
 
         mock_wait_for.assert_awaited_once()
         self.assertEqual(mock_wait_for.await_args.kwargs["timeout"], 75)
+
+    @patch("context_builder.lsp_client.warn_once")
+    def test_lsp_query_timeout_warning_explains_configuration(self, mock_warn):
+        client = MinimalLSPClient(["some_lsp_binary"])
+        client.client = MagicMock(stopped=False)
+
+        def timeout_query(coro, _loop):
+            coro.close()
+            future = concurrent.futures.Future()
+            future.set_exception(TimeoutError())
+            return future
+
+        with patch(
+            "asyncio.run_coroutine_threadsafe",
+            side_effect=timeout_query,
+        ):
+            self.assertEqual(
+                client.get_references("file.py", 1, 0, timeout=12.5),
+                [],
+            )
+
+        self.assertEqual(mock_warn.call_args.args[0], "lsp_timeout")
+        warning = mock_warn.call_args.args[1]
+        self.assertIn("12.5 seconds", warning)
+        self.assertIn("--lsp-timeout", warning)
+        self.assertIn("'lsp_timeout'", warning)
+
+    @patch("context_builder.lsp_client.warn_once")
+    def test_invalid_lsp_timeouts_warn_and_use_defaults(self, mock_warn):
+        client = MinimalLSPClient(["some_lsp_binary"], init_timeout=0)
+        self.assertEqual(client.init_timeout, 60.0)
+        self.assertEqual(mock_warn.call_args.args[0], "lsp_init_timeout_invalid")
+        self.assertIn("--lsp-init-timeout", mock_warn.call_args.args[1])
+
+        client.client = MagicMock(stopped=True)
+        self.assertEqual(
+            client.get_references("file.py", 1, 0, timeout=float("nan")),
+            [],
+        )
+        self.assertEqual(mock_warn.call_args.args[0], "lsp_timeout_invalid")
+        self.assertIn("--lsp-timeout", mock_warn.call_args.args[1])
 
     @patch("context_builder.lsp_client.USE_LSP", True)
     @patch("context_builder.lsp_client.LSP_INSTANCES")

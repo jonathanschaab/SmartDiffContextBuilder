@@ -623,7 +623,7 @@ def main():
     parser.add_argument("--max-interface-depth", type=int, default=None)
     parser.add_argument("--disable-pruning", action="store_true", default=None)
     parser.add_argument("--lsp-init-timeout", type=float, default=None)
-    parser.add_argument("--lsp-timeout", type=int, default=None)
+    parser.add_argument("--lsp-timeout", type=float, default=None)
     parser.add_argument("--ripgrep-timeout", type=float, default=None)
     parser.add_argument("--no-language-server", action="store_true", default=None)
     parser.add_argument("--skip-ffi", action="store_true", default=None)

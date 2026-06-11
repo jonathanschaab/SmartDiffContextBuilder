@@ -131,7 +131,7 @@ python smart_diff_context_builder.py --config .smdc_config.json
 |---|---|---|---|
 | `--no-language-server` | flag | off | Disable LSP for caller tracing (falls back to AST/regex) |
 | `--lsp-init-timeout` | float | `60` | LSP initialization handshake timeout in seconds |
-| `--lsp-timeout` | int | `150` | LSP reference query timeout in seconds |
+| `--lsp-timeout` | float | `150` | LSP reference query timeout in seconds |
 | `--disable-pruning` | flag | off | Disable caller graph pruning (may significantly increase output size) |
 
 ### Performance

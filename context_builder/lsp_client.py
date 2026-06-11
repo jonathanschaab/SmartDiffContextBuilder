@@ -8,6 +8,7 @@ import atexit
 import asyncio
 import concurrent.futures
 import inspect
+import math
 import os
 import re
 import urllib.parse
@@ -20,12 +21,39 @@ from lsprotocol import types
 from pygls.lsp.client import LanguageClient
 
 from .cache import get_global_cache
-from .config import DEFAULT_LSP_INIT_TIMEOUT
+from .config import DEFAULT_LSP_INIT_TIMEOUT, DEFAULT_LSP_QUERY_TIMEOUT
 from .languages import get_language_profile
 from .sys_utils import warn_once
 
 USE_LSP = True
 LSP_INSTANCES = {}
+
+
+def _is_timeout_error(exc):
+    """Return whether an exception represents an asyncio/future timeout."""
+    return isinstance(
+        exc,
+        (TimeoutError, asyncio.TimeoutError, concurrent.futures.TimeoutError),
+    )
+
+
+def _validate_lsp_timeout(value, default, config_key, cli_option):
+    """Validate a timeout and provide the same recovery guidance as ripgrep."""
+    is_valid = (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(value)
+        and value > 0
+    )
+    if is_valid:
+        return value
+    warn_once(
+        f"{config_key}_invalid",
+        f"Configured {config_key} ({value}) must be a positive number. "
+        f"Falling back to {default} seconds. You can set this limit using "
+        f"{cli_option} or by setting '{config_key}' in your config file.",
+    )
+    return default
 
 
 def _register_notebook_filter_compatibility(client):
@@ -219,7 +247,12 @@ class MinimalLSPClient:
             init_timeout (float): Maximum seconds for the initialize handshake.
         """
         self.cmd = cmd
-        self.init_timeout = init_timeout
+        self.init_timeout = _validate_lsp_timeout(
+            init_timeout,
+            DEFAULT_LSP_INIT_TIMEOUT,
+            "lsp_init_timeout",
+            "--lsp-init-timeout",
+        )
         self.client = None
         self.loop = get_lsp_loop()
 
@@ -296,15 +329,21 @@ class MinimalLSPClient:
         except Exception as e:  # pylint: disable=broad-exception-caught
             if "fut" in locals():
                 fut.cancel()
-            warn_once(
-                "lsp_fail",
-                f"Failed to start LSP {self.cmd[0]} "
-                f"({type(e).__name__}): {e}",
-            )
-            is_timeout = isinstance(
-                e,
-                (TimeoutError, asyncio.TimeoutError, concurrent.futures.TimeoutError),
-            )
+            is_timeout = _is_timeout_error(e)
+            if is_timeout:
+                warn_once(
+                    "lsp_init_timeout",
+                    f"LSP {self.cmd[0]} initialization timed out after "
+                    f"{self.init_timeout} seconds. You can increase this limit "
+                    "using --lsp-init-timeout or by setting 'lsp_init_timeout' "
+                    "in your config file.",
+                )
+            else:
+                warn_once(
+                    "lsp_fail",
+                    f"Failed to start LSP {self.cmd[0]} "
+                    f"({type(e).__name__}): {e}",
+                )
             if process_start_failed:
                 # No transport exists yet, so LSP shutdown notifications would
                 # only produce secondary "no available transport" errors.
@@ -325,6 +364,12 @@ class MinimalLSPClient:
         Returns:
             list: List of reference locations.
         """
+        timeout = _validate_lsp_timeout(
+            timeout,
+            DEFAULT_LSP_QUERY_TIMEOUT,
+            "lsp_timeout",
+            "--lsp-timeout",
+        )
         if not self.client or getattr(self.client, "stopped", False):
             return []
 
@@ -419,9 +464,18 @@ class MinimalLSPClient:
         except Exception as e:  # pylint: disable=broad-exception-caught
             if "fut" in locals():
                 fut.cancel()
-            warn_once(
-                "lsp_timeout", f"LSP query timed out after {timeout}s or failed: {e}"
-            )
+            if _is_timeout_error(e):
+                warn_once(
+                    "lsp_timeout",
+                    f"LSP query timed out after {timeout} seconds. You can "
+                    "increase this limit using --lsp-timeout or by setting "
+                    "'lsp_timeout' in your config file.",
+                )
+            else:
+                warn_once(
+                    "lsp_query_fail",
+                    f"LSP query failed ({type(e).__name__}): {e}",
+                )
             return []
 
     def cleanup(self, force_kill=False):
