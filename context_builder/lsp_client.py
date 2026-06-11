@@ -240,16 +240,21 @@ class MinimalLSPClient:
                     except BaseException:
                         process_start_failed = True
                         raise
-                    server = _get_lsp_process(self.client)
-                    returncode = getattr(server, "returncode", None)
-                    if isinstance(returncode, int):
-                        # asyncio subprocess return codes are integers. Checking
-                        # the process, rather than task completion alone, catches
-                        # a server that launched and immediately crashed.
-                        process_start_failed = True
-                        raise RuntimeError(
-                            f"LSP process exited during startup with code {returncode}"
-                        )
+
+                # Process state is independent of start_io task completion. A
+                # compatible client may keep start_io pending briefly while its
+                # subprocess has already crashed, so check the process on every
+                # startup pass instead of waiting for the task to finish.
+                server = _get_lsp_process(self.client)
+                returncode = getattr(server, "returncode", None)
+                if isinstance(returncode, int):
+                    # asyncio subprocess return codes are integers. Checking
+                    # the process directly avoids waiting for initialize_async
+                    # to time out against a transport that is already dead.
+                    process_start_failed = True
+                    raise RuntimeError(
+                        f"LSP process exited during startup with code {returncode}"
+                    )
 
                 params = types.InitializeParams(
                     process_id=os.getpid(),

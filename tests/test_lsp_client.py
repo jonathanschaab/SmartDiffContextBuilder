@@ -744,6 +744,34 @@ class TestLspClient(unittest.TestCase):
         mock_client.shutdown_async.assert_not_awaited()
         mock_client.stop.assert_not_awaited()
 
+    @patch("context_builder.lsp_client.LanguageClient")
+    def test_lsp_client_detects_exit_while_start_io_is_pending(
+        self, mock_lc_class
+    ):
+        mock_client = MagicMock()
+        mock_client.protocol._converter = MagicMock()
+
+        async def pending_start_io(*args, **kwargs):
+            await asyncio.sleep(10.0)
+
+        mock_client.start_io = pending_start_io
+        mock_client.initialize_async = AsyncMock()
+        mock_client.shutdown_async = AsyncMock()
+        mock_client.stop = AsyncMock()
+        mock_client._server.returncode = 3
+        mock_lc_class.return_value = mock_client
+
+        client = MinimalLSPClient(["delayed_failing_lsp"])
+        with patch("context_builder.lsp_client.warn_once") as mock_warn:
+            success = client.start()
+
+        self.assertFalse(success)
+        self.assertIsNone(client.client)
+        self.assertIn("code 3", mock_warn.call_args.args[1])
+        mock_client.initialize_async.assert_not_awaited()
+        mock_client.shutdown_async.assert_not_awaited()
+        mock_client.stop.assert_not_awaited()
+
     def test_get_lsp_loop_recreates_when_closed(self):
         import context_builder.lsp_client as lsp_client
 
