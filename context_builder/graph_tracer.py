@@ -5,48 +5,28 @@ modified files and tracing callers/callees.
 """
 
 import os
-import re
 from .ast_engine import (
     AST_ENGINE,
     extract_callees,
     extract_function_bounds,
     find_callee_definition,
     split_massive_block_ast,
-    strip_strings_and_comments,
     trace_lexical_dependencies_ast,
     trace_lexical_dependencies_regex,
 )
+from .languages import get_language_profile
 from .lsp_client import get_lsp_references
 from .preprocessor import trace_ffi_callers, trace_macro_expansion
 from .sys_utils import is_in_repo
 
 
-_FUNC_KEYWORD_PAT = re.compile(r"\b(?:fn|def|function|sub|func|class|macro)\s+([A-Za-z0-9_]+)")
-_C_STYLE_FUNC_PAT = re.compile(r'(~?\b[A-Za-z_][A-Za-z0-9_]*)\s*\(')
-_IGNORED_KEYWORDS = {
-    "if", "for", "while", "switch", "catch", "return", "sizeof", "sizeof_array",
-    "__attribute__", "__declspec", "__pragma", "alignas", "alignof", "decltype",
-    "noexcept", "static_assert", "typeof", "__typeof__", "throw", "typeid"
-}
-
-
-def extract_function_name(cleaned_chunk, start, end):
-    """Extracts a function name from a cleaned function chunk.
-
-    First tries matching standard declaration keywords, then falls back to C-style function
-    names (identifier followed by parenthesis) excluding control flow keywords.
-    """
-    if name_match := _FUNC_KEYWORD_PAT.search(cleaned_chunk):
-        return name_match.group(1)
-
-    # Fallback to C-style: identifier followed by '('
-    # We optionally capture a leading tilde (~) to correctly identify C++ destructors.
-    for m in _C_STYLE_FUNC_PAT.finditer(cleaned_chunk):
-        name = m.group(1)
-        if name not in _IGNORED_KEYWORDS:
-            return name
-
-    return f"block_lines_{start}_{end}"
+def extract_function_name(cleaned_chunk, start, end, file_path=None):
+    """Extract a function name using the file's language profile."""
+    return get_language_profile(file_path).extract_function_name(
+        cleaned_chunk,
+        start,
+        end,
+    )
 
 
 class CallGraphTracer:
@@ -81,12 +61,17 @@ class CallGraphTracer:
                 continue
 
             ref_chunk = "".join(ref_lines[start:end])
-            is_py_ref = ref_path.lower().endswith(".py")
+            profile = get_language_profile(ref_path)
             cleaned_ref_chunk = "\n".join(
-                strip_strings_and_comments(line, is_python=is_py_ref)
+                profile.strip_strings_and_comments(line)
                 for line in ref_chunk.splitlines()
             )
-            occ_func = extract_function_name(cleaned_ref_chunk, start, end)
+            occ_func = extract_function_name(
+                cleaned_ref_chunk,
+                start,
+                end,
+                file_path=ref_path,
+            )
 
             span_sig = f"{ref_path}::line_{start}_to_{end}"
             if span_sig not in processed_spans:
@@ -134,7 +119,10 @@ class CallGraphTracer:
         if skip_macro_expansion is None:
             skip_macro_expansion = False
 
-        if not skip_macro_expansion and ext in ['.c', '.cpp', '.hpp', '.h']:
+        if (
+            not skip_macro_expansion
+            and get_language_profile(ext).supports_macro_expansion
+        ):
             macro_results = trace_macro_expansion(
                 curr_func, self.all_repo_files, file_cache=self.file_cache
             )

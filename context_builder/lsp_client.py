@@ -19,6 +19,7 @@ from lsprotocol import types
 from pygls.lsp.client import LanguageClient
 
 from .cache import get_global_cache
+from .languages import get_language_profile
 from .sys_utils import warn_once
 
 USE_LSP = True
@@ -483,21 +484,13 @@ def get_lsp_references(
     if file_cache is None:
         file_cache = get_global_cache()
 
-    ext = os.path.splitext(file_path)[1]
-    configs = {
-        ".cpp": ["clangd", "--background-index"],
-        ".c": ["clangd", "--background-index"],
-        ".hpp": ["clangd", "--background-index"],
-        ".h": ["clangd", "--background-index"],
-        ".rs": ["rust-analyzer"],
-        ".py": ["pylsp"],
-        ".ts": ["typescript-language-server", "--stdio"],
-    }
-
-    if ext not in configs:
+    ext = os.path.splitext(file_path)[1].lower()
+    profile = get_language_profile(ext)
+    if not profile.lsp_command:
         return None
+    command = list(profile.lsp_command)
 
-    client = _get_or_create_lsp_client(ext, configs)
+    client = _get_or_create_lsp_client(ext, {ext: command})
     if not client:
         return None
 
@@ -507,7 +500,7 @@ def get_lsp_references(
 
     actual_line, char_idx = _find_lsp_func_start_character(lines, line_num, func_name)
 
-    print(f" [LSP] Querying {configs[ext][0]} for {func_name}() references...")
+    print(f" [LSP] Querying {command[0]} for {func_name}() references...")
     refs = client.get_references(file_path, actual_line, char_idx, timeout=timeout)
 
     callers = {}

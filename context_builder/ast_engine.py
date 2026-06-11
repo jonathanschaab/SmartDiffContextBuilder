@@ -9,6 +9,7 @@ import re
 import importlib
 from .sys_utils import iter_scan_progress, warn_once, ripgrep_filter
 from .cache import get_global_cache
+from .languages import UNKNOWN_LANGUAGE, get_language_profile
 
 try:
     import tree_sitter
@@ -104,16 +105,9 @@ AST_ENGINE = AstEngine()
 
 
 def strip_strings_and_comments(line, is_python=False):
-    """Strip strings, block comments, and single line comments from a source line."""
-    # Strip string literals (both single and double quoted)
-    line = re.sub(r'(["\'])(?:(?=(\\?))\2.)*?\1', '', line)
-    # Strip C-style block comments (/* ... */) on the same line if not Python
-    if not is_python:
-        line = re.sub(r'/\*.*?\*/', '', line)
-    comment_char = "#" if is_python else "//"
-    if comment_char in line:
-        line = line.split(comment_char)[0]
-    return line
+    """Compatibility wrapper around language-profile comment stripping."""
+    profile = get_language_profile(".py") if is_python else UNKNOWN_LANGUAGE
+    return profile.strip_strings_and_comments(line)
 
 
 def extract_function_bounds_ast(file_path, line_num, ext, file_cache=None):
@@ -199,7 +193,7 @@ def extract_function_bounds_regex(file_path, line_num, file_cache=None):
     if start_idx < 0:
         start_idx = max(0, target_idx - 10)
 
-    if file_path.endswith('.py'):
+    if get_language_profile(file_path).uses_indentation_blocks:
         return _extract_bounds_py_regex(lines, start_idx)
     return _extract_bounds_non_py_regex(lines, start_idx, target_idx)
 
@@ -219,7 +213,7 @@ def extract_function_bounds(file_path, line_num, file_cache=None):
 def _trace_file_ast_dependencies(file_path, func_name, file_cache, callers):
     """Process a single file for AST dependency tracking."""
     ext = os.path.splitext(file_path)[1]
-    if ext == '.py':
+    if get_language_profile(ext).name == "python":
         content = file_cache.get_content(file_path)
         if "typing" not in content:
             warn_once(
@@ -296,16 +290,15 @@ def _process_regex_file(
 ):
     """Search regex patterns within a single file."""
     if call_pattern.search(content):
-        is_cpp = ext in ['.c', '.cpp', '.hpp', '.h']
-        is_python = ext == '.py'
+        profile = get_language_profile(ext)
         for idx, line in enumerate(content.splitlines()):
-            clean_line = strip_strings_and_comments(line, is_python=is_python)
+            clean_line = profile.strip_strings_and_comments(line)
             if call_pattern.search(clean_line):
                 is_def = False
                 if def_keyword_pattern.search(clean_line):
                     is_def = True
                 elif (
-                    is_cpp
+                    profile.uses_c_style_definitions
                     and def_cpp_pattern.search(clean_line)
                     and not clean_line.strip().endswith(';')
                 ):
@@ -542,7 +535,7 @@ def split_massive_block_ast(source_text, file_path, max_lines):
         return [{"suffix": "", "text": source_text}]
 
     ext = os.path.splitext(file_path)[1]
-    is_python = ext == '.py'
+    is_python = get_language_profile(ext).uses_indentation_blocks
 
     if not AST_ENGINE.is_supported(ext):
         fallback_text = _get_fallback_truncated_text(lines, max_lines, is_python)
@@ -602,10 +595,10 @@ def extract_callees_regex(file_path, start_line, end_line, file_cache):
     """Extract all functions/methods called inside a line range using regex fallback."""
     lines = file_cache.get_lines(file_path)[start_line:end_line]
     callees = set()
-    is_python = file_path.endswith('.py')
+    profile = get_language_profile(file_path)
     callee_pattern = _get_callee_pattern()
     for line in lines:
-        line_clean = strip_strings_and_comments(line, is_python)
+        line_clean = profile.strip_strings_and_comments(line)
         for match in re.finditer(callee_pattern, line_clean):
             name = match.group(1)
             if name not in CONFIG['callee_ignored_keywords']:
@@ -670,11 +663,11 @@ def find_callee_definition(callee_name, all_repo_files, file_cache=None):
             continue
 
         lines = file_cache.get_lines(file_path)
-        is_python = ext == '.py'
+        profile = get_language_profile(ext)
         for idx, line in enumerate(lines):
-            clean_line = strip_strings_and_comments(line, is_python)
+            clean_line = profile.strip_strings_and_comments(line)
             is_match = re.search(pattern, clean_line) or (
-                ext in ['.c', '.cpp', '.hpp', '.h'] and
+                profile.uses_c_style_definitions and
                 re.search(cpp_pattern, clean_line) and
                 not clean_line.strip().endswith(';')
             )

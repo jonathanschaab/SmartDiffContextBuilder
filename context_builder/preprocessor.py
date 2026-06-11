@@ -8,6 +8,7 @@ from collections import OrderedDict
 
 from .cache import get_global_cache
 from .config import CONFIG
+from .languages import get_language_profile
 from .sys_utils import (
     get_comment_prefix,
     iter_scan_progress,
@@ -164,8 +165,7 @@ def _map_expanded_line_to_source(expanded_lines, idx, callers, file_cache):
 
 def _process_single_macro_file(file_path, func_pattern, callers, file_cache):
     """Process a single file for macro expansion mapping."""
-    ext = os.path.splitext(file_path)[1].lower()
-    if ext not in [".c", ".cpp", ".hpp", ".h"]:
+    if not get_language_profile(file_path).supports_macro_expansion:
         return
 
     # Pass 1: Expand
@@ -195,11 +195,10 @@ def trace_macro_expansion(func_name, repo_files, file_cache=None):
         file_cache = get_global_cache()
     callers = {}
     print(f" [Pre-Expansion] Searching expanded ASTs for {func_name}...")
-    macro_extensions = {".c", ".cpp", ".hpp", ".h"}
     macro_files = [
         file_path
         for file_path in repo_files
-        if os.path.splitext(file_path)[1].lower() in macro_extensions
+        if get_language_profile(file_path).supports_macro_expansion
     ]
     fast_files = ripgrep_filter(
         repo_files, func_name,
@@ -227,7 +226,7 @@ def trace_macro_expansion(func_name, repo_files, file_cache=None):
     scan_files = [
         file_path
         for file_path in fast_files
-        if os.path.splitext(file_path)[1].lower() in macro_extensions
+        if get_language_profile(file_path).supports_macro_expansion
     ]
     scan_files.extend(
         file_path for file_path in macro_files if file_path not in fast_file_set
