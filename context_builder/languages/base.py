@@ -33,9 +33,14 @@ class LanguageProfile:
     test_query = None
     tests_can_share_source_file = False
 
+    @staticmethod
+    def strip_string_literals(line):
+        """Remove quoted strings before applying language comment rules."""
+        return _STRING_LITERAL_PATTERN.sub("", line)
+
     def strip_strings_and_comments(self, line):
         """Remove strings and same-line comments before regex analysis."""
-        cleaned = _STRING_LITERAL_PATTERN.sub("", line)
+        cleaned = self.strip_string_literals(line)
         if self.supports_block_comments:
             cleaned = _BLOCK_COMMENT_PATTERN.sub("", cleaned)
         if self.line_comment and self.line_comment in cleaned:

@@ -65,6 +65,25 @@ class TestLanguageProfiles(unittest.TestCase):
         )
         self.assertEqual(get_language_profile("build.bat").comment_prefix, "REM")
 
+    def test_batch_rem_comments_are_case_insensitive_distinct_tokens(self):
+        """Batch REM comments ignore casing without matching longer words."""
+        profile = get_language_profile("build.bat")
+
+        for marker in ("REM", "rem", "Rem"):
+            self.assertEqual(
+                profile.strip_strings_and_comments(f"echo before & {marker} after"),
+                "echo before & ",
+            )
+        for command in ("PREMIUM", "REMARK", "REMEDY"):
+            self.assertEqual(
+                profile.strip_strings_and_comments(f"echo {command}"),
+                f"echo {command}",
+            )
+        self.assertEqual(
+            profile.strip_strings_and_comments('echo "REM is text"'),
+            "echo ",
+        )
+
     def test_unknown_language_fallback(self):
         """Unknown extensions use the explicit conservative fallback profile."""
         profile = get_language_profile("source.custom")
@@ -92,6 +111,21 @@ class TestLanguageProfiles(unittest.TestCase):
         """Hidden filenames are resolved as paths rather than pure extensions."""
         self.assertEqual(get_language_profile(".test.py").name, "python")
         self.assertEqual(get_language_profile(".config.js").name, "javascript")
+
+    def test_windows_paths_resolve_on_any_platform(self):
+        """Backslash paths use the same language resolution on every OS."""
+        self.assertEqual(
+            get_language_profile(r"src\package\module.py").name,
+            "python",
+        )
+        self.assertEqual(
+            get_language_profile(r"src\build\Makefile-client").comment_prefix,
+            "#",
+        )
+        self.assertEqual(
+            get_language_profile(r"src\.config.js").name,
+            "javascript",
+        )
 
 
 if __name__ == "__main__":

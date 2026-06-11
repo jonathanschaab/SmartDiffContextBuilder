@@ -31,7 +31,7 @@ _BY_EXTENSION = {
 
 def get_language_profile(file_path_or_extension):
     """Return the registered profile or the unknown-language fallback."""
-    value = str(file_path_or_extension or "")
+    value = str(file_path_or_extension or "").replace("\\", "/")
     base_name = os.path.basename(value)
     if base_name.lower().startswith("makefile"):
         return HASH_COMMENTS
@@ -40,7 +40,6 @@ def get_language_profile(file_path_or_extension):
         value.startswith(".")
         and value.count(".") == 1
         and "/" not in value
-        and "\\" not in value
     ):
         extension = value.lower()
     else:
