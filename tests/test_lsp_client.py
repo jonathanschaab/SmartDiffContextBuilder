@@ -11,18 +11,101 @@ import time
 from unittest.mock import MagicMock, patch, AsyncMock
 
 import lsprotocol.types as types
+from pygls.lsp.client import LanguageClient
 
 from context_builder.lsp_client import (
     LSP_INSTANCES,
     MinimalLSPClient,
+    _get_lsp_process,
+    _register_notebook_filter_compatibility,
     cleanup_zombie_lsps,
     get_lsp_references,
 )
 
 class TestLspClient(unittest.TestCase):
+    def test_get_lsp_process_prefers_current_pygls_server_attribute(self):
+        client = MagicMock()
+        current_process = object()
+        legacy_process = object()
+        client._server = current_process
+        client.subprocess = legacy_process
+
+        self.assertIs(_get_lsp_process(client), current_process)
+
+    def test_get_lsp_process_falls_back_to_legacy_subprocess_attribute(self):
+        client = MagicMock(spec=["subprocess"])
+        legacy_process = object()
+        client.subprocess = legacy_process
+
+        self.assertIs(_get_lsp_process(client), legacy_process)
+
+    def test_get_lsp_process_returns_none_without_process_attributes(self):
+        client = MagicMock(spec=[])
+
+        self.assertIsNone(_get_lsp_process(client))
+
+    def test_notebook_filter_compatibility_accepts_cells_only_selector(self):
+        client = LanguageClient(name="test-client", version="1.0")
+        registered = _register_notebook_filter_compatibility(client)
+
+        options = client.protocol._converter.structure(
+            {"notebookSelector": [{"cells": [{"language": "python"}]}]},
+            types.NotebookDocumentSyncOptions,
+        )
+
+        self.assertTrue(registered)
+        self.assertEqual(options.notebook_selector[0].cells[0].language, "python")
+        self.assertIsNone(options.notebook_selector[0].notebook)
+
+    def test_notebook_filter_compatibility_skips_unknown_model(self):
+        client = MagicMock()
+        client.protocol._converter = MagicMock()
+
+        with patch.object(
+            types,
+            "NotebookDocumentFilterWithCells",
+            None,
+        ):
+            registered = _register_notebook_filter_compatibility(client)
+
+        self.assertFalse(registered)
+        client.protocol._converter.register_structure_hook.assert_not_called()
+
+    def test_notebook_filter_compatibility_skips_changed_attrs_model(self):
+        client = MagicMock()
+        client.protocol._converter = MagicMock()
+        changed_model = type(
+            "ChangedNotebookFilter",
+            (),
+            {"__attrs_attrs__": (object(),)},
+        )
+
+        with patch.object(
+            types,
+            "NotebookDocumentFilterWithCells",
+            changed_model,
+        ):
+            registered = _register_notebook_filter_compatibility(client)
+
+        self.assertFalse(registered)
+        client.protocol._converter.register_structure_hook.assert_not_called()
+
+    def test_notebook_filter_compatibility_rejects_non_mapping_filter(self):
+        client = MagicMock()
+        converter = MagicMock()
+        client.protocol._converter = converter
+
+        registered = _register_notebook_filter_compatibility(client)
+        _, hook = converter.register_structure_hook.call_args[0]
+
+        self.assertTrue(registered)
+        with self.assertRaisesRegex(TypeError, "received list"):
+            hook([], object())
+
     @patch("context_builder.lsp_client.LanguageClient")
     def test_lsp_client_init_and_send(self, mock_lc_class):
         mock_client = MagicMock()
+        mock_client.protocol._converter = MagicMock()
         mock_lc_class.return_value = mock_client
 
         mock_client.start_io = AsyncMock()
@@ -36,6 +119,7 @@ class TestLspClient(unittest.TestCase):
 
         self.assertTrue(success)
         self.assertIsNotNone(client.client)
+        mock_client.start_io.assert_awaited_once_with("some_lsp_binary")
         mock_lc_class.assert_called_once_with(name="SmartDiffContextBuilder-LSP", version="1.0")
 
     @patch("context_builder.lsp_client.USE_LSP", False)
@@ -119,6 +203,7 @@ class TestLspClient(unittest.TestCase):
     def test_lsp_client_case_insensitive_header(self, mock_lc_class):
         # Since pygls handles headers internally, verify client startup works
         mock_client = MagicMock()
+        mock_client.protocol._converter = MagicMock()
         mock_lc_class.return_value = mock_client
 
         mock_client.start_io = AsyncMock()
@@ -225,6 +310,7 @@ class TestLspClient(unittest.TestCase):
     def test_lsp_client_json_decode_robustness(self, mock_lc_class):
         # pygls internally parses JSON, verify start still succeeds
         mock_client = MagicMock()
+        mock_client.protocol._converter = MagicMock()
         mock_lc_class.return_value = mock_client
 
         mock_client.start_io = AsyncMock()
@@ -238,6 +324,7 @@ class TestLspClient(unittest.TestCase):
     def test_lsp_client_lf_only_headers(self, mock_lc_class):
         # pygls internally parses headers, verify start still succeeds
         mock_client = MagicMock()
+        mock_client.protocol._converter = MagicMock()
         mock_lc_class.return_value = mock_client
 
         mock_client.start_io = AsyncMock()
@@ -597,6 +684,7 @@ class TestLspClient(unittest.TestCase):
         mock_subproc = MagicMock()
         mock_subproc.returncode = None
         mock_client.subprocess = mock_subproc
+        mock_client._server = None
 
         client = MinimalLSPClient(["some_lsp_binary"])
         client.client = mock_client
@@ -628,6 +716,61 @@ class TestLspClient(unittest.TestCase):
 
         self.assertFalse(success)
         self.assertIsNone(client.client)
+        mock_client.shutdown_async.assert_not_awaited()
+        mock_client.stop.assert_not_awaited()
+
+    @patch("context_builder.lsp_client.LanguageClient")
+    def test_lsp_client_detects_process_that_exits_during_startup(
+        self, mock_lc_class
+    ):
+        mock_client = MagicMock()
+        mock_client.protocol._converter = MagicMock()
+        mock_client.start_io = AsyncMock()
+        mock_client.initialize_async = AsyncMock()
+        mock_client.shutdown_async = AsyncMock()
+        mock_client.stop = AsyncMock()
+        mock_client._server.returncode = 2
+        mock_lc_class.return_value = mock_client
+
+        client = MinimalLSPClient(["failing_lsp_binary"])
+        with patch("context_builder.lsp_client.warn_once") as mock_warn:
+            success = client.start()
+
+        self.assertFalse(success)
+        self.assertIsNone(client.client)
+        self.assertIn("RuntimeError", mock_warn.call_args.args[1])
+        self.assertIn("code 2", mock_warn.call_args.args[1])
+        mock_client.initialize_async.assert_not_awaited()
+        mock_client.shutdown_async.assert_not_awaited()
+        mock_client.stop.assert_not_awaited()
+
+    @patch("context_builder.lsp_client.LanguageClient")
+    def test_lsp_client_detects_exit_while_start_io_is_pending(
+        self, mock_lc_class
+    ):
+        mock_client = MagicMock()
+        mock_client.protocol._converter = MagicMock()
+
+        async def pending_start_io(*args, **kwargs):
+            await asyncio.sleep(10.0)
+
+        mock_client.start_io = pending_start_io
+        mock_client.initialize_async = AsyncMock()
+        mock_client.shutdown_async = AsyncMock()
+        mock_client.stop = AsyncMock()
+        mock_client._server.returncode = 3
+        mock_lc_class.return_value = mock_client
+
+        client = MinimalLSPClient(["delayed_failing_lsp"])
+        with patch("context_builder.lsp_client.warn_once") as mock_warn:
+            success = client.start()
+
+        self.assertFalse(success)
+        self.assertIsNone(client.client)
+        self.assertIn("code 3", mock_warn.call_args.args[1])
+        mock_client.initialize_async.assert_not_awaited()
+        mock_client.shutdown_async.assert_not_awaited()
+        mock_client.stop.assert_not_awaited()
 
     def test_get_lsp_loop_recreates_when_closed(self):
         import context_builder.lsp_client as lsp_client
@@ -701,6 +844,7 @@ class TestLspClient(unittest.TestCase):
         mock_subproc = MagicMock()
         mock_subproc.returncode = None
         mock_client.subprocess = mock_subproc
+        mock_client._server = None
         mock_client.stopped = False
 
         async def mock_shutdown_async(*args):
@@ -797,6 +941,7 @@ class TestLspClient(unittest.TestCase):
         mock_subproc = MagicMock()
         mock_subproc.returncode = None
         mock_client.subprocess = mock_subproc
+        mock_client._server = None
         mock_client.stopped = False
 
         mock_client.shutdown_async = AsyncMock()
@@ -819,6 +964,7 @@ class TestLspClient(unittest.TestCase):
         mock_subproc.returncode = None
         mock_subproc.kill.side_effect = lambda: setattr(mock_subproc, 'returncode', -9)
         mock_client.subprocess = mock_subproc
+        mock_client._server = None
 
         mock_shutdown = AsyncMock()
         mock_client.shutdown_async = mock_shutdown

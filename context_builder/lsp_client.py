@@ -11,6 +11,7 @@ import inspect
 import os
 import re
 import urllib.parse
+from collections.abc import Mapping
 from pathlib import Path
 import threading
 from urllib.request import url2pathname
@@ -24,6 +25,78 @@ from .sys_utils import warn_once
 
 USE_LSP = True
 LSP_INSTANCES = {}
+
+
+def _register_notebook_filter_compatibility(client):
+    """Register a narrow workaround for lsprotocol's optional-filter hook gap."""
+    # pygls 2.1.1 pins lsprotocol 2025.0.0, which exposes this attrs model.
+    # Feature detection is still intentional: if a future pygls/lsprotocol
+    # release changes its model or converter internals, skipping our workaround
+    # is safer than preventing every language server from starting. The upstream
+    # converter may no longer need the workaround in that environment.
+    filter_with_cells = getattr(types, "NotebookDocumentFilterWithCells", None)
+    filter_fields = getattr(filter_with_cells, "__attrs_attrs__", ())
+    notebook_field = next(
+        (
+            field
+            for field in filter_fields
+            if getattr(field, "name", None) == "notebook"
+        ),
+        None,
+    )
+    notebook_field_type = getattr(notebook_field, "type", None)
+    protocol = getattr(client, "protocol", None)
+    converter = getattr(protocol, "_converter", None)
+    register_hook = getattr(converter, "register_structure_hook", None)
+    structure = getattr(converter, "structure", None)
+    filter_types = {
+        "notebookType": getattr(
+            types, "NotebookDocumentFilterNotebookType", None
+        ),
+        "scheme": getattr(types, "NotebookDocumentFilterScheme", None),
+        "pattern": getattr(types, "NotebookDocumentFilterPattern", None),
+    }
+    if (
+        notebook_field_type is None
+        or converter is None
+        or not callable(register_hook)
+        or not callable(structure)
+        or any(filter_type is None for filter_type in filter_types.values())
+    ):
+        return False
+
+    def structure_notebook_filter(value, _type):
+        if value is None or isinstance(value, str):
+            return value
+        if not isinstance(value, Mapping):
+            # Do not silently coerce malformed server capabilities. A clear
+            # conversion error is preferable to registering the wrong filter.
+            raise TypeError(
+                "Notebook filter must be a string, mapping, or None; "
+                f"received {type(value).__name__}"
+            )
+        if "notebookType" in value:
+            filter_type = filter_types["notebookType"]
+        elif "scheme" in value:
+            filter_type = filter_types["scheme"]
+        else:
+            filter_type = filter_types["pattern"]
+        return structure(value, filter_type)
+
+    register_hook(
+        notebook_field_type,
+        structure_notebook_filter,
+    )
+    return True
+
+
+def _get_lsp_process(client):
+    """Return the subprocess object exposed by the active pygls client."""
+    # pygls 2.1.1, our current minimum, stores the process in the private
+    # `_server` attribute. Older releases and some compatible client wrappers
+    # expose it as `subprocess` instead. Centralizing that version boundary keeps
+    # startup crash detection and every cleanup path from drifting apart.
+    return getattr(client, "_server", None) or getattr(client, "subprocess", None)
 
 
 class LSPEventLoopThread(threading.Thread):
@@ -143,18 +216,45 @@ class MinimalLSPClient:
         Returns:
             bool: True if initialized successfully, False otherwise.
         """
+        process_start_failed = False
 
         async def _async_start():
+            nonlocal process_start_failed
             self.client = LanguageClient(name="SmartDiffContextBuilder-LSP", version="1.0")
+            _register_notebook_filter_compatibility(self.client)
+            # pygls owns stdin/stdout/stderr for its JSON-RPC transport and
+            # captures stderr in a pipe. Supplying stderr here is not needed to
+            # keep the console clean and breaks pygls 2.x by passing the keyword
+            # twice to asyncio.create_subprocess_exec.
             start_task = asyncio.create_task(
-                self.client.start_io(
-                    self.cmd[0], *self.cmd[1:], stderr=asyncio.subprocess.DEVNULL
-                )
+                self.client.start_io(self.cmd[0], *self.cmd[1:])
             )
             try:
                 await asyncio.sleep(0.1)
                 if start_task.done():
-                    start_task.result()
+                    # start_io completing is healthy: it means pygls spawned the
+                    # process and installed background transport tasks. It does
+                    # not mean the language-server process itself has exited.
+                    try:
+                        start_task.result()
+                    except BaseException:
+                        process_start_failed = True
+                        raise
+
+                # Process state is independent of start_io task completion. A
+                # compatible client may keep start_io pending briefly while its
+                # subprocess has already crashed, so check the process on every
+                # startup pass instead of waiting for the task to finish.
+                server = _get_lsp_process(self.client)
+                returncode = getattr(server, "returncode", None)
+                if isinstance(returncode, int):
+                    # asyncio subprocess return codes are integers. Checking
+                    # the process directly avoids waiting for initialize_async
+                    # to time out against a transport that is already dead.
+                    process_start_failed = True
+                    raise RuntimeError(
+                        f"LSP process exited during startup with code {returncode}"
+                    )
 
                 params = types.InitializeParams(
                     process_id=os.getpid(),
@@ -180,12 +280,21 @@ class MinimalLSPClient:
         except Exception as e:  # pylint: disable=broad-exception-caught
             if "fut" in locals():
                 fut.cancel()
-            warn_once("lsp_fail", f"Failed to start LSP {self.cmd[0]}: {e}")
+            warn_once(
+                "lsp_fail",
+                f"Failed to start LSP {self.cmd[0]} "
+                f"({type(e).__name__}): {e}",
+            )
             is_timeout = isinstance(
                 e,
                 (TimeoutError, asyncio.TimeoutError, concurrent.futures.TimeoutError),
             )
-            self.cleanup(force_kill=is_timeout)
+            if process_start_failed:
+                # No transport exists yet, so LSP shutdown notifications would
+                # only produce secondary "no available transport" errors.
+                self.client = None
+            else:
+                self.cleanup(force_kill=is_timeout)
             return False
 
     def get_references(self, file_path, line_num, char_num, timeout) -> list:
@@ -308,9 +417,7 @@ class MinimalLSPClient:
 
         if force_kill:
             try:
-                server = getattr(client, "subprocess", None) or getattr(
-                    client, "_server", None
-                )
+                server = _get_lsp_process(client)
                 if server and server.returncode is None:
                     server.kill()
             except Exception:  # pylint: disable=broad-exception-caught
@@ -332,9 +439,7 @@ class MinimalLSPClient:
                 await _async_clean_method(client, "exit", use_wait_for=False)
                 await _async_clean_method(client, "stop")
 
-            server = getattr(client, "subprocess", None) or getattr(
-                client, "_server", None
-            )
+            server = _get_lsp_process(client)
             if server and server.returncode is None:
                 try:
                     server.kill()
@@ -348,9 +453,7 @@ class MinimalLSPClient:
             if "fut" in locals():
                 fut.cancel()
             try:
-                server = getattr(client, "subprocess", None) or getattr(
-                    client, "_server", None
-                )
+                server = _get_lsp_process(client)
                 if server and server.returncode is None:
                     server.kill()
             except Exception:  # pylint: disable=broad-exception-caught
