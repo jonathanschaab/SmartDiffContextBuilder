@@ -99,6 +99,16 @@ def _get_lsp_process(client):
     return getattr(client, "_server", None) or getattr(client, "subprocess", None)
 
 
+def _kill_lsp_process(client):
+    """Best-effort termination across supported pygls process attributes."""
+    try:
+        server = _get_lsp_process(client)
+        if server and server.returncode is None:
+            server.kill()
+    except Exception:  # pylint: disable=broad-exception-caught
+        pass
+
+
 class LSPEventLoopThread(threading.Thread):
     """A background thread hosting an asyncio event loop for language client communication."""
 
@@ -416,12 +426,7 @@ class MinimalLSPClient:
         self.client = None
 
         if force_kill:
-            try:
-                server = _get_lsp_process(client)
-                if server and server.returncode is None:
-                    server.kill()
-            except Exception:  # pylint: disable=broad-exception-caught
-                pass
+            _kill_lsp_process(client)
             for method in ["shutdown_async", "shutdown", "exit"]:
                 if hasattr(client, method):
                     try:
@@ -439,12 +444,7 @@ class MinimalLSPClient:
                 await _async_clean_method(client, "exit", use_wait_for=False)
                 await _async_clean_method(client, "stop")
 
-            server = _get_lsp_process(client)
-            if server and server.returncode is None:
-                try:
-                    server.kill()
-                except Exception:  # pylint: disable=broad-exception-caught
-                    pass
+            _kill_lsp_process(client)
 
         try:
             fut = asyncio.run_coroutine_threadsafe(_async_cleanup(), self.loop)
@@ -452,12 +452,7 @@ class MinimalLSPClient:
         except Exception:  # pylint: disable=broad-exception-caught
             if "fut" in locals():
                 fut.cancel()
-            try:
-                server = _get_lsp_process(client)
-                if server and server.returncode is None:
-                    server.kill()
-            except Exception:  # pylint: disable=broad-exception-caught
-                pass
+            _kill_lsp_process(client)
 
 
 async def _async_clean_method(client, method_name, use_wait_for=True):

@@ -165,23 +165,25 @@ class VolumeManager:
 
         try_append("## 4. Validating Unit Tests\n", self.unit_tests, format_test)
 
-        # Level 3: Upstream Callers
-        def format_caller(c):
+        def format_dependency(dependency):
             return (
-                f"- `{c['file']}` (L{c['line']}, Distance {c['distance']}): "
-                f"`{c['code']}` **[Confidence: {c['confidence']}]**\n"
+                f"- `{dependency['file']}` "
+                f"(L{dependency['line']}, Distance {dependency['distance']}): "
+                f"`{dependency['code']}` "
+                f"**[Confidence: {dependency['confidence']}]**\n"
             )
 
-        try_append("## 5. Upstream Dependent Callers\n", self.local_callers, format_caller)
-
-        # Level 4: FFI
-        def format_ffi(f):
-            return (
-                f"- `{f['file']}` (L{f['line']}, Distance {f['distance']}): "
-                f"`{f['code']}` **[Confidence: {f['confidence']}]**\n"
-            )
-
-        try_append("## 6. Cross-Language FFI Linkages\n", self.ffi_linkages, format_ffi)
+        # Levels 3 and 4 share the same dependency record shape.
+        try_append(
+            "## 5. Upstream Dependent Callers\n",
+            self.local_callers,
+            format_dependency,
+        )
+        try_append(
+            "## 6. Cross-Language FFI Linkages\n",
+            self.ffi_linkages,
+            format_dependency,
+        )
 
         if truncated:
             limit_mb = self.max_bytes / (1024 * 1024)
