@@ -24,15 +24,61 @@ from context_builder.lsp_client import (
 class TestLspClient(unittest.TestCase):
     def test_notebook_filter_compatibility_accepts_cells_only_selector(self):
         client = LanguageClient(name="test-client", version="1.0")
-        _register_notebook_filter_compatibility(client)
+        registered = _register_notebook_filter_compatibility(client)
 
         options = client.protocol._converter.structure(
             {"notebookSelector": [{"cells": [{"language": "python"}]}]},
             types.NotebookDocumentSyncOptions,
         )
 
+        self.assertTrue(registered)
         self.assertEqual(options.notebook_selector[0].cells[0].language, "python")
         self.assertIsNone(options.notebook_selector[0].notebook)
+
+    def test_notebook_filter_compatibility_skips_unknown_model(self):
+        client = MagicMock()
+        client.protocol._converter = MagicMock()
+
+        with patch.object(
+            types,
+            "NotebookDocumentFilterWithCells",
+            None,
+        ):
+            registered = _register_notebook_filter_compatibility(client)
+
+        self.assertFalse(registered)
+        client.protocol._converter.register_structure_hook.assert_not_called()
+
+    def test_notebook_filter_compatibility_skips_changed_attrs_model(self):
+        client = MagicMock()
+        client.protocol._converter = MagicMock()
+        changed_model = type(
+            "ChangedNotebookFilter",
+            (),
+            {"__attrs_attrs__": (object(),)},
+        )
+
+        with patch.object(
+            types,
+            "NotebookDocumentFilterWithCells",
+            changed_model,
+        ):
+            registered = _register_notebook_filter_compatibility(client)
+
+        self.assertFalse(registered)
+        client.protocol._converter.register_structure_hook.assert_not_called()
+
+    def test_notebook_filter_compatibility_rejects_non_mapping_filter(self):
+        client = MagicMock()
+        converter = MagicMock()
+        client.protocol._converter = converter
+
+        registered = _register_notebook_filter_compatibility(client)
+        _, hook = converter.register_structure_hook.call_args[0]
+
+        self.assertTrue(registered)
+        with self.assertRaisesRegex(TypeError, "received list"):
+            hook([], object())
 
     @patch("context_builder.lsp_client.LanguageClient")
     def test_lsp_client_init_and_send(self, mock_lc_class):
@@ -647,6 +693,31 @@ class TestLspClient(unittest.TestCase):
 
         self.assertFalse(success)
         self.assertIsNone(client.client)
+        mock_client.shutdown_async.assert_not_awaited()
+        mock_client.stop.assert_not_awaited()
+
+    @patch("context_builder.lsp_client.LanguageClient")
+    def test_lsp_client_detects_process_that_exits_during_startup(
+        self, mock_lc_class
+    ):
+        mock_client = MagicMock()
+        mock_client.protocol._converter = MagicMock()
+        mock_client.start_io = AsyncMock()
+        mock_client.initialize_async = AsyncMock()
+        mock_client.shutdown_async = AsyncMock()
+        mock_client.stop = AsyncMock()
+        mock_client._server.returncode = 2
+        mock_lc_class.return_value = mock_client
+
+        client = MinimalLSPClient(["failing_lsp_binary"])
+        with patch("context_builder.lsp_client.warn_once") as mock_warn:
+            success = client.start()
+
+        self.assertFalse(success)
+        self.assertIsNone(client.client)
+        self.assertIn("RuntimeError", mock_warn.call_args.args[1])
+        self.assertIn("code 2", mock_warn.call_args.args[1])
+        mock_client.initialize_async.assert_not_awaited()
         mock_client.shutdown_async.assert_not_awaited()
         mock_client.stop.assert_not_awaited()
 

@@ -11,6 +11,7 @@ import inspect
 import os
 import re
 import urllib.parse
+from collections.abc import Mapping
 from pathlib import Path
 import threading
 from urllib.request import url2pathname
@@ -27,29 +28,66 @@ LSP_INSTANCES = {}
 
 
 def _register_notebook_filter_compatibility(client):
-    """Handle lsprotocol's missing hook for optional notebook filters."""
-    converter = client.protocol._converter  # pylint: disable=protected-access
-    notebook_filter_type = next(
-        field.type
-        for field in types.NotebookDocumentFilterWithCells.__attrs_attrs__
-        if field.name == "notebook"
+    """Register a narrow workaround for lsprotocol's optional-filter hook gap."""
+    # pygls 2.1.1 pins lsprotocol 2025.0.0, which exposes this attrs model.
+    # Feature detection is still intentional: if a future pygls/lsprotocol
+    # release changes its model or converter internals, skipping our workaround
+    # is safer than preventing every language server from starting. The upstream
+    # converter may no longer need the workaround in that environment.
+    filter_with_cells = getattr(types, "NotebookDocumentFilterWithCells", None)
+    filter_fields = getattr(filter_with_cells, "__attrs_attrs__", ())
+    notebook_field = next(
+        (
+            field
+            for field in filter_fields
+            if getattr(field, "name", None) == "notebook"
+        ),
+        None,
     )
+    notebook_field_type = getattr(notebook_field, "type", None)
+    protocol = getattr(client, "protocol", None)
+    converter = getattr(protocol, "_converter", None)
+    register_hook = getattr(converter, "register_structure_hook", None)
+    structure = getattr(converter, "structure", None)
+    filter_types = {
+        "notebookType": getattr(
+            types, "NotebookDocumentFilterNotebookType", None
+        ),
+        "scheme": getattr(types, "NotebookDocumentFilterScheme", None),
+        "pattern": getattr(types, "NotebookDocumentFilterPattern", None),
+    }
+    if (
+        notebook_field_type is None
+        or converter is None
+        or not callable(register_hook)
+        or not callable(structure)
+        or any(filter_type is None for filter_type in filter_types.values())
+    ):
+        return False
 
     def structure_notebook_filter(value, _type):
         if value is None or isinstance(value, str):
             return value
+        if not isinstance(value, Mapping):
+            # Do not silently coerce malformed server capabilities. A clear
+            # conversion error is preferable to registering the wrong filter.
+            raise TypeError(
+                "Notebook filter must be a string, mapping, or None; "
+                f"received {type(value).__name__}"
+            )
         if "notebookType" in value:
-            filter_type = types.NotebookDocumentFilterNotebookType
+            filter_type = filter_types["notebookType"]
         elif "scheme" in value:
-            filter_type = types.NotebookDocumentFilterScheme
+            filter_type = filter_types["scheme"]
         else:
-            filter_type = types.NotebookDocumentFilterPattern
-        return converter.structure(value, filter_type)
+            filter_type = filter_types["pattern"]
+        return structure(value, filter_type)
 
-    converter.register_structure_hook(
-        notebook_filter_type,
+    register_hook(
+        notebook_field_type,
         structure_notebook_filter,
     )
+    return True
 
 
 class LSPEventLoopThread(threading.Thread):
@@ -175,17 +213,34 @@ class MinimalLSPClient:
             nonlocal process_start_failed
             self.client = LanguageClient(name="SmartDiffContextBuilder-LSP", version="1.0")
             _register_notebook_filter_compatibility(self.client)
+            # pygls owns stdin/stdout/stderr for its JSON-RPC transport and
+            # captures stderr in a pipe. Supplying stderr here is not needed to
+            # keep the console clean and breaks pygls 2.x by passing the keyword
+            # twice to asyncio.create_subprocess_exec.
             start_task = asyncio.create_task(
                 self.client.start_io(self.cmd[0], *self.cmd[1:])
             )
             try:
                 await asyncio.sleep(0.1)
                 if start_task.done():
+                    # start_io completing is healthy: it means pygls spawned the
+                    # process and installed background transport tasks. It does
+                    # not mean the language-server process itself has exited.
                     try:
                         start_task.result()
                     except BaseException:
                         process_start_failed = True
                         raise
+                    server = getattr(self.client, "_server", None)
+                    returncode = getattr(server, "returncode", None)
+                    if isinstance(returncode, int):
+                        # asyncio subprocess return codes are integers. Checking
+                        # the process, rather than task completion alone, catches
+                        # a server that launched and immediately crashed.
+                        process_start_failed = True
+                        raise RuntimeError(
+                            f"LSP process exited during startup with code {returncode}"
+                        )
 
                 params = types.InitializeParams(
                     process_id=os.getpid(),
@@ -211,7 +266,11 @@ class MinimalLSPClient:
         except Exception as e:  # pylint: disable=broad-exception-caught
             if "fut" in locals():
                 fut.cancel()
-            warn_once("lsp_fail", f"Failed to start LSP {self.cmd[0]}: {e}")
+            warn_once(
+                "lsp_fail",
+                f"Failed to start LSP {self.cmd[0]} "
+                f"({type(e).__name__}): {e}",
+            )
             is_timeout = isinstance(
                 e,
                 (TimeoutError, asyncio.TimeoutError, concurrent.futures.TimeoutError),
