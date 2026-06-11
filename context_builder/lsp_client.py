@@ -11,6 +11,7 @@ import inspect
 import math
 import os
 import re
+import sys
 import urllib.parse
 from collections.abc import Mapping
 from pathlib import Path
@@ -27,6 +28,7 @@ from .sys_utils import warn_once
 
 USE_LSP = True
 LSP_INSTANCES = {}
+_LSP_PROGRESS_BAR_WIDTH = 24
 
 
 def _is_timeout_error(exc):
@@ -54,6 +56,107 @@ def _validate_lsp_timeout(value, default, config_key, cli_option):
         f"{cli_option} or by setting '{config_key}' in your config file.",
     )
     return default
+
+
+def _progress_field(value, name, default=None):
+    """Read a work-done progress field from protocol objects or raw mappings."""
+    if isinstance(value, Mapping):
+        return value.get(name, default)
+    return getattr(value, name, default)
+
+
+class LSPProgressReporter:
+    """Render standard LSP work-done progress without requiring server-specific APIs."""
+
+    def __init__(self, server_name):
+        self.server_name = server_name
+        self._states = {}
+        self._lock = threading.Lock()
+        try:
+            self._is_tty = bool(sys.stderr.isatty())
+        except Exception:  # pylint: disable=broad-exception-caught
+            self._is_tty = False
+
+    def create(self, token):
+        """Record a server-created progress token."""
+        with self._lock:
+            self._states.setdefault(token, {})
+
+    def update(self, token, value):
+        """Render one begin, report, or end progress notification."""
+        kind = _progress_field(value, "kind")
+        with self._lock:
+            state = self._states.setdefault(token, {})
+            if kind == "begin":
+                state["title"] = _progress_field(
+                    value, "title", f"{self.server_name} indexing"
+                )
+                state["last_bucket"] = -1
+                state["last_message"] = None
+                self._render(state, value)
+            elif kind == "report":
+                self._render(state, value)
+            elif kind == "end":
+                self._finish(state, value)
+                self._states.pop(token, None)
+
+    def _render(self, state, value):
+        title = state.get("title", f"{self.server_name} indexing")
+        message = _progress_field(value, "message") or ""
+        percentage = _progress_field(value, "percentage")
+        if isinstance(percentage, (int, float)):
+            percentage = max(0, min(100, int(percentage)))
+            bucket = percentage // 5
+            if self._is_tty:
+                filled = (percentage * _LSP_PROGRESS_BAR_WIDTH) // 100
+                progress_bar = (
+                    "#" * filled
+                    + "-" * (_LSP_PROGRESS_BAR_WIDTH - filled)
+                )
+                print(
+                    f"\r  [{progress_bar}] {percentage:3d}%  [LSP] {title}"
+                    f"{': ' + message if message else ''}",
+                    end="",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            elif bucket != state.get("last_bucket"):
+                print(
+                    f"  [LSP {percentage:3d}%] {title}"
+                    f"{': ' + message if message else ''}",
+                    file=sys.stderr,
+                )
+            state["last_bucket"] = bucket
+        elif message != state.get("last_message"):
+            print(
+                f"  [LSP] {title}{': ' + message if message else ''}",
+                file=sys.stderr,
+            )
+        state["last_message"] = message
+
+    def _finish(self, state, value):
+        title = state.get("title", f"{self.server_name} indexing")
+        message = _progress_field(value, "message") or "complete"
+        prefix = "\r" if self._is_tty else ""
+        print(
+            f"{prefix}  [LSP] {title}: {message}",
+            file=sys.stderr,
+            flush=self._is_tty,
+        )
+
+
+def _register_lsp_progress_handlers(client, reporter):
+    """Register standard work-done progress request and notification handlers."""
+    @client.feature(types.WINDOW_WORK_DONE_PROGRESS_CREATE)
+    def create_progress(_client, params):
+        reporter.create(_progress_field(params, "token"))
+
+    @client.feature(types.PROGRESS)
+    def report_progress(_client, params):
+        reporter.update(
+            _progress_field(params, "token"),
+            _progress_field(params, "value"),
+        )
 
 
 def _register_notebook_filter_compatibility(client):
@@ -254,6 +357,7 @@ class MinimalLSPClient:
             "--lsp-init-timeout",
         )
         self.client = None
+        self.progress = LSPProgressReporter(cmd[0])
         self.loop = get_lsp_loop()
 
     def start(self) -> bool:
@@ -268,6 +372,7 @@ class MinimalLSPClient:
             nonlocal process_start_failed
             self.client = LanguageClient(name="SmartDiffContextBuilder-LSP", version="1.0")
             _register_notebook_filter_compatibility(self.client)
+            _register_lsp_progress_handlers(self.client, self.progress)
             # pygls owns stdin/stdout/stderr for its JSON-RPC transport and
             # captures stderr in a pipe. Supplying stderr here is not needed to
             # keep the console clean and breaks pygls 2.x by passing the keyword
@@ -305,7 +410,11 @@ class MinimalLSPClient:
                 params = types.InitializeParams(
                     process_id=os.getpid(),
                     root_uri=Path(".").absolute().as_uri(),
-                    capabilities=types.ClientCapabilities(),
+                    capabilities=types.ClientCapabilities(
+                        window=types.WindowClientCapabilities(
+                            work_done_progress=True
+                        )
+                    ),
                 )
                 await asyncio.wait_for(
                     self.client.initialize_async(params),

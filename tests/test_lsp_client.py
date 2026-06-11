@@ -7,6 +7,7 @@
 import unittest
 import asyncio
 import concurrent.futures
+import io
 import time
 from unittest.mock import MagicMock, patch, AsyncMock
 
@@ -15,14 +16,107 @@ from pygls.lsp.client import LanguageClient
 
 from context_builder.lsp_client import (
     LSP_INSTANCES,
+    LSPProgressReporter,
     MinimalLSPClient,
     _get_lsp_process,
+    _register_lsp_progress_handlers,
     _register_notebook_filter_compatibility,
     cleanup_zombie_lsps,
     get_lsp_references,
 )
 
 class TestLspClient(unittest.TestCase):
+    def test_lsp_progress_reporter_renders_non_tty_milestones(self):
+        stream = io.StringIO()
+        reporter = LSPProgressReporter("clangd")
+
+        with patch("context_builder.lsp_client.sys.stderr", stream):
+            reporter._is_tty = False
+            reporter.create("index")
+            reporter.update(
+                "index",
+                types.WorkDoneProgressBegin(
+                    title="Indexing",
+                    percentage=0,
+                ),
+            )
+            reporter.update(
+                "index",
+                types.WorkDoneProgressReport(
+                    message="headers",
+                    percentage=3,
+                ),
+            )
+            reporter.update(
+                "index",
+                types.WorkDoneProgressReport(
+                    message="sources",
+                    percentage=10,
+                ),
+            )
+            reporter.update(
+                "index",
+                types.WorkDoneProgressEnd(message="ready"),
+            )
+
+        output = stream.getvalue()
+        self.assertIn("[LSP   0%] Indexing", output)
+        self.assertNotIn("3%", output)
+        self.assertIn("[LSP  10%] Indexing: sources", output)
+        self.assertIn("[LSP] Indexing: ready", output)
+
+    def test_lsp_progress_reporter_renders_tty_bar(self):
+        stream = io.StringIO()
+        reporter = LSPProgressReporter("rust-analyzer")
+
+        with patch("context_builder.lsp_client.sys.stderr", stream):
+            reporter._is_tty = True
+            reporter.update(
+                "index",
+                types.WorkDoneProgressBegin(
+                    title="Indexing",
+                    message="crates",
+                    percentage=50,
+                ),
+            )
+            reporter.update("index", types.WorkDoneProgressEnd())
+
+        output = stream.getvalue()
+        self.assertIn("[############------------]", output)
+        self.assertIn("50%", output)
+        self.assertIn("\r  [LSP] Indexing: complete", output)
+
+    def test_register_lsp_progress_handlers_routes_standard_messages(self):
+        handlers = {}
+
+        class FakeClient:  # pylint: disable=too-few-public-methods
+            def feature(self, method):
+                def decorator(func):
+                    handlers[method] = func
+                    return func
+                return decorator
+
+        reporter = MagicMock()
+        _register_lsp_progress_handlers(FakeClient(), reporter)
+
+        handlers[types.WINDOW_WORK_DONE_PROGRESS_CREATE](
+            None,
+            types.WorkDoneProgressCreateParams(token="index"),
+        )
+        handlers[types.PROGRESS](
+            None,
+            types.ProgressParams(
+                token="index",
+                value={"kind": "report", "percentage": 40},
+            ),
+        )
+
+        reporter.create.assert_called_once_with("index")
+        reporter.update.assert_called_once_with(
+            "index",
+            {"kind": "report", "percentage": 40},
+        )
+
     def test_get_lsp_process_prefers_current_pygls_server_attribute(self):
         client = MagicMock()
         current_process = object()
@@ -544,6 +638,10 @@ class TestLspClient(unittest.TestCase):
 
         mock_wait_for.assert_awaited_once()
         self.assertEqual(mock_wait_for.await_args.kwargs["timeout"], 75)
+        initialize_params = mock_client.initialize_async.call_args.args[0]
+        self.assertTrue(
+            initialize_params.capabilities.window.work_done_progress
+        )
 
     @patch("context_builder.lsp_client.warn_once")
     def test_lsp_query_timeout_warning_explains_configuration(self, mock_warn):

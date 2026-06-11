@@ -134,6 +134,10 @@ python smart_diff_context_builder.py --config .smdc_config.json
 | `--lsp-timeout` | float | `150` | LSP reference query timeout in seconds |
 | `--disable-pruning` | flag | off | Disable caller graph pruning (may significantly increase output size) |
 
+Language servers that publish standard LSP work-done progress display an indexing
+progress bar in interactive terminals and periodic milestone lines in redirected
+or CI output. Servers that do not publish progress continue without an indicator.
+
 ### Performance
 
 | Flag | Type | Default | Description |
