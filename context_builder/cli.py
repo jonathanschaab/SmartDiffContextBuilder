@@ -598,6 +598,15 @@ def _run_commit_range_worktree(args, commit_range):
             or DEFAULT_LSP_QUERY_TIMEOUT,
             WORKTREE_LSP_QUERY_TIMEOUT,
         )
+        # Keep the language server rooted in this checkout. In particular, do
+        # not point clangd at the original repository with
+        # `--compile-commands-dir` or share its writable `.cache/clangd` tree.
+        # The option selects a compilation database; it does not remap an
+        # existing index to the detached revision. Absolute paths and stale
+        # symbol/reference shards could therefore make worktree results describe
+        # the original checkout instead of end_sha. A future cache optimization
+        # should use a stable, repository-specific analysis worktree so clangd
+        # can validate and incrementally replace its own per-file index shards.
         run_scan(
             worktree_args,
             start_ref=start_sha,
