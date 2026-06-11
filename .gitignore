@@ -1,4 +1,6 @@
 __pycache__/
 .pytest_cache/
+.coverage
+coverage.xml
 *.pyc
 *_final.md
