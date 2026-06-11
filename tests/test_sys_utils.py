@@ -4,6 +4,7 @@ import sys
 import unittest
 from io import StringIO
 from unittest.mock import MagicMock, patch
+import context_builder.sys_utils as sys_utils
 from context_builder.sys_utils import (
     iter_scan_progress,
     run_command,
@@ -417,6 +418,7 @@ class TestSysUtils(unittest.TestCase):
         output = mock_err.getvalue()
         self.assertIn("[Scanning 1/120]", output)
         self.assertIn("callers of 'my_func'", output)
+        self.assertTrue(output.rstrip().endswith("[Scanning 120/120]  callers of 'my_func'"))
 
     def test_iter_scan_progress_stays_quiet_for_fast_path_results(self):
         """Regular filtered lists do not emit progress unless explicitly forced."""
@@ -459,3 +461,23 @@ class TestSysUtils(unittest.TestCase):
 
         self.assertEqual(scanned, [])
         self.assertEqual(mock_err.getvalue(), "")
+
+    def test_normalized_search_paths_are_cached_per_cwd(self):
+        """Repeated path normalization avoids repeated abspath work."""
+        sys_utils._NORMALIZED_PATH_CACHE.clear()  # pylint: disable=protected-access
+        actual_abspath = os.path.abspath
+        cwd = os.path.normcase(actual_abspath(os.getcwd()))
+
+        with patch(
+            "context_builder.sys_utils.os.path.abspath",
+            wraps=actual_abspath,
+        ) as mock_abspath:
+            first = sys_utils._normalize_search_result("src/a.py", cwd)
+            second = sys_utils._normalize_search_result("src/a.py", cwd)
+
+        self.assertEqual(first, second)
+        normalized_calls = [
+            call for call in mock_abspath.call_args_list
+            if call.args == ("src/a.py",)
+        ]
+        self.assertEqual(len(normalized_calls), 1)

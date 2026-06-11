@@ -328,6 +328,15 @@ class TestPreprocessor(unittest.TestCase):
             
         self.assertIn("MY_HEADER.H", result_upper)
 
+    def test_trace_macro_expansion_forces_progress_after_empty_prefilter(self):
+        """An exhaustive macro scan shows progress when ripgrep finds no source match."""
+        repo_files = ["one.h", "two.cpp"]
+        with patch("context_builder.preprocessor.ripgrep_filter", return_value=[]), \
+             patch("context_builder.preprocessor.iter_scan_progress", return_value=[]) as mock_iter:
+            trace_macro_expansion("generated_symbol", repo_files, file_cache=MagicMock())
+
+        self.assertTrue(mock_iter.call_args.kwargs["force"])
+
     def test_analyze_compile_commands_worktree_mapping(self):
         """Verify that when repo_root is passed, absolute paths in compile_commands.json
         pointing to the original repo are mapped to the active worktree (CWD) and read correctly."""
@@ -460,6 +469,17 @@ class TestPreprocessor(unittest.TestCase):
                 mock_warn.assert_any_call("ffi_pattern_non_string", ANY)
         finally:
             reset_config()
+
+    def test_build_ffi_registry_forces_progress_without_prefilter(self):
+        """An exhaustive FFI registry scan shows progress when no rg pattern is configured."""
+        from context_builder.config import CONFIG
+        repo_files = ["one.rs", "two.cpp"]
+
+        with patch.dict(CONFIG, {"ffi_rg_pattern": None}), \
+             patch("context_builder.preprocessor.iter_scan_progress", return_value=[]) as mock_iter:
+            build_ffi_registry(repo_files, file_cache=MagicMock())
+
+        self.assertTrue(mock_iter.call_args.kwargs["force"])
 
     def test_analyze_compile_commands_include_with_directory_prefix(self):
         """Verify that translation units are successfully linked to target files

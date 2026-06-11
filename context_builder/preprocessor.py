@@ -102,6 +102,7 @@ def trace_macro_expansion(func_name, repo_files, file_cache=None):
         fast_files,
         label=f"Scanning macro callers of '{func_name}'",
         min_files=50,
+        force=fast_files is repo_files,
     ):
         _process_single_macro_file(file_path, func_pattern, callers, file_cache)
     return callers
@@ -155,6 +156,7 @@ def build_ffi_registry(repo_files, file_cache=None):
         fast_files,
         label="Scanning FFI export pre-computation",
         min_files=100,
+        force=fast_files is repo_files,
     ):
         content = file_cache.get_content(file_path)
         for pattern in compiled_patterns:

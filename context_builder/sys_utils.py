@@ -112,6 +112,7 @@ HAS_RG = RipgrepChecker()
 
 
 _PROGRESS_BAR_WIDTH = 25
+_NORMALIZED_PATH_CACHE = {}
 
 
 class FileScanCandidates(list):
@@ -155,6 +156,7 @@ class ScanProgressBar:  # pylint: disable=too-few-public-methods
             and sys.stderr.isatty()
         )
         self._last_pct = -1
+        self._last_count = 0
         # Emit roughly 20 periodic lines for non-tty output
         self._interval = max(1, total // 20) if self.active else 1
 
@@ -178,9 +180,11 @@ class ScanProgressBar:  # pylint: disable=too-few-public-methods
                     flush=True,
                 )
                 self._last_pct = pct
+                self._last_count = idx + 1
         else:
             if idx % self._interval == 0:
                 print(f"  [Scanning {idx + 1}/{self.total}]  {self.label}", file=sys.stderr)
+                self._last_count = idx + 1
 
     def finish(self, completed=True):
         """Finalize the progress indicator after all files have been processed."""
@@ -195,6 +199,8 @@ class ScanProgressBar:  # pylint: disable=too-few-public-methods
                 )
             else:
                 print(file=sys.stderr)
+        elif completed and self._last_count != self.total:
+            print(f"  [Scanning {self.total}/{self.total}]  {self.label}", file=sys.stderr)
 
 
 def iter_scan_progress(files, label=None, min_files=100, force=False):
@@ -234,14 +240,23 @@ def _fallback_candidates(files, fallback_hint):
     return FileScanCandidates(files, fallback_hint)
 
 
-def _get_external_search_paths(files):
+def _get_cached_absolute_path(file_path, cwd):
+    """Return a normalized absolute path, caching repeated repository paths."""
+    cache_key = (cwd, file_path)
+    abs_path = _NORMALIZED_PATH_CACHE.get(cache_key)
+    if abs_path is None:
+        abs_path = os.path.normcase(os.path.abspath(file_path))
+        _NORMALIZED_PATH_CACHE[cache_key] = abs_path
+    return abs_path
+
+
+def _get_external_search_paths(files, cwd):
     """Return absolute candidate files that are outside the current directory."""
-    cwd = os.path.abspath(os.getcwd())
     external_paths = []
     for file_path in files:
         if not os.path.isabs(file_path):
             continue
-        abs_path = os.path.abspath(file_path)
+        abs_path = _get_cached_absolute_path(file_path, cwd)
         try:
             if os.path.commonpath([cwd, abs_path]) != cwd:
                 external_paths.append(file_path)
@@ -250,9 +265,9 @@ def _get_external_search_paths(files):
     return external_paths
 
 
-def _normalize_search_result(file_path):
+def _normalize_search_result(file_path, cwd):
     """Normalize a candidate or ripgrep result for reliable path comparison."""
-    return os.path.normcase(os.path.abspath(file_path)).replace("\\", "/")
+    return _get_cached_absolute_path(file_path, cwd).replace("\\", "/")
 
 
 def ripgrep_filter(files, token, fixed_strings=True, fallback_hint=None):
@@ -297,7 +312,8 @@ def ripgrep_filter(files, token, fixed_strings=True, fallback_hint=None):
             # -F treats the token as a literal fixed string rather than a regular expression
             cmd.append("-F")
         cmd.append(token)
-        external_paths = _get_external_search_paths(files)
+        cwd = os.path.normcase(os.path.abspath(os.getcwd()))
+        external_paths = _get_external_search_paths(files, cwd)
         has_local_candidates = len(external_paths) < len(files)
         cmd.append("--")
         if has_local_candidates:
@@ -314,13 +330,13 @@ def ripgrep_filter(files, token, fixed_strings=True, fallback_hint=None):
         # rg exits with 0 if matches are found, 1 if no matches are found, and 2 if an error occurs.
         if res.returncode == 0:
             rg_files = {
-                _normalize_search_result(file_path)
+                _normalize_search_result(file_path, cwd)
                 for file_path in res.stdout.splitlines()
             }
             return [
                 file_path
                 for file_path in files
-                if _normalize_search_result(file_path) in rg_files
+                if _normalize_search_result(file_path, cwd) in rg_files
             ]
         if res.returncode == 1:
             return []
