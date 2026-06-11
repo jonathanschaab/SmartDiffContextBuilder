@@ -23,7 +23,15 @@ class TestLanguageProfiles(unittest.TestCase):
 
     def test_c_family_profile(self):
         """C-family files expose preprocessing and compile database support."""
-        for file_path in ("main.c", "main.cpp", "main.h", "main.hpp"):
+        for file_path in (
+            "main.c",
+            "main.cc",
+            "main.cpp",
+            "main.cxx",
+            "main.h",
+            "main.hpp",
+            "main.hxx",
+        ):
             profile = get_language_profile(file_path)
             self.assertEqual(profile.name, "c-family")
             self.assertTrue(profile.supports_macro_expansion)
@@ -51,6 +59,10 @@ class TestLanguageProfiles(unittest.TestCase):
         self.assertEqual(get_language_profile("main.go").name, "go")
         self.assertEqual(get_language_profile("script.sh").comment_prefix, "#")
         self.assertEqual(get_language_profile("Makefile").comment_prefix, "#")
+        self.assertEqual(
+            get_language_profile("makefile-client").comment_prefix,
+            "#",
+        )
         self.assertEqual(get_language_profile("build.bat").comment_prefix, "REM")
 
     def test_unknown_language_fallback(self):

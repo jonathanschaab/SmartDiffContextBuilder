@@ -4,6 +4,7 @@ import re
 
 
 _STRING_LITERAL_PATTERN = re.compile(r'(["\'])(?:(?=(\\?))\2.)*?\1')
+_BLOCK_COMMENT_PATTERN = re.compile(r"/\*.*?\*/")
 _DECLARATION_PATTERN = re.compile(
     r"\b(?:fn|def|function|sub|func|class|macro)\s+([A-Za-z0-9_]+)"
 )
@@ -36,7 +37,7 @@ class LanguageProfile:
         """Remove strings and same-line comments before regex analysis."""
         cleaned = _STRING_LITERAL_PATTERN.sub("", line)
         if self.supports_block_comments:
-            cleaned = re.sub(r"/\*.*?\*/", "", cleaned)
+            cleaned = _BLOCK_COMMENT_PATTERN.sub("", cleaned)
         if self.line_comment and self.line_comment in cleaned:
             cleaned = cleaned.split(self.line_comment, 1)[0]
         return cleaned

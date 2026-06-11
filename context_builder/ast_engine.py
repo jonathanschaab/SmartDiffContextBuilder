@@ -10,6 +10,7 @@ import importlib
 from .sys_utils import iter_scan_progress, warn_once, ripgrep_filter
 from .cache import get_global_cache
 from .languages import UNKNOWN_LANGUAGE, get_language_profile
+from .languages.python import PYTHON
 
 try:
     import tree_sitter
@@ -106,7 +107,7 @@ AST_ENGINE = AstEngine()
 
 def strip_strings_and_comments(line, is_python=False):
     """Compatibility wrapper around language-profile comment stripping."""
-    profile = get_language_profile(".py") if is_python else UNKNOWN_LANGUAGE
+    profile = PYTHON if is_python else UNKNOWN_LANGUAGE
     return profile.strip_strings_and_comments(line)
 
 
