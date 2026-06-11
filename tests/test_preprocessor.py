@@ -23,6 +23,7 @@ class TestPreprocessor(unittest.TestCase):
         _preprocessor_mod._COMPILE_COMMANDS_STATE["cache"] = None
         _preprocessor_mod._COMPILE_COMMANDS_STATE["mtime"] = None
         _preprocessor_mod._COMPILE_COMMANDS_STATE["path"] = None
+        _preprocessor_mod.clear_preprocessed_cache()
 
     def tearDown(self):
         os.chdir(self.old_cwd)
@@ -351,6 +352,46 @@ class TestPreprocessor(unittest.TestCase):
 
         scanned_files = [call.args[0] for call in mock_process.call_args_list]
         self.assertEqual(scanned_files, ["macros.h", "main.c"])
+
+    def test_trace_macro_expansion_reuses_preprocessed_output(self):
+        """Multiple symbol searches preprocess each source snapshot only once."""
+        source_path = "main.c"
+        with open(source_path, "w", encoding="utf-8") as source_file:
+            source_file.write("#define BOTH() foo(); bar()\n")
+
+        expanded = "void test() { foo(); bar(); }\n"
+        with patch(
+            "context_builder.preprocessor.ripgrep_filter",
+            return_value=[source_path],
+        ), patch(
+            "context_builder.preprocessor.run_command",
+            return_value=expanded,
+        ) as mock_run, patch(
+            "context_builder.preprocessor._map_expanded_line_to_source",
+        ):
+            trace_macro_expansion("foo", [source_path], file_cache=MagicMock())
+            trace_macro_expansion("bar", [source_path], file_cache=MagicMock())
+
+        mock_run.assert_called_once_with(["clang", "-E", source_path], timeout=5)
+
+    def test_preprocessed_output_cache_invalidates_on_source_change(self):
+        """Changing a source file invalidates its cached preprocessor output."""
+        source_path = "main.c"
+        with open(source_path, "w", encoding="utf-8") as source_file:
+            source_file.write("int first;\n")
+
+        with patch(
+            "context_builder.preprocessor.run_command",
+            side_effect=["first expansion", "second expansion"],
+        ) as mock_run:
+            first = _preprocessor_mod._get_preprocessed_code(source_path)
+            with open(source_path, "w", encoding="utf-8") as source_file:
+                source_file.write("int second_value;\n")
+            second = _preprocessor_mod._get_preprocessed_code(source_path)
+
+        self.assertEqual(first, "first expansion")
+        self.assertEqual(second, "second expansion")
+        self.assertEqual(mock_run.call_count, 2)
 
     def test_analyze_compile_commands_worktree_mapping(self):
         """Verify that when repo_root is passed, absolute paths in compile_commands.json

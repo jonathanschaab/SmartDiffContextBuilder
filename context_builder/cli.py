@@ -26,6 +26,7 @@ from .lsp_client import cleanup_zombie_lsps
 from .preprocessor import (
     analyze_compile_commands,
     build_ffi_registry,
+    clear_preprocessed_cache,
 )
 from .sys_utils import (
     get_comment_prefix,
@@ -218,6 +219,7 @@ def _process_diff_files(
 def run_scan(args, start_ref=None, end_ref=None, output_dir=".", repo_root=None):
     """Execute the context scan."""
     file_cache = get_global_cache(args.max_cache_size_mb)
+    clear_preprocessed_cache()
     lsp_client.USE_LSP = not args.no_language_server
 
     print(f"\n[ContextLens] Scanning Git Diff Workspace [Format: {args.format.upper()}]")

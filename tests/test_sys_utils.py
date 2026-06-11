@@ -45,6 +45,9 @@ class TestSysUtils(unittest.TestCase):
 
         filtered = ripgrep_filter(["file1.py", "file2.py"], "query")
         self.assertEqual(filtered, ["file1.py"])
+        cmd = mock_run.call_args[0][0]
+        self.assertEqual(cmd[-3:], ["--", "file1.py", "file2.py"])
+        self.assertNotIn(".", cmd)
 
     def test_is_in_repo(self):
         import tempfile
@@ -136,6 +139,65 @@ class TestSysUtils(unittest.TestCase):
         self.assertEqual(filtered, [external_file])
         cmd = mock_run.call_args[0][0]
         self.assertEqual(cmd[-2:], ["--", external_file])
+
+    @patch("context_builder.sys_utils.HAS_RG", True)
+    @patch("context_builder.sys_utils._build_rg_file_batches")
+    @patch("subprocess.run")
+    def test_ripgrep_filter_merges_explicit_file_batches(
+        self, mock_run, mock_batches
+    ):
+        """Matches from multiple explicit-file batches are merged in input order."""
+        files = ["one.py", "two.py", "three.py"]
+        mock_batches.return_value = [["one.py", "two.py"], ["three.py"]]
+        first_res = MagicMock(returncode=0, stdout="two.py\n")
+        second_res = MagicMock(returncode=0, stdout="three.py\n")
+        mock_run.side_effect = [first_res, second_res]
+
+        filtered = ripgrep_filter(files, "query")
+
+        self.assertEqual(filtered, ["two.py", "three.py"])
+        self.assertEqual(mock_run.call_count, 2)
+        self.assertEqual(
+            mock_run.call_args_list[0].args[0][-3:],
+            ["--", "one.py", "two.py"],
+        )
+        self.assertEqual(
+            mock_run.call_args_list[1].args[0][-2:],
+            ["--", "three.py"],
+        )
+
+    @patch("context_builder.sys_utils.HAS_RG", True)
+    @patch("context_builder.sys_utils._build_rg_file_batches")
+    @patch("subprocess.run")
+    @patch("context_builder.sys_utils.warn_once")
+    def test_ripgrep_filter_later_batch_error_falls_back(
+        self, mock_warn, mock_run, mock_batches
+    ):
+        """A later batch error discards partial matches and scans all candidates."""
+        files = ["one.py", "two.py"]
+        mock_batches.return_value = [["one.py"], ["two.py"]]
+        first_res = MagicMock(returncode=0, stdout="one.py\n")
+        second_res = MagicMock(returncode=2, stdout="", stderr="batch failed")
+        mock_run.side_effect = [first_res, second_res]
+
+        filtered = ripgrep_filter(files, "query", fallback_hint="callers")
+
+        self.assertEqual(filtered, files)
+        mock_warn.assert_any_call("ripgrep_error", unittest.mock.ANY)
+        mock_warn.assert_any_call("ripgrep_fallback", unittest.mock.ANY)
+
+    def test_build_rg_file_batches_respects_character_budget(self):
+        """File batches split based on command length rather than file count."""
+        files = ["a.py", "longer-name.py", "third.py"]
+        base_cmd = ["rg", "-l", "-F", "query"]
+        single_batch_length = len(subprocess.list2cmdline(base_cmd + ["--", files[0]]))
+        batches = sys_utils._build_rg_file_batches(
+            base_cmd,
+            files,
+            max_chars=single_batch_length + 1,
+        )
+
+        self.assertEqual(batches, [["a.py"], ["longer-name.py"], ["third.py"]])
 
     def test_exit_on_fail_prints_error_before_exit(self):
         """When exit_on_fail=True, a helpful error message (with the command and

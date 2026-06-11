@@ -3,6 +3,7 @@
 import json
 import os
 import re
+from collections import OrderedDict
 
 from .cache import get_global_cache
 from .config import CONFIG
@@ -13,6 +14,56 @@ from .sys_utils import (
     run_command,
     warn_once,
 )
+
+_PREPROCESSED_CACHE_MAX_BYTES = 64 * 1024 * 1024
+_PREPROCESSED_CACHE = OrderedDict()
+_PREPROCESSED_CACHE_STATE = {"size_bytes": 0}
+
+
+def clear_preprocessed_cache():
+    """Clear cached preprocessor output before starting a new repository scan."""
+    _PREPROCESSED_CACHE.clear()
+    _PREPROCESSED_CACHE_STATE["size_bytes"] = 0
+
+
+def _cache_preprocessed_code(cache_key, signature, expanded_code):
+    """Store successful preprocessor output in a bounded LRU cache."""
+    previous = _PREPROCESSED_CACHE.pop(cache_key, None)
+    if previous:
+        _PREPROCESSED_CACHE_STATE["size_bytes"] -= len(previous["code"])
+
+    _PREPROCESSED_CACHE[cache_key] = {
+        "signature": signature,
+        "code": expanded_code,
+    }
+    _PREPROCESSED_CACHE_STATE["size_bytes"] += len(expanded_code)
+
+    while (
+        _PREPROCESSED_CACHE
+        and _PREPROCESSED_CACHE_STATE["size_bytes"] > _PREPROCESSED_CACHE_MAX_BYTES
+    ):
+        _, evicted = _PREPROCESSED_CACHE.popitem(last=False)
+        _PREPROCESSED_CACHE_STATE["size_bytes"] -= len(evicted["code"])
+
+
+def _get_preprocessed_code(file_path):
+    """Return cached clang preprocessor output for the current source snapshot."""
+    try:
+        stat = os.stat(file_path)
+    except OSError:
+        return run_command(["clang", "-E", file_path], timeout=5)
+
+    cache_key = os.path.normcase(os.path.abspath(file_path))
+    signature = (stat.st_mtime_ns, stat.st_size)
+    cached = _PREPROCESSED_CACHE.get(cache_key)
+    if cached and cached["signature"] == signature:
+        _PREPROCESSED_CACHE.move_to_end(cache_key)
+        return cached["code"]
+
+    expanded_code = run_command(["clang", "-E", file_path], timeout=5)
+    if expanded_code:
+        _cache_preprocessed_code(cache_key, signature, expanded_code)
+    return expanded_code
 
 
 def _add_macro_caller(orig_file, orig_line, callers, file_cache):
@@ -56,7 +107,7 @@ def _process_single_macro_file(file_path, func_pattern, callers, file_cache):
         return
 
     # Pass 1: Expand
-    expanded_code = run_command(["clang", "-E", file_path], timeout=5)
+    expanded_code = _get_preprocessed_code(file_path)
     if not expanded_code:
         return
 

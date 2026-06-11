@@ -3,6 +3,7 @@
 import os
 import subprocess
 import sys
+import time
 
 WARNED_MISSING_DEPS = set()
 
@@ -112,6 +113,7 @@ HAS_RG = RipgrepChecker()
 
 
 _PROGRESS_BAR_WIDTH = 25
+_RG_COMMAND_MAX_CHARS = 24000
 _NORMALIZED_PATH_CACHE = {}
 
 
@@ -250,22 +252,65 @@ def _get_cached_absolute_path(file_path, cwd):
     return abs_path
 
 
-def _get_external_search_paths(files, cwd):
-    """Return absolute candidate files that are outside the current directory."""
-    external_paths = []
-    for file_path in files:
-        abs_path = _get_cached_absolute_path(file_path, cwd)
-        try:
-            if os.path.commonpath([cwd, abs_path]) != cwd:
-                external_paths.append(file_path)
-        except ValueError:
-            external_paths.append(file_path)
-    return external_paths
-
-
 def _normalize_search_result(file_path, cwd):
     """Normalize a candidate or ripgrep result for reliable path comparison."""
     return _get_cached_absolute_path(file_path, cwd).replace("\\", "/")
+
+
+def _build_rg_file_batches(base_cmd, files, max_chars=_RG_COMMAND_MAX_CHARS):
+    """Split explicit file arguments into command-line-length-safe batches."""
+    base_length = len(subprocess.list2cmdline(base_cmd + ["--"]))
+    batches = []
+    current_batch = []
+    current_length = base_length
+    for file_path in files:
+        arg_length = len(subprocess.list2cmdline([file_path])) + 1
+        if current_batch and current_length + arg_length > max_chars:
+            batches.append(current_batch)
+            current_batch = []
+            current_length = base_length
+        current_batch.append(file_path)
+        current_length += arg_length
+    if current_batch:
+        batches.append(current_batch)
+    return batches
+
+
+def _run_rg_batches(base_cmd, files, cwd, timeout):
+    """Run explicit-file ripgrep batches and return normalized matches."""
+    batches = _build_rg_file_batches(base_cmd, files)
+    matched_files = set()
+    deadline = time.monotonic() + timeout
+    for batch_index, batch in enumerate(batches):
+        batch_timeout = timeout if batch_index == 0 else deadline - time.monotonic()
+        if batch_timeout <= 0:
+            raise subprocess.TimeoutExpired(cmd=base_cmd, timeout=timeout)
+        cmd = base_cmd + ["--"] + batch
+        res = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+            timeout=batch_timeout,
+        )
+        # rg exits with 0 if matches are found, 1 if no matches are found,
+        # and 2 if an error occurs.
+        if res.returncode == 0:
+            matched_files.update(
+                _normalize_search_result(file_path, cwd)
+                for file_path in res.stdout.splitlines()
+            )
+            continue
+        if res.returncode == 1:
+            continue
+        warn_once(
+            "ripgrep_error",
+            f"ripgrep exited with an unexpected return code {res.returncode}. "
+            f"Stderr: {res.stderr.strip()}"
+        )
+        return None
+    return matched_files
 
 
 def ripgrep_filter(files, token, fixed_strings=True, fallback_hint=None):
@@ -305,44 +350,19 @@ def ripgrep_filter(files, token, fixed_strings=True, fallback_hint=None):
         )
         timeout = 10
     try:
-        cmd = ["rg", "-l"]
+        base_cmd = ["rg", "-l"]
         if fixed_strings:
             # -F treats the token as a literal fixed string rather than a regular expression
-            cmd.append("-F")
-        cmd.append(token)
+            base_cmd.append("-F")
+        base_cmd.append(token)
         cwd = os.path.normcase(os.path.abspath(os.getcwd()))
-        external_paths = _get_external_search_paths(files, cwd)
-        has_local_candidates = len(external_paths) < len(files)
-        cmd.append("--")
-        if has_local_candidates:
-            cmd.append(".")
-        cmd.extend(external_paths)
-        res = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-            timeout=timeout,
-        )
-        # rg exits with 0 if matches are found, 1 if no matches are found, and 2 if an error occurs.
-        if res.returncode == 0:
-            rg_files = {
-                _normalize_search_result(file_path, cwd)
-                for file_path in res.stdout.splitlines()
-            }
+        matched_files = _run_rg_batches(base_cmd, files, cwd, timeout)
+        if matched_files is not None:
             return [
                 file_path
                 for file_path in files
-                if _normalize_search_result(file_path, cwd) in rg_files
+                if _normalize_search_result(file_path, cwd) in matched_files
             ]
-        if res.returncode == 1:
-            return []
-        warn_once(
-            "ripgrep_error",
-            f"ripgrep exited with an unexpected return code {res.returncode}. "
-            f"Stderr: {res.stderr.strip()}"
-        )
 
     except subprocess.TimeoutExpired:
         warn_once(
