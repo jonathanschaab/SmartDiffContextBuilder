@@ -48,14 +48,14 @@ def run_command(cmd, exit_on_fail=False, timeout=None):
         if exit_on_fail:
             # Print a helpful message before exiting so users can diagnose failures
             # (e.g. running outside a git repository, missing permissions, etc.)
-            print(f"\n[ContextLens Error] Command failed: {' '.join(cmd)}")
+            print(f"\n[SmartDiffContextBuilder Error] Command failed: {' '.join(cmd)}")
             if e.stderr and e.stderr.strip():
                 print(f"  Reason: {e.stderr.strip()}")
             sys.exit(1)
         return ""
     except FileNotFoundError:
         if exit_on_fail:
-            print(f"\n[ContextLens Error] Executable not found: {cmd[0]}")
+            print(f"\n[SmartDiffContextBuilder Error] Executable not found: {cmd[0]}")
             sys.exit(1)
         return ""
 

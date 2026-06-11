@@ -74,7 +74,7 @@ class TestCommitRangeIntegration(unittest.TestCase):
 
         # Verify no temporary worktree leaked
         worktree_list = subprocess.run(["git", "worktree", "list"], check=True, stdout=subprocess.PIPE, text=True).stdout.strip()
-        self.assertNotIn("context_lens_worktree_", worktree_list)
+        self.assertNotIn("smdc_worktree_", worktree_list)
 
     def test_range_minus_relative(self):
         # Format: -2 (from HEAD~2, which is Commit A, to HEAD, which is Commit C)
@@ -96,7 +96,7 @@ class TestCommitRangeIntegration(unittest.TestCase):
         self.assertIn("def world()", payload)
 
         worktree_list = subprocess.run(["git", "worktree", "list"], check=True, stdout=subprocess.PIPE, text=True).stdout.strip()
-        self.assertNotIn("context_lens_worktree_", worktree_list)
+        self.assertNotIn("smdc_worktree_", worktree_list)
 
     def test_range_plus_relative(self):
         # Format: CommitA+2 (from Commit A, plus 2 chronological commits, which lands on Commit C)
@@ -118,7 +118,7 @@ class TestCommitRangeIntegration(unittest.TestCase):
         self.assertIn("def world()", payload)
 
         worktree_list = subprocess.run(["git", "worktree", "list"], check=True, stdout=subprocess.PIPE, text=True).stdout.strip()
-        self.assertNotIn("context_lens_worktree_", worktree_list)
+        self.assertNotIn("smdc_worktree_", worktree_list)
 
     def test_range_end_minus_relative(self):
         # Format: CommitC-2 (Commit C minus 2 commits, starts at Commit A, ends at Commit C)
@@ -140,7 +140,7 @@ class TestCommitRangeIntegration(unittest.TestCase):
         self.assertIn("def world()", payload)
 
         worktree_list = subprocess.run(["git", "worktree", "list"], check=True, stdout=subprocess.PIPE, text=True).stdout.strip()
-        self.assertNotIn("context_lens_worktree_", worktree_list)
+        self.assertNotIn("smdc_worktree_", worktree_list)
 
     def test_invalid_range_handling(self):
         # Invalid format or unresolved commit ref

@@ -11,7 +11,7 @@ from .ast_engine import LANG_MAP, split_massive_block_ast
 class VolumeManager:
     """Manages context payload creation, token budget enforcement, and markdown generation."""
 
-    def __init__(self, fmt, max_lines, max_mb, base_name="ContextLens", output_dir="."):
+    def __init__(self, fmt, max_lines, max_mb, base_name="SmartDiffContextBuilder", output_dir="."):
         """Initialize the volume manager with volume constraints.
 
         Args:
@@ -198,4 +198,4 @@ class VolumeManager:
         out_path = os.path.join(self.output_dir, f"{self.base_name}_final.md")
         with open(out_path, "w", encoding="utf-8") as f:
             f.write(payload)
-        print(f"\n[ContextLens] Successfully generated {out_path}")
+        print(f"\n[SmartDiffContextBuilder] Successfully generated {out_path}")

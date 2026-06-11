@@ -51,7 +51,7 @@ class TestConfig(unittest.TestCase):
         
         # Check inactive fields are commented out
         self.assertIn('// "max_mb": 2.0', config_str)
-        self.assertIn('// "base_name": "ContextLens"', config_str)
+        self.assertIn('// "base_name": "SmartDiffContextBuilder"', config_str)
 
     def test_config_dict_proxy(self):
         from context_builder.config import ConfigDictProxy
