@@ -16,12 +16,34 @@ from pygls.lsp.client import LanguageClient
 from context_builder.lsp_client import (
     LSP_INSTANCES,
     MinimalLSPClient,
+    _get_lsp_process,
     _register_notebook_filter_compatibility,
     cleanup_zombie_lsps,
     get_lsp_references,
 )
 
 class TestLspClient(unittest.TestCase):
+    def test_get_lsp_process_prefers_current_pygls_server_attribute(self):
+        client = MagicMock()
+        current_process = object()
+        legacy_process = object()
+        client._server = current_process
+        client.subprocess = legacy_process
+
+        self.assertIs(_get_lsp_process(client), current_process)
+
+    def test_get_lsp_process_falls_back_to_legacy_subprocess_attribute(self):
+        client = MagicMock(spec=["subprocess"])
+        legacy_process = object()
+        client.subprocess = legacy_process
+
+        self.assertIs(_get_lsp_process(client), legacy_process)
+
+    def test_get_lsp_process_returns_none_without_process_attributes(self):
+        client = MagicMock(spec=[])
+
+        self.assertIsNone(_get_lsp_process(client))
+
     def test_notebook_filter_compatibility_accepts_cells_only_selector(self):
         client = LanguageClient(name="test-client", version="1.0")
         registered = _register_notebook_filter_compatibility(client)
@@ -662,6 +684,7 @@ class TestLspClient(unittest.TestCase):
         mock_subproc = MagicMock()
         mock_subproc.returncode = None
         mock_client.subprocess = mock_subproc
+        mock_client._server = None
 
         client = MinimalLSPClient(["some_lsp_binary"])
         client.client = mock_client
@@ -793,6 +816,7 @@ class TestLspClient(unittest.TestCase):
         mock_subproc = MagicMock()
         mock_subproc.returncode = None
         mock_client.subprocess = mock_subproc
+        mock_client._server = None
         mock_client.stopped = False
 
         async def mock_shutdown_async(*args):
@@ -889,6 +913,7 @@ class TestLspClient(unittest.TestCase):
         mock_subproc = MagicMock()
         mock_subproc.returncode = None
         mock_client.subprocess = mock_subproc
+        mock_client._server = None
         mock_client.stopped = False
 
         mock_client.shutdown_async = AsyncMock()
@@ -911,6 +936,7 @@ class TestLspClient(unittest.TestCase):
         mock_subproc.returncode = None
         mock_subproc.kill.side_effect = lambda: setattr(mock_subproc, 'returncode', -9)
         mock_client.subprocess = mock_subproc
+        mock_client._server = None
 
         mock_shutdown = AsyncMock()
         mock_client.shutdown_async = mock_shutdown

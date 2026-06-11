@@ -90,6 +90,15 @@ def _register_notebook_filter_compatibility(client):
     return True
 
 
+def _get_lsp_process(client):
+    """Return the subprocess object exposed by the active pygls client."""
+    # pygls 2.1.1, our current minimum, stores the process in the private
+    # `_server` attribute. Older releases and some compatible client wrappers
+    # expose it as `subprocess` instead. Centralizing that version boundary keeps
+    # startup crash detection and every cleanup path from drifting apart.
+    return getattr(client, "_server", None) or getattr(client, "subprocess", None)
+
+
 class LSPEventLoopThread(threading.Thread):
     """A background thread hosting an asyncio event loop for language client communication."""
 
@@ -231,7 +240,7 @@ class MinimalLSPClient:
                     except BaseException:
                         process_start_failed = True
                         raise
-                    server = getattr(self.client, "_server", None)
+                    server = _get_lsp_process(self.client)
                     returncode = getattr(server, "returncode", None)
                     if isinstance(returncode, int):
                         # asyncio subprocess return codes are integers. Checking
@@ -403,9 +412,7 @@ class MinimalLSPClient:
 
         if force_kill:
             try:
-                server = getattr(client, "subprocess", None) or getattr(
-                    client, "_server", None
-                )
+                server = _get_lsp_process(client)
                 if server and server.returncode is None:
                     server.kill()
             except Exception:  # pylint: disable=broad-exception-caught
@@ -427,9 +434,7 @@ class MinimalLSPClient:
                 await _async_clean_method(client, "exit", use_wait_for=False)
                 await _async_clean_method(client, "stop")
 
-            server = getattr(client, "subprocess", None) or getattr(
-                client, "_server", None
-            )
+            server = _get_lsp_process(client)
             if server and server.returncode is None:
                 try:
                     server.kill()
@@ -443,9 +448,7 @@ class MinimalLSPClient:
             if "fut" in locals():
                 fut.cancel()
             try:
-                server = getattr(client, "subprocess", None) or getattr(
-                    client, "_server", None
-                )
+                server = _get_lsp_process(client)
                 if server and server.returncode is None:
                     server.kill()
             except Exception:  # pylint: disable=broad-exception-caught
