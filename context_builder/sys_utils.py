@@ -251,7 +251,7 @@ def _get_cached_absolute_path(file_path, cwd):
     cache_key = (cwd, file_path)
     abs_path = _NORMALIZED_PATH_CACHE.get(cache_key)
     if abs_path is None:
-        abs_path = os.path.normcase(os.path.abspath(file_path))
+        abs_path = os.path.normcase(os.path.abspath(os.path.join(cwd, file_path)))
         _NORMALIZED_PATH_CACHE[cache_key] = abs_path
     return abs_path
 

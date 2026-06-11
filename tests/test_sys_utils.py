@@ -1,6 +1,7 @@
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
 from io import StringIO
 from unittest.mock import MagicMock, patch
@@ -570,6 +571,7 @@ class TestSysUtils(unittest.TestCase):
         sys_utils._NORMALIZED_PATH_CACHE.clear()  # pylint: disable=protected-access
         actual_abspath = os.path.abspath
         cwd = os.path.normcase(actual_abspath(os.getcwd()))
+        expected_input = os.path.join(cwd, "src/a.py")
 
         with patch(
             "context_builder.sys_utils.os.path.abspath",
@@ -581,6 +583,27 @@ class TestSysUtils(unittest.TestCase):
         self.assertEqual(first, second)
         normalized_calls = [
             call for call in mock_abspath.call_args_list
-            if call.args == ("src/a.py",)
+            if call.args == (expected_input,)
         ]
         self.assertEqual(len(normalized_calls), 1)
+
+    def test_normalized_search_paths_resolve_relative_to_supplied_cwd(self):
+        """Relative results use the search cwd, not the process cwd."""
+        sys_utils._NORMALIZED_PATH_CACHE.clear()  # pylint: disable=protected-access
+        search_cwd = os.path.abspath(os.path.join(os.getcwd(), "search-root"))
+        expected = os.path.normcase(
+            os.path.abspath(os.path.join(search_cwd, "src", "a.py"))
+        ).replace("\\", "/")
+
+        with tempfile.TemporaryDirectory() as process_cwd:
+            old_cwd = os.getcwd()
+            try:
+                os.chdir(process_cwd)
+                normalized = sys_utils._normalize_search_result(
+                    os.path.join("src", "a.py"),
+                    search_cwd,
+                )
+            finally:
+                os.chdir(old_cwd)
+
+        self.assertEqual(normalized, expected)
