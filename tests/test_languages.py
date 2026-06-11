@@ -1,3 +1,5 @@
+# pylint: disable=too-many-public-methods
+
 """Tests for language profile resolution and fallback behavior."""
 
 import unittest

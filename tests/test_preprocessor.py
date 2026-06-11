@@ -1,3 +1,8 @@
+# pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
+# pylint: disable=attribute-defined-outside-init,import-outside-toplevel,unused-argument
+# pylint: disable=protected-access,redefined-outer-name,reimported,consider-using-with
+# pylint: disable=unspecified-encoding,line-too-long,too-many-lines,too-many-public-methods
+
 import os
 import subprocess
 import tempfile
@@ -87,10 +92,9 @@ class TestPreprocessor(unittest.TestCase):
         self.assertNotIn("other.cpp", callers)
 
     def test_analyze_compile_commands_relative_paths(self):
-        import shutil
         os.makedirs("build", exist_ok=True)
         os.makedirs("src", exist_ok=True)
-        
+
         db = [
             {
                 "directory": os.path.abspath("build"),
@@ -123,7 +127,7 @@ class TestPreprocessor(unittest.TestCase):
             f.write(code)
 
         cache = LRUFileCache(capacity=5)
-        
+
         # Build registry
         exports = build_ffi_registry([file_path], file_cache=cache)
         self.assertIn("export_rust_func", exports)
@@ -213,7 +217,7 @@ class TestPreprocessor(unittest.TestCase):
             return_value=(expanded, "success"),
         ), \
              patch("context_builder.preprocessor.os.path.relpath",
-                   side_effect=ValueError("path is on mount 'D:'")) as mock_rp, \
+                   side_effect=ValueError("path is on mount 'D:'")), \
              patch("context_builder.preprocessor.os.path.exists", return_value=False):
             # Should not raise even though relpath raises ValueError
             result = trace_macro_expansion(
@@ -307,17 +311,17 @@ class TestPreprocessor(unittest.TestCase):
             f'# 1 "{header_path}"\n'
             "void my_func() {}\n"
         )
-        
+
         mock_cache = MagicMock()
         mock_cache.get_lines.return_value = ["#define MY_MACRO 10"]
-        
+
         with patch(
             "context_builder.preprocessor._run_clang_preprocessor",
             return_value=(expanded, "success"),
         ), \
              patch("context_builder.preprocessor.os.path.exists", return_value=True):
             result = trace_macro_expansion("my_func", [header_path], file_cache=mock_cache)
-            
+
         self.assertIn("my_header.h", result)
         self.assertEqual(result["my_header.h"][0]["code"], "// [Macro Expansion Link] #define MY_MACRO 10")
 
@@ -325,19 +329,19 @@ class TestPreprocessor(unittest.TestCase):
         header_path_upper = "MY_HEADER.H"
         with open(header_path_upper, "w") as f:
             f.write("#define JOIN(a, b) a ## b\n")
-            
+
         expanded_upper = (
             f'# 1 "{header_path_upper}"\n'
             "void my_func() {}\n"
         )
-        
+
         with patch(
             "context_builder.preprocessor._run_clang_preprocessor",
             return_value=(expanded_upper, "success"),
         ), \
              patch("context_builder.preprocessor.os.path.exists", return_value=True):
             result_upper = trace_macro_expansion("my_func", [header_path_upper], file_cache=mock_cache)
-            
+
         self.assertIn("MY_HEADER.H", result_upper)
 
     def test_trace_macro_expansion_skips_safe_empty_prefilter(self):
@@ -619,7 +623,7 @@ class TestPreprocessor(unittest.TestCase):
 
         ref_cpp_orig = os.path.join(original_repo, "src", "other.cpp")
         ref_cpp_wt = os.path.join(worktree, "src", "other.cpp")
-        
+
         # Write different contents to the original and worktree files
         # Since we want to analyze the worktree file, the include match should succeed on the worktree content but fail on the original
         with open(ref_cpp_orig, "w") as f:
@@ -634,7 +638,7 @@ class TestPreprocessor(unittest.TestCase):
                 "file": ref_cpp_orig
             }
         ]
-        
+
         # Write compile_commands.json in the worktree directory (simulating main behavior)
         with open(os.path.join(worktree, "compile_commands.json"), "w") as f:
             json.dump(db, f)
@@ -681,9 +685,7 @@ class TestPreprocessor(unittest.TestCase):
     def test_custom_ffi_patterns(self):
         """Verify that build_ffi_registry respects custom ffi_rg_pattern and ffi_patterns in CONFIG."""
         from context_builder.config import CONFIG, reset_config
-        orig_rg = CONFIG['ffi_rg_pattern']
-        orig_patterns = CONFIG['ffi_patterns'].copy()
-        
+
         try:
             # Setup custom FFI settings
             CONFIG['ffi_rg_pattern'] = "MY_FFI_EXPORT"
@@ -691,7 +693,7 @@ class TestPreprocessor(unittest.TestCase):
                 r'MY_FFI_EXPORT\s+([A-Za-z0-9_]+)',
                 r'INVALID_REGEX_(' # Intentional invalid regex
             ]
-            
+
             code = (
                 "MY_FFI_EXPORT my_custom_func\n"
                 "extern \"C\" not_matched_func\n"
@@ -699,10 +701,10 @@ class TestPreprocessor(unittest.TestCase):
             file_path = "ffi_test.rs"
             with open(file_path, "w", encoding="utf-8") as f:
                 f.write(code)
-                
+
             cache = LRUFileCache(capacity=5)
             cache.get_content(file_path)
-            
+
             with patch("context_builder.preprocessor.warn_once") as mock_warn:
                 symbols = build_ffi_registry([file_path], file_cache=cache)
                 self.assertIn("my_custom_func", symbols)
@@ -710,7 +712,7 @@ class TestPreprocessor(unittest.TestCase):
                 # Verify that warning was triggered for invalid regex
                 mock_warn.assert_called_once()
                 self.assertIn("ffi_regex_compile_fail", mock_warn.call_args[0][0])
-                
+
         finally:
             reset_config()
 
@@ -718,20 +720,20 @@ class TestPreprocessor(unittest.TestCase):
         """Verify that build_ffi_registry doesn't crash on null or non-string FFI patterns."""
         from context_builder.config import CONFIG, reset_config
         reset_config()
-        
+
         file_path = "ffi_safety.rs"
         with open(file_path, "w", encoding="utf-8") as f:
             f.write("fn test() {}\n")
-            
+
         cache = LRUFileCache(capacity=5)
         cache.get_content(file_path)
-        
+
         try:
             # 1. Null pattern test
             CONFIG['ffi_patterns'] = None
             symbols = build_ffi_registry([file_path], file_cache=cache)
             self.assertEqual(len(symbols), 0)
-            
+
             # 2. Non-string pattern test
             CONFIG['ffi_patterns'] = [123, True, "fn\\s+([a-z]+)"]
             CONFIG['ffi_rg_pattern'] = r"\bfn\b"
@@ -850,7 +852,7 @@ per.h"
             # Write to src/other.cpp
             with open("src/other.cpp", "w", encoding="utf-8", newline="") as f:
                 f.write(inc)
-            
+
             # Pass a fresh cache instance to force reload of file content
             cache = LRUFileCache()
             callers = analyze_compile_commands("src/helper.h", file_cache=cache)
@@ -866,7 +868,7 @@ per.h"
             '  // #include "helper.h"\n',
             '/* #include "helper.h" */\n',
             'int x = 0; #include "helper.h"\n',
-            """#include 
+            """#include
 "utils/helper.h"
 """,
             """#include "utils/
@@ -889,7 +891,7 @@ helper.h"
         for inc in non_matching_includes:
             with open("src/other.cpp", "w", encoding="utf-8", newline="") as f:
                 f.write(inc)
-            
+
             cache = LRUFileCache()
             callers = analyze_compile_commands("src/helper.h", file_cache=cache)
             self.assertNotIn("src/other.cpp", callers, f"Incorrectly matched: {inc.strip()}")
@@ -925,7 +927,7 @@ helper.h"
         # 1. Matching case: include contains a space matching the target
         with open("src/other.cpp", "w", encoding="utf-8", newline="") as f:
             f.write('#include "my helper.h"\n')
-        
+
         cache = LRUFileCache()
         callers = analyze_compile_commands("src/my helper.h", file_cache=cache)
         self.assertIn("src/other.cpp", callers)
@@ -933,7 +935,7 @@ helper.h"
         # 2. Non-matching case: include does not contain the space (un-spaced filename)
         with open("src/other.cpp", "w", encoding="utf-8", newline="") as f:
             f.write('#include "myhelper.h"\n')
-        
+
         cache = LRUFileCache()
         callers = analyze_compile_commands("src/my helper.h", file_cache=cache)
         self.assertNotIn("src/other.cpp", callers)

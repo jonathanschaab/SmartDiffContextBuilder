@@ -1,7 +1,12 @@
+# pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
+# pylint: disable=attribute-defined-outside-init,import-outside-toplevel,unused-argument
+# pylint: disable=protected-access,redefined-outer-name,reimported,consider-using-with
+# pylint: disable=line-too-long,too-many-lines,too-many-public-methods,broad-exception-caught
+# pylint: disable=too-few-public-methods,no-else-return
+
 import os
 import unittest
 from unittest.mock import patch, MagicMock, ANY
-import sys
 import argparse
 from context_builder.cli import main
 
@@ -62,7 +67,7 @@ class TestCLI(unittest.TestCase):
         mock_cache.get_lines.side_effect = lambda path: [
             "def root_func():\n" if path == "file1.py" else "def caller_func():\n"
         ] * 20
-        
+
         # Mock LSP reference queries:
         # depth 0: file1.py, root_func -> caller in file2.py at line 5
         # depth 1: file2.py, caller_func -> caller in file3.py at line 30 (which exceeds caller_depth=2 limit)
@@ -89,7 +94,7 @@ class TestCLI(unittest.TestCase):
         # Verify that add_callers was called with distance=1 for file2.py, and distance=2 for file3.py
         calls = mock_vm.add_callers.call_args_list
         self.assertTrue(len(calls) >= 2)
-        
+
         # First caller addition (depth 1)
         first_call_args = calls[0][0]
         self.assertEqual(first_call_args[1], {"file2.py": [{"line": 5, "code": "root_func()"}]})
@@ -99,7 +104,7 @@ class TestCLI(unittest.TestCase):
         second_call_args = calls[1][0]
         self.assertEqual(second_call_args[1], {"file3.py": [{"line": 30, "code": "caller_func()"}]})
         self.assertEqual(calls[1][1]["distance"], 2)
-        
+
         # Verify that flush was called
         mock_vm.flush_all_volumes.assert_called_once()
 
@@ -326,7 +331,7 @@ class TestCLI(unittest.TestCase):
         # LSP returns a caller in caller.py
         with patch("context_builder.graph_tracer.get_lsp_references") as mock_get_lsp:
             mock_get_lsp.return_value = {"caller.py": [{"line": 5, "code": "foo(a)"}]}
-            
+
             mock_vm = MagicMock()
             mock_vm_cls.return_value = mock_vm
 
@@ -408,12 +413,12 @@ class TestCLI(unittest.TestCase):
         mock_args = CliNamespace()
         mock_args.commit_range = "-3"
         mock_parse_args.return_value = mock_args
-        
+
         mock_resolve_range.return_value = ("start_sha", "end_sha")
-        
+
         # Simulating run_scan raising an exception (original error)
         mock_run_scan.side_effect = RuntimeError("Original scan error")
-        
+
         # Simulating git worktree remove failing in the finally block
         # We also need to recreate the directory if git worktree add is run in the test because
         # it was deleted via os.rmdir in cli.py, and os.chdir requires it to exist.
@@ -430,7 +435,7 @@ class TestCLI(unittest.TestCase):
 
         with self.assertRaises(RuntimeError) as ctx:
             main()
-            
+
         # Verify the original exception is preserved, not masked by cleanup failures
         self.assertEqual(str(ctx.exception), "Original scan error")
 
@@ -491,27 +496,27 @@ class TestCLI(unittest.TestCase):
 
     def test_extract_function_name_c_style(self):
         from context_builder.graph_tracer import extract_function_name
-        
+
         # Test standard Python/Rust with keyword
         res = extract_function_name("def my_python_func(x):", 0, 5)
         self.assertEqual(res, "my_python_func")
-        
+
         # Test C-style (no keyword, identifier followed by parenthesis)
         res = extract_function_name("void my_c_func(int x) {", 10, 15)
         self.assertEqual(res, "my_c_func")
-        
+
         # Test C-style with spaces before parenthesis
         res = extract_function_name("int spaced_func   (double y)", 20, 25)
         self.assertEqual(res, "spaced_func")
-        
+
         # Test exclusion of control flow keywords
         res = extract_function_name("if (x > y) {", 30, 35)
         self.assertEqual(res, "block_lines_30_35")
-        
+
         # Test another control flow
         res = extract_function_name("while (true)", 40, 45)
         self.assertEqual(res, "block_lines_40_45")
-        
+
         # Test C++ destructor (~MyClass)
         res = extract_function_name("MyClass::~MyClass() {", 50, 55)
         self.assertEqual(res, "~MyClass")
@@ -519,7 +524,7 @@ class TestCLI(unittest.TestCase):
     @patch("context_builder.cli.run_command")
     def test_get_default_branch(self, mock_run):
         from context_builder.cli import get_default_branch
-        
+
         # Test case 1: main exists
         def run_side_effect(cmd, **kwargs):
             if "rev-parse" in cmd and "main" in cmd:
@@ -527,7 +532,7 @@ class TestCLI(unittest.TestCase):
             return ""
         mock_run.side_effect = run_side_effect
         self.assertEqual(get_default_branch(), "main")
-        
+
         # Test case 2: main does not exist, but master does
         def run_side_effect_master(cmd, **kwargs):
             if "rev-parse" in cmd and "master" in cmd:
@@ -535,7 +540,7 @@ class TestCLI(unittest.TestCase):
             return ""
         mock_run.side_effect = run_side_effect_master
         self.assertEqual(get_default_branch(), "master")
-        
+
         # Test case 3: neither exist (fallback to main)
         mock_run.side_effect = lambda cmd, **kwargs: ""
         self.assertEqual(get_default_branch(), "main")
@@ -584,9 +589,9 @@ class TestCLI(unittest.TestCase):
     @patch("context_builder.cli.resolve_commit_ref")
     def test_parse_and_resolve_range_start_plus_zero(self, mock_resolve):
         from context_builder.cli import parse_and_resolve_range
-        
+
         mock_resolve.side_effect = lambda ref: f"sha_{ref}"
-        
+
         # HEAD+0 should resolve to ("sha_HEAD", "sha_HEAD")
         start, end = parse_and_resolve_range("HEAD+0")
         self.assertEqual(start, "sha_HEAD")
@@ -641,22 +646,22 @@ class TestCLI(unittest.TestCase):
         mock_args = CliNamespace()
         mock_args.commit_range = "-1"
         mock_parse_args.return_value = mock_args
-        
+
         # Resolve range returns "sha_end" as the end SHA
         mock_resolve_range.return_value = ("sha_start", "sha_end")
-        
+
         # Mock git rev-parse HEAD subprocess call to return "sha_end"
         mock_res = MagicMock(returncode=0)
         mock_res.stdout = "sha_end\n"
         mock_sub_run.return_value = mock_res
-        
+
         main()
-        
+
         # Verify that git worktree add was NOT called
         for call in mock_sub_run.call_args_list:
             cmd = call[0][0]
             self.assertFalse("worktree" in cmd and "add" in cmd)
-            
+
         # Verify that run_scan was called directly
         mock_run_scan.assert_called_once_with(mock_args, start_ref="sha_start", end_ref="sha_end")
 
@@ -725,7 +730,7 @@ class TestCLI(unittest.TestCase):
         """Verify that loading a config file updates CONFIG and merges keys correctly."""
         from context_builder.config import CONFIG, reset_config
         reset_config()
-        
+
         # Create temp config file with comments
         config_content = """
         // custom test config
@@ -740,18 +745,18 @@ class TestCLI(unittest.TestCase):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as f:
             f.write(config_content)
             config_path = f.name
-            
+
         try:
             mock_args = CliNamespace()
             mock_args.config = config_path
             mock_parse_args.return_value = mock_args
-            
+
             main()
-            
+
             # Assert CONFIG is updated
             self.assertEqual(CONFIG["max_lines"], 4200)
             self.assertEqual(CONFIG["lang_map"][".custom"], "custom_lang")
-            
+
             # Assert args namespace passed to run_scan is populated
             passed_args = mock_run_scan.call_args[0][0]
             self.assertEqual(passed_args.max_lines, 4200)
@@ -766,19 +771,19 @@ class TestCLI(unittest.TestCase):
         """Verify that CLI overrides override config and merge JSON inputs correctly."""
         from context_builder.config import CONFIG, reset_config
         reset_config()
-        
+
         mock_args = CliNamespace()
         mock_args.max_lines = 3300
         mock_args.lang_map = '{".overridden": "overridden_lang"}'
         mock_parse_args.return_value = mock_args
-        
+
         main()
-        
+
         self.assertEqual(CONFIG["max_lines"], 3300)
         self.assertEqual(CONFIG["lang_map"][".overridden"], "overridden_lang")
         # Default keys should remain intact since dictionary merges are used
         self.assertEqual(CONFIG["lang_map"][".py"], "python")
-        
+
         passed_args = mock_run_scan.call_args[0][0]
         self.assertEqual(passed_args.max_lines, 3300)
         self.assertEqual(passed_args.lang_map[".overridden"], "overridden_lang")
@@ -789,27 +794,27 @@ class TestCLI(unittest.TestCase):
         """Verify that --create-config generates a commented config file with overrides uncommented."""
         from context_builder.config import reset_config
         reset_config()
-        
+
         import tempfile
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             temp_path = f.name
-            
+
         try:
             mock_args = CliNamespace()
             mock_args.create_config = temp_path
             mock_args.max_lines = 1234
             mock_args.format = "json"
             mock_parse_args.return_value = mock_args
-            
+
             with self.assertRaises(SystemExit) as cm:
                 main()
-                
+
             self.assertEqual(cm.exception.code, 0)
-            
+
             # Read generated file
             with open(temp_path, "r", encoding="utf-8") as f:
                 content = f.read()
-                
+
             # Verify uncommented overrides
             self.assertIn('"max_lines": 1234', content)
             self.assertIn('"format": "json"', content)
@@ -826,13 +831,13 @@ class TestCLI(unittest.TestCase):
         """Verify that parse_cli_json doesn't crash if passed a python dict or list directly."""
         from context_builder.config import CONFIG, reset_config
         reset_config()
-        
+
         mock_args = CliNamespace()
         mock_args.lang_map = {".direct": "direct_lang"}
         mock_parse_args.return_value = mock_args
-        
+
         main()
-        
+
         self.assertEqual(CONFIG["lang_map"][".direct"], "direct_lang")
         reset_config()
 

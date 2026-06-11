@@ -1,3 +1,6 @@
+# pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
+# pylint: disable=attribute-defined-outside-init,consider-using-with,line-too-long
+
 import os
 import unittest
 import tempfile

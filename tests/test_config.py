@@ -1,3 +1,7 @@
+# pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
+# pylint: disable=attribute-defined-outside-init,import-outside-toplevel,consider-using-with
+# pylint: disable=unspecified-encoding
+
 import os
 import tempfile
 import unittest
@@ -48,7 +52,9 @@ class TestConfig(unittest.TestCase):
             "max_lines": 500
         }
         """
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8') as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as f:
             f.write(jsonc_content)
             temp_path = f.name
 
@@ -68,11 +74,11 @@ class TestConfig(unittest.TestCase):
         reset_config()
         active = ["format", "max_lines"]
         config_str = generate_commented_config(active)
-        
+
         # Check active fields are uncommented
         self.assertIn('"format": "md"', config_str)
         self.assertIn('"max_lines": 1500', config_str)
-        
+
         # Check inactive fields are commented out
         self.assertIn('// "max_mb": 2.0', config_str)
         self.assertIn('// "base_name": "SmartDiffContextBuilder"', config_str)
@@ -80,19 +86,19 @@ class TestConfig(unittest.TestCase):
     def test_config_dict_proxy(self):
         from context_builder.config import ConfigDictProxy
         proxy = ConfigDictProxy("lang_map")
-        
+
         # Test basic MutableMapping functionality
         self.assertEqual(proxy[".py"], "python")
-        
+
         # Test pop and setdefault (which would bypass dict subclasses if not delegated properly)
         val = proxy.pop(".py")
         self.assertEqual(val, "python")
         self.assertNotIn(".py", proxy)
-        
+
         default_val = proxy.setdefault(".py", "python_new")
         self.assertEqual(default_val, "python_new")
         self.assertEqual(proxy[".py"], "python_new")
-        
+
         # Test update
         proxy.update({".py": "python"})
         self.assertEqual(proxy[".py"], "python")

@@ -11,3 +11,8 @@ disable=
 
 [FORMAT]
 max-line-length=100
+
+[SIMILARITIES]
+# Test fixtures naturally repeat short setup blocks. Keep duplicate detection
+# for substantial copies without failing on routine unittest scaffolding.
+min-similarity-lines=15
