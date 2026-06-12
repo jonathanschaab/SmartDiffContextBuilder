@@ -6,7 +6,6 @@ and managing event loop threads for async communication.
 
 import atexit
 import asyncio
-import concurrent.futures
 import inspect
 import math
 import os
@@ -33,10 +32,7 @@ _LSP_PROGRESS_BAR_WIDTH = 24
 
 def _is_timeout_error(exc):
     """Return whether an exception represents an asyncio/future timeout."""
-    return isinstance(
-        exc,
-        (TimeoutError, asyncio.TimeoutError, concurrent.futures.TimeoutError),
-    )
+    return isinstance(exc, TimeoutError)
 
 
 def _validate_lsp_timeout(value, default, config_key, cli_option):
