@@ -24,6 +24,8 @@ class LanguageProfile:
     extensions = frozenset()
     comment_prefix = "//"
     line_comment = "//"
+    block_comment_start = "/*"
+    block_comment_end = "*/"
     supports_block_comments = True
     uses_indentation_blocks = False
     supports_macro_expansion = False
@@ -50,8 +52,13 @@ class LanguageProfile:
     def format_omission_comment(self, message):
         """Format generated truncation text using valid language comments."""
         if self.supports_block_comments:
-            return f"/* ... [{message}] ... */"
+            return (
+                f"{self.block_comment_start} ... [{message}] ... "
+                f"{self.block_comment_end}"
+            )
         comment_marker = self.line_comment or self.comment_prefix
+        if not comment_marker:
+            return f"... [{message}] ..."
         return f"{comment_marker} ... [{message}] ..."
 
     def extract_function_name(self, cleaned_chunk, start, end):

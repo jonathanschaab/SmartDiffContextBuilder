@@ -5,6 +5,7 @@
 import unittest
 
 from context_builder.languages import UNKNOWN_LANGUAGE, get_language_profile
+from context_builder.languages.base import LanguageProfile
 
 
 class TestLanguageProfiles(unittest.TestCase):
@@ -110,6 +111,36 @@ class TestLanguageProfiles(unittest.TestCase):
         self.assertEqual(
             profile.extract_function_name("widget()", 4, 8),
             "widget",
+        )
+
+    def test_custom_block_comment_delimiters_are_used(self):
+        """Profiles can override block-comment delimiters for omission text."""
+        class HtmlLikeProfile(LanguageProfile):
+            """Minimal block-comment override used for omission formatting tests."""
+            supports_block_comments = True
+            block_comment_start = "<!--"
+            block_comment_end = "-->"
+
+        profile = HtmlLikeProfile()
+
+        self.assertEqual(
+            profile.format_omission_comment("Body Omitted"),
+            "<!-- ... [Body Omitted] ... -->",
+        )
+
+    def test_missing_comment_markers_fall_back_to_plain_text(self):
+        """Profiles without comment markers omit text without rendering 'None'."""
+        class MarkerlessProfile(LanguageProfile):
+            """Profile with no usable comment markers for defensive formatting."""
+            supports_block_comments = False
+            line_comment = None
+            comment_prefix = None
+
+        profile = MarkerlessProfile()
+
+        self.assertEqual(
+            profile.format_omission_comment("Body Omitted"),
+            "... [Body Omitted] ...",
         )
 
     def test_extension_lookup_is_case_insensitive(self):
