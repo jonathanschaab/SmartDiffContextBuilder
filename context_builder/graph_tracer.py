@@ -42,7 +42,12 @@ class CallGraphTracer:
         self.args = args
 
     def _arg_or_default(self, name, default):
-        """Return an argument value, treating missing and explicit None alike."""
+        """Return an argument value, treating absent args and values alike."""
+        # Three-argument getattr already returns its fallback when self.args is
+        # None. Keep the explicit branch so that this supported tracer state is
+        # clear and does not look like an unsafe attribute access.
+        if self.args is None:
+            return default
         value = getattr(self.args, name, None)
         return default if value is None else value
 
