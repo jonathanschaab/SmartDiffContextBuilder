@@ -104,7 +104,11 @@ class LSPProgressReporter:
         title = state.get("title", f"{self.server_name} indexing")
         message = _progress_field(value, "message") or ""
         percentage = _progress_field(value, "percentage")
-        if isinstance(percentage, (int, float)):
+        if (
+            not isinstance(percentage, bool)
+            and isinstance(percentage, (int, float))
+            and math.isfinite(percentage)
+        ):
             percentage = max(0, min(100, int(percentage)))
             bucket = percentage // 5
             if self._is_tty:

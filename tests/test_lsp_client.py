@@ -87,6 +87,36 @@ class TestLspClient(unittest.TestCase):
         self.assertIn("crates\033[K", output)
         self.assertIn("\r  [LSP] Indexing: complete\033[K", output)
 
+    def test_lsp_progress_reporter_treats_non_finite_values_as_indeterminate(self):
+        stream = io.StringIO()
+        reporter = LSPProgressReporter("clangd")
+
+        with patch("context_builder.lsp_client.sys.stderr", stream):
+            reporter._is_tty = False
+            reporter.update(
+                "nan",
+                {
+                    "kind": "begin",
+                    "title": "Indexing",
+                    "message": "unknown total",
+                    "percentage": float("nan"),
+                },
+            )
+            reporter.update(
+                "infinity",
+                {
+                    "kind": "begin",
+                    "title": "Loading",
+                    "message": "still working",
+                    "percentage": float("inf"),
+                },
+            )
+
+        output = stream.getvalue()
+        self.assertIn("[LSP] Indexing: unknown total", output)
+        self.assertIn("[LSP] Loading: still working", output)
+        self.assertNotIn("%", output)
+
     def test_register_lsp_progress_handlers_routes_standard_messages(self):
         handlers = {}
 
