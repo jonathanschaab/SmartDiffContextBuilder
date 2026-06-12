@@ -9,8 +9,7 @@ import re
 import importlib
 from .sys_utils import iter_scan_progress, warn_once, ripgrep_filter
 from .cache import get_global_cache
-from .languages import UNKNOWN_LANGUAGE, get_language_profile
-from .languages.python import PYTHON
+from .languages import get_language_profile
 
 try:
     import tree_sitter
@@ -105,9 +104,9 @@ class AstEngine:
 AST_ENGINE = AstEngine()
 
 
-def strip_strings_and_comments(line, is_python=False):
-    """Compatibility wrapper around language-profile comment stripping."""
-    profile = PYTHON if is_python else UNKNOWN_LANGUAGE
+def strip_strings_and_comments(line, file_path_or_extension=None):
+    """Strip strings and comments using the registered language profile."""
+    profile = get_language_profile(file_path_or_extension)
     return profile.strip_strings_and_comments(line)
 
 
@@ -156,12 +155,12 @@ def _extract_bounds_py_regex(lines, start_idx):
     return start_idx, end_idx
 
 
-def _extract_bounds_non_py_regex(lines, start_idx, target_idx):
+def _extract_bounds_non_py_regex(lines, start_idx, target_idx, profile):
     """Fallback bounds extraction for non-Python using bracket counting."""
     end_idx = target_idx
     bracket_count, has_opened = 0, False
     for i in range(start_idx, len(lines)):
-        clean_line = strip_strings_and_comments(lines[i])
+        clean_line = profile.strip_strings_and_comments(lines[i])
         bracket_count += clean_line.count('{') - clean_line.count('}')
         if '{' in clean_line:
             has_opened = True
@@ -194,9 +193,10 @@ def extract_function_bounds_regex(file_path, line_num, file_cache=None):
     if start_idx < 0:
         start_idx = max(0, target_idx - 10)
 
-    if get_language_profile(file_path).uses_indentation_blocks:
+    profile = get_language_profile(file_path)
+    if profile.uses_indentation_blocks:
         return _extract_bounds_py_regex(lines, start_idx)
-    return _extract_bounds_non_py_regex(lines, start_idx, target_idx)
+    return _extract_bounds_non_py_regex(lines, start_idx, target_idx, profile)
 
 
 def extract_function_bounds(file_path, line_num, file_cache=None):
@@ -349,25 +349,26 @@ def trace_lexical_dependencies_regex(func_name, repo_files, file_cache=None):
     return callers
 
 
-def _semantically_truncate_child(child, lines, is_python):
+def _semantically_truncate_child(child, lines, profile):
     """Perform semantic truncation of an AST node."""
+    uses_indentation_blocks = profile.uses_indentation_blocks
     sig_lines = []
     end_idx = min(child.end_point[0], len(lines) - 1)
     has_brace = False
     for idx in range(child.start_point[0], end_idx + 1):
         line = lines[idx]
         sig_lines.append(line)
-        clean_line = strip_strings_and_comments(line, is_python=is_python)
-        if not is_python and "{" in clean_line:
+        clean_line = profile.strip_strings_and_comments(line)
+        if not uses_indentation_blocks and "{" in clean_line:
             has_brace = True
             break
-        if is_python and clean_line.rstrip().endswith(":"):
+        if uses_indentation_blocks and clean_line.rstrip().endswith(":"):
             break
 
     truncated_lines = list(sig_lines)
     if sig_lines:
         indent = len(sig_lines[0]) - len(sig_lines[0].lstrip())
-        if is_python:
+        if uses_indentation_blocks:
             truncated_lines.append(
                 " " * (indent + 4) +
                 "# ... [Inner Body Omitted for Context Preservation] ..."
@@ -390,8 +391,9 @@ def _get_fallback_truncated_text(lines, max_lines, is_python):
     return "\n".join(lines[:max_lines]) + "\n/* ... [Lines Omitted due to size] ... */"
 
 
-def _get_group_min_lines(group, lines, is_python):
+def _get_group_min_lines(group, lines, profile):
     """Get the minimum representation lines for a group of children."""
+    uses_indentation_blocks = profile.uses_indentation_blocks
     start_line = group["start_line"]
     end_line = group["end_line"]
     group_children = group["children"]
@@ -416,7 +418,7 @@ def _get_group_min_lines(group, lines, is_python):
                 last_line = min_lines[-1]
                 indent = len(last_line) - len(last_line.lstrip())
             indent_str = " " * indent
-            if is_python:
+            if uses_indentation_blocks:
                 min_lines.append(indent_str + "# ... [Data Structure Omitted] ...")
             else:
                 min_lines.append(indent_str + "/* ... [Data Structure Omitted] ... */")
@@ -431,13 +433,13 @@ def _get_group_min_lines(group, lines, is_python):
     for d in defs_sorted:
         d_start = d.start_point[0] - start_line
         d_end = d.end_point[0] - start_line
-        truncated_def = _semantically_truncate_child(d, lines, is_python)
+        truncated_def = _semantically_truncate_child(d, lines, profile)
         group_lines[d_start:d_end + 1] = truncated_def
 
     return group_lines
 
 
-def _collect_children_info(tree, lines, is_python):
+def _collect_children_info(tree, lines, profile):
     """Collect full and minimum representation lines for each child node,
     merging overlapping ranges."""
     groups = []
@@ -458,7 +460,7 @@ def _collect_children_info(tree, lines, is_python):
     children_info = []
     for group in groups:
         full_lines = lines[group["start_line"]:group["end_line"] + 1]
-        min_lines = _get_group_min_lines(group, lines, is_python)
+        min_lines = _get_group_min_lines(group, lines, profile)
 
         if len(min_lines) >= len(full_lines):
             min_lines = list(full_lines)
@@ -536,14 +538,15 @@ def split_massive_block_ast(source_text, file_path, max_lines):
         return [{"suffix": "", "text": source_text}]
 
     ext = os.path.splitext(file_path)[1]
-    is_python = get_language_profile(ext).uses_indentation_blocks
+    profile = get_language_profile(file_path)
+    is_python = profile.uses_indentation_blocks
 
     if not AST_ENGINE.is_supported(ext):
         fallback_text = _get_fallback_truncated_text(lines, max_lines, is_python)
         return [{"suffix": " (Truncated)", "text": fallback_text}]
 
     tree = AST_ENGINE.parsers[ext].parse(source_text.encode('utf-8'))
-    children_info = _collect_children_info(tree, lines, is_python)
+    children_info = _collect_children_info(tree, lines, profile)
     if not children_info:
         fallback_text = _get_fallback_truncated_text(lines, max_lines, is_python)
         return [{"suffix": " (Truncated)", "text": fallback_text}]

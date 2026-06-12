@@ -30,9 +30,35 @@ class TestAstEngine(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_strip_strings_and_comments(self):
-        self.assertEqual(strip_strings_and_comments("int a = 5; // comment"), "int a = 5; ")
-        self.assertEqual(strip_strings_and_comments("def foo(): # python comment", is_python=True), "def foo(): ")
-        self.assertEqual(strip_strings_and_comments('std::string s = "hello // world";'), 'std::string s = ;')
+        self.assertEqual(
+            strip_strings_and_comments("int a = 5; // comment", ".cpp"),
+            "int a = 5; ",
+        )
+        self.assertEqual(
+            strip_strings_and_comments(
+                "def foo(): # python comment",
+                "module.py",
+            ),
+            "def foo(): ",
+        )
+        self.assertEqual(
+            strip_strings_and_comments(
+                'std::string s = "hello // world";',
+                "module.cpp",
+            ),
+            "std::string s = ;",
+        )
+
+    @patch("context_builder.ast_engine.get_language_profile")
+    def test_strip_strings_and_comments_uses_language_registry(self, mock_profile):
+        profile = mock_profile.return_value
+        profile.strip_strings_and_comments.return_value = "cleaned"
+
+        result = strip_strings_and_comments("source", "custom.language")
+
+        mock_profile.assert_called_once_with("custom.language")
+        profile.strip_strings_and_comments.assert_called_once_with("source")
+        self.assertEqual(result, "cleaned")
 
     def test_extract_function_bounds_regex_python(self):
         code = (
