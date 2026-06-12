@@ -589,13 +589,11 @@ def _run_commit_range_worktree(args, commit_range):
             )
         worktree_args = argparse.Namespace(**vars(args))
         worktree_args.lsp_init_timeout = max(
-            getattr(args, "lsp_init_timeout", DEFAULT_LSP_INIT_TIMEOUT)
-            or DEFAULT_LSP_INIT_TIMEOUT,
+            getattr(args, "lsp_init_timeout", None) or DEFAULT_LSP_INIT_TIMEOUT,
             WORKTREE_LSP_INIT_TIMEOUT,
         )
         worktree_args.lsp_timeout = max(
-            getattr(args, "lsp_timeout", DEFAULT_LSP_QUERY_TIMEOUT)
-            or DEFAULT_LSP_QUERY_TIMEOUT,
+            getattr(args, "lsp_timeout", None) or DEFAULT_LSP_QUERY_TIMEOUT,
             WORKTREE_LSP_QUERY_TIMEOUT,
         )
         # Keep the language server rooted in this checkout. In particular, do
