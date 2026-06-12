@@ -143,6 +143,40 @@ class TestLanguageProfiles(unittest.TestCase):
             "... [Body Omitted] ...",
         )
 
+    def test_missing_block_delimiters_fall_back_to_line_comments(self):
+        """Block-comment profiles without delimiters reuse line comments safely."""
+        class IncompleteBlockProfile(LanguageProfile):
+            """Profile missing block delimiters but still declaring line comments."""
+            supports_block_comments = True
+            block_comment_start = None
+            block_comment_end = ""
+            line_comment = "#"
+            comment_prefix = "#"
+
+        profile = IncompleteBlockProfile()
+
+        self.assertEqual(
+            profile.format_omission_comment("Body Omitted"),
+            "# ... [Body Omitted] ...",
+        )
+
+    def test_missing_block_delimiters_and_line_comments_fall_back_to_plain_text(self):
+        """Profiles missing all comment markers degrade to plain omission text."""
+        class MarkerlessBlockProfile(LanguageProfile):
+            """Profile with no valid block or line comment markers."""
+            supports_block_comments = True
+            block_comment_start = None
+            block_comment_end = None
+            line_comment = None
+            comment_prefix = None
+
+        profile = MarkerlessBlockProfile()
+
+        self.assertEqual(
+            profile.format_omission_comment("Body Omitted"),
+            "... [Body Omitted] ...",
+        )
+
     def test_extension_lookup_is_case_insensitive(self):
         """Registry lookups normalize extension casing."""
         self.assertEqual(get_language_profile(".PY").name, "python")

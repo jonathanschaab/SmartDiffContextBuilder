@@ -51,7 +51,11 @@ class LanguageProfile:
 
     def format_omission_comment(self, message):
         """Format generated truncation text using valid language comments."""
-        if self.supports_block_comments:
+        if (
+            self.supports_block_comments
+            and self.block_comment_start
+            and self.block_comment_end
+        ):
             return (
                 f"{self.block_comment_start} ... [{message}] ... "
                 f"{self.block_comment_end}"
