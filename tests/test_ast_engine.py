@@ -183,6 +183,28 @@ class TestAstEngine(unittest.TestCase):
         self.assertIn(file_path, callers)
         self.assertEqual(len(callers[file_path]), 2)
 
+    def test_trace_lexical_dependencies_regex_supports_makefile_variants(self):
+        code = (
+            "# target_func() in a comment should be ignored\n"
+            "build:\n"
+            "\ttarget_func()\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "makefile-client")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        cache = LRUFileCache(capacity=5)
+        cache.get_content(file_path)
+
+        callers = trace_lexical_dependencies_regex(
+            "target_func",
+            [file_path],
+            file_cache=cache,
+        )
+
+        self.assertIn(file_path, callers)
+        self.assertEqual([match["line"] for match in callers[file_path]], [3])
+
     def test_extract_function_bounds_defensive(self):
         start, end = extract_function_bounds("some_file.py", 0, file_cache=self.cache)
         self.assertIsNone(start)
@@ -500,6 +522,22 @@ class TestAstEngine(unittest.TestCase):
         path, line = find_callee_definition("my_header_func", [file_path], file_cache=self.cache)
         self.assertEqual(path, file_path)
         self.assertEqual(line, 1)
+
+    def test_find_callee_definition_supports_makefile_variants(self):
+        code = (
+            "# function deploy in comments should be ignored\n"
+            "function deploy\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "makefile-client")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        self.cache.get_content(file_path)
+
+        path, line = find_callee_definition("deploy", [file_path], file_cache=self.cache)
+
+        self.assertEqual(path, file_path)
+        self.assertEqual(line, 2)
 
     @patch("context_builder.ast_engine.AST_ENGINE")
     def test_split_massive_block_ast_declaration_no_brace(self, mock_ast_engine):

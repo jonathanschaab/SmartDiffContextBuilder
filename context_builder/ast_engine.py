@@ -9,7 +9,7 @@ import re
 import importlib
 from .sys_utils import iter_scan_progress, warn_once, ripgrep_filter
 from .cache import get_global_cache
-from .languages import get_language_profile
+from .languages import UNKNOWN_LANGUAGE, get_language_profile
 
 try:
     import tree_sitter
@@ -214,7 +214,7 @@ def extract_function_bounds(file_path, line_num, file_cache=None):
 def _trace_file_ast_dependencies(file_path, func_name, file_cache, callers):
     """Process a single file for AST dependency tracking."""
     ext = os.path.splitext(file_path)[1].lower()
-    if get_language_profile(ext).name == "python":
+    if get_language_profile(file_path).name == "python":
         content = file_cache.get_content(file_path)
         if "typing" not in content:
             warn_once(
@@ -287,11 +287,11 @@ def trace_lexical_dependencies_ast(func_name, repo_files, file_cache=None):
 
 
 def _process_regex_file(
-    file_path, content, ext, call_pattern, def_keyword_pattern, def_cpp_pattern, callers
+    file_path, content, call_pattern, def_keyword_pattern, def_cpp_pattern, callers
 ):
     """Search regex patterns within a single file."""
     if call_pattern.search(content):
-        profile = get_language_profile(ext)
+        profile = get_language_profile(file_path)
         for idx, line in enumerate(content.splitlines()):
             clean_line = profile.strip_strings_and_comments(line)
             if call_pattern.search(clean_line):
@@ -339,12 +339,17 @@ def trace_lexical_dependencies_regex(func_name, repo_files, file_cache=None):
         label=f"Scanning callers of '{func_name}' (regex pass)",
         min_files=100,
     ):
-        ext = os.path.splitext(file_path)[1].lower()
-        if ext not in LANG_MAP or file_path.endswith('.md'):
+        profile = get_language_profile(file_path)
+        if profile is UNKNOWN_LANGUAGE or file_path.endswith('.md'):
             continue
         content = file_cache.get_content(file_path)
         _process_regex_file(
-            file_path, content, ext, call_pattern, def_keyword_pattern, def_cpp_pattern, callers
+            file_path,
+            content,
+            call_pattern,
+            def_keyword_pattern,
+            def_cpp_pattern,
+            callers,
         )
     return callers
 
@@ -661,12 +666,11 @@ def find_callee_definition(callee_name, all_repo_files, file_cache=None):
         label=f"Scanning definition of '{callee_name}'",
         min_files=100,
     ):
-        ext = os.path.splitext(file_path)[1].lower()
-        if ext not in LANG_MAP:
+        profile = get_language_profile(file_path)
+        if profile is UNKNOWN_LANGUAGE:
             continue
 
         lines = file_cache.get_lines(file_path)
-        profile = get_language_profile(ext)
         for idx, line in enumerate(lines):
             clean_line = profile.strip_strings_and_comments(line)
             is_match = re.search(pattern, clean_line) or (
