@@ -287,11 +287,16 @@ def trace_lexical_dependencies_ast(func_name, repo_files, file_cache=None):
 
 
 def _process_regex_file(
-    file_path, content, call_pattern, def_keyword_pattern, def_cpp_pattern, callers
+    file_path,
+    content,
+    profile,
+    call_pattern,
+    def_keyword_pattern,
+    def_cpp_pattern,
+    callers,
 ):
     """Search regex patterns within a single file."""
     if call_pattern.search(content):
-        profile = get_language_profile(file_path)
         for idx, line in enumerate(content.splitlines()):
             clean_line = profile.strip_strings_and_comments(line)
             if call_pattern.search(clean_line):
@@ -346,6 +351,7 @@ def trace_lexical_dependencies_regex(func_name, repo_files, file_cache=None):
         _process_regex_file(
             file_path,
             content,
+            profile,
             call_pattern,
             def_keyword_pattern,
             def_cpp_pattern,
