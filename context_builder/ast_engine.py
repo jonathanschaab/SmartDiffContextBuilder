@@ -203,7 +203,7 @@ def extract_function_bounds(file_path, line_num, file_cache=None):
     """Extract start and end line bounds, preferring AST first and falling back to regex."""
     if line_num <= 0:
         return None, None
-    ext = os.path.splitext(file_path)[1]
+    ext = os.path.splitext(file_path)[1].lower()
     if AST_ENGINE.is_supported(ext):
         ast_bounds = extract_function_bounds_ast(file_path, line_num, ext, file_cache=file_cache)
         if ast_bounds[0] is not None:
@@ -213,7 +213,7 @@ def extract_function_bounds(file_path, line_num, file_cache=None):
 
 def _trace_file_ast_dependencies(file_path, func_name, file_cache, callers):
     """Process a single file for AST dependency tracking."""
-    ext = os.path.splitext(file_path)[1]
+    ext = os.path.splitext(file_path)[1].lower()
     if get_language_profile(ext).name == "python":
         content = file_cache.get_content(file_path)
         if "typing" not in content:
@@ -339,7 +339,7 @@ def trace_lexical_dependencies_regex(func_name, repo_files, file_cache=None):
         label=f"Scanning callers of '{func_name}' (regex pass)",
         min_files=100,
     ):
-        ext = os.path.splitext(file_path)[1]
+        ext = os.path.splitext(file_path)[1].lower()
         if ext not in LANG_MAP or file_path.endswith('.md'):
             continue
         content = file_cache.get_content(file_path)
@@ -537,7 +537,7 @@ def split_massive_block_ast(source_text, file_path, max_lines):
     if len(lines) <= max_lines:
         return [{"suffix": "", "text": source_text}]
 
-    ext = os.path.splitext(file_path)[1]
+    ext = os.path.splitext(file_path)[1].lower()
     profile = get_language_profile(file_path)
 
     if not AST_ENGINE.is_supported(ext):
@@ -613,7 +613,7 @@ def extract_callees(file_path, start_line, end_line, file_cache=None):
     """Extract list of callees within line bounds, falling back from AST to regex."""
     if file_cache is None:
         file_cache = get_global_cache()
-    ext = os.path.splitext(file_path)[1]
+    ext = os.path.splitext(file_path)[1].lower()
     if AST_ENGINE.is_supported(ext):
         try:
             callees = extract_callees_ast(file_path, start_line, end_line, ext, file_cache)
@@ -661,7 +661,7 @@ def find_callee_definition(callee_name, all_repo_files, file_cache=None):
         label=f"Scanning definition of '{callee_name}'",
         min_files=100,
     ):
-        ext = os.path.splitext(file_path)[1]
+        ext = os.path.splitext(file_path)[1].lower()
         if ext not in LANG_MAP:
             continue
 

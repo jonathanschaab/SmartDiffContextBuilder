@@ -134,6 +134,35 @@ class TestAstEngine(unittest.TestCase):
         )
         self.assertNotIn("/*", result[0]["text"])
 
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_split_massive_block_ast_uppercase_extension_uses_ast(self, mock_ast_engine):
+        source = (
+            "def my_func():\n"
+            "    # body line 1\n"
+            "    # body line 2\n"
+            "    pass\n"
+        )
+
+        mock_parser = MagicMock()
+        mock_tree = MagicMock()
+        mock_child = MagicMock()
+        mock_tree.root_node.children = [mock_child]
+        mock_child.type = "function_definition"
+        mock_child.start_point = (0, 0)
+        mock_child.end_point = (3, 0)
+        mock_parser.parse.return_value = mock_tree
+
+        mock_ast_engine.is_supported.side_effect = lambda ext: ext == ".py"
+        mock_ast_engine.parsers = {".py": mock_parser}
+
+        result = split_massive_block_ast(source, "test.PY", max_lines=3)
+
+        self.assertEqual(result[0]["suffix"], " (AST Semantically Pruned)")
+        self.assertIn(
+            "# ... [Inner Body Omitted for Context Preservation] ...",
+            result[0]["text"],
+        )
+
 
     def test_trace_lexical_dependencies_regex(self):
         code = (
