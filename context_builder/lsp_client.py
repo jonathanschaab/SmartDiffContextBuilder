@@ -56,6 +56,8 @@ def _validate_lsp_timeout(value, default, config_key, cli_option):
 
 def _progress_field(value, name, default=None):
     """Read a work-done progress field from protocol objects or raw mappings."""
+    if value is None:
+        return default
     if isinstance(value, Mapping):
         return value.get(name, default)
     return getattr(value, name, default)

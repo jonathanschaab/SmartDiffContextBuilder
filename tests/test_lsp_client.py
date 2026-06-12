@@ -148,6 +148,25 @@ class TestLspClient(unittest.TestCase):
             {"kind": "report", "percentage": 40},
         )
 
+    def test_register_lsp_progress_handlers_accepts_missing_params(self):
+        handlers = {}
+
+        class FakeClient:  # pylint: disable=too-few-public-methods
+            def feature(self, method):
+                def decorator(func):
+                    handlers[method] = func
+                    return func
+                return decorator
+
+        reporter = MagicMock()
+        _register_lsp_progress_handlers(FakeClient(), reporter)
+
+        handlers[types.WINDOW_WORK_DONE_PROGRESS_CREATE](None, None)
+        handlers[types.PROGRESS](None, None)
+
+        reporter.create.assert_called_once_with(None)
+        reporter.update.assert_called_once_with(None, None)
+
     def test_get_lsp_process_prefers_current_pygls_server_attribute(self):
         client = MagicMock()
         current_process = object()
