@@ -124,6 +124,10 @@ DEFAULT_FFI_PATTERNS = [
 DEFAULT_FFI_RG_PATTERN = (
     "no_mangle|wasm_bindgen|extern \"C\"|EMSCRIPTEN_KEEPALIVE|PYBIND11_MODULE|m.def"
 )
+DEFAULT_LSP_INIT_TIMEOUT = 60.0
+DEFAULT_LSP_QUERY_TIMEOUT = 150.0
+WORKTREE_LSP_INIT_TIMEOUT = 120.0
+WORKTREE_LSP_QUERY_TIMEOUT = 300.0
 
 # Global Configuration Dictionary
 CONFIG = {}
@@ -141,7 +145,8 @@ def reset_config():
         'max_cache_size_mb': 200.0,
         'max_interface_depth': 15,
         'disable_pruning': False,
-        'lsp_timeout': 45,
+        'lsp_init_timeout': DEFAULT_LSP_INIT_TIMEOUT,
+        'lsp_timeout': DEFAULT_LSP_QUERY_TIMEOUT,
         'ripgrep_timeout': 10.0,
         'no_language_server': False,
         'skip_ffi': False,
@@ -194,8 +199,9 @@ def generate_commented_config(active_options):
     groups = {
         "General Settings": [
             'format', 'max_lines', 'max_mb', 'base_name', 'max_cache_size_mb',
-            'max_interface_depth', 'disable_pruning', 'lsp_timeout', 'ripgrep_timeout',
-            'no_language_server', 'skip_ffi', 'skip_macro_expansion',
+            'max_interface_depth', 'disable_pruning', 'lsp_init_timeout',
+            'lsp_timeout', 'ripgrep_timeout', 'no_language_server',
+            'skip_ffi', 'skip_macro_expansion',
             'caller_depth', 'callee_depth', 'commit_range'
         ],
         "Language Definitions": [

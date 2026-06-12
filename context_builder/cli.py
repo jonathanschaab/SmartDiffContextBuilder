@@ -20,7 +20,15 @@ from .ast_engine import (
     extract_function_bounds,
 )
 from .cache import get_global_cache
-from .config import CONFIG, generate_commented_config, load_json_with_comments
+from .config import (
+    CONFIG,
+    DEFAULT_LSP_INIT_TIMEOUT,
+    DEFAULT_LSP_QUERY_TIMEOUT,
+    WORKTREE_LSP_INIT_TIMEOUT,
+    WORKTREE_LSP_QUERY_TIMEOUT,
+    generate_commented_config,
+    load_json_with_comments,
+)
 from .lsp_client import cleanup_zombie_lsps
 from .languages import get_language_profile
 from .preprocessor import (
@@ -380,6 +388,7 @@ def _merge_cli_mappings(args, active_overrides):
         "max_cache_size_mb": "max_cache_size_mb",
         "max_interface_depth": "max_interface_depth",
         "disable_pruning": "disable_pruning",
+        "lsp_init_timeout": "lsp_init_timeout",
         "lsp_timeout": "lsp_timeout",
         "ripgrep_timeout": "ripgrep_timeout",
         "no_language_server": "no_language_server",
@@ -578,8 +587,26 @@ def _run_commit_range_worktree(args, commit_range):
                 "worktree may take several minutes while the project is indexed. "
                 "Use --no-language-server to skip LSP and avoid this delay."
             )
+        worktree_args = argparse.Namespace(**vars(args))
+        worktree_args.lsp_init_timeout = max(
+            getattr(args, "lsp_init_timeout", None) or DEFAULT_LSP_INIT_TIMEOUT,
+            WORKTREE_LSP_INIT_TIMEOUT,
+        )
+        worktree_args.lsp_timeout = max(
+            getattr(args, "lsp_timeout", None) or DEFAULT_LSP_QUERY_TIMEOUT,
+            WORKTREE_LSP_QUERY_TIMEOUT,
+        )
+        # Keep the language server rooted in this checkout. In particular, do
+        # not point clangd at the original repository with
+        # `--compile-commands-dir` or share its writable `.cache/clangd` tree.
+        # The option selects a compilation database; it does not remap an
+        # existing index to the detached revision. Absolute paths and stale
+        # symbol/reference shards could therefore make worktree results describe
+        # the original checkout instead of end_sha. A future cache optimization
+        # should use a stable, repository-specific analysis worktree so clangd
+        # can validate and incrementally replace its own per-file index shards.
         run_scan(
-            args,
+            worktree_args,
             start_ref=start_sha,
             end_ref=end_sha,
             output_dir=original_cwd,
@@ -602,7 +629,8 @@ def main():
 
     parser.add_argument("--max-interface-depth", type=int, default=None)
     parser.add_argument("--disable-pruning", action="store_true", default=None)
-    parser.add_argument("--lsp-timeout", type=int, default=None)
+    parser.add_argument("--lsp-init-timeout", type=float, default=None)
+    parser.add_argument("--lsp-timeout", type=float, default=None)
     parser.add_argument("--ripgrep-timeout", type=float, default=None)
     parser.add_argument("--no-language-server", action="store_true", default=None)
     parser.add_argument("--skip-ffi", action="store_true", default=None)

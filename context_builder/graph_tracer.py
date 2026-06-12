@@ -14,6 +14,7 @@ from .ast_engine import (
     trace_lexical_dependencies_ast,
     trace_lexical_dependencies_regex,
 )
+from .config import DEFAULT_LSP_INIT_TIMEOUT, DEFAULT_LSP_QUERY_TIMEOUT
 from .languages import get_language_profile
 from .lsp_client import get_lsp_references
 from .preprocessor import trace_ffi_callers, trace_macro_expansion
@@ -41,7 +42,12 @@ class CallGraphTracer:
         self.args = args
 
     def _arg_or_default(self, name, default):
-        """Return an argument value, treating missing and explicit None alike."""
+        """Return an argument value, treating absent args and values alike."""
+        # Three-argument getattr already returns its fallback when self.args is
+        # None. Keep the explicit branch so that this supported tracer state is
+        # clear and does not look like an unsafe attribute access.
+        if self.args is None:
+            return default
         value = getattr(self.args, name, None)
         return default if value is None else value
 
@@ -89,10 +95,13 @@ class CallGraphTracer:
             curr_file,
             curr_line,
             curr_func,
-            self._arg_or_default("lsp_timeout", 45),
+            self._arg_or_default("lsp_timeout", DEFAULT_LSP_QUERY_TIMEOUT),
             self._arg_or_default("max_interface_depth", 15),
             self._arg_or_default("disable_pruning", False),
             file_cache=self.file_cache,
+            init_timeout=self._arg_or_default(
+                "lsp_init_timeout", DEFAULT_LSP_INIT_TIMEOUT
+            ),
         )
         if callers is None:
             ext = os.path.splitext(curr_file)[1].lower()

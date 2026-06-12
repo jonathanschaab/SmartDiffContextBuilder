@@ -391,7 +391,14 @@ class TestCallGraphTracer(unittest.TestCase):
         tracer._process_caller_depth_step("file1.cpp", 1, "foo", 0, set(), deque())
 
         mock_lsp.assert_called_once_with(
-            "file1.cpp", 1, "foo", 45, 15, False, file_cache=file_cache
+            "file1.cpp",
+            1,
+            "foo",
+            150,
+            15,
+            False,
+            file_cache=file_cache,
+            init_timeout=60,
         )
         mock_macro.assert_called_once()
         mock_ffi.assert_called_once()
@@ -407,6 +414,7 @@ class TestCallGraphTracer(unittest.TestCase):
         vm = MagicMock()
 
         class MockArgs:
+            lsp_init_timeout = None
             lsp_timeout = None
             max_interface_depth = None
             disable_pruning = None
@@ -429,7 +437,14 @@ class TestCallGraphTracer(unittest.TestCase):
         tracer._process_caller_depth_step("file1.cpp", 1, "foo", 0, set(), deque())
 
         mock_lsp.assert_called_once_with(
-            "file1.cpp", 1, "foo", 45, 15, False, file_cache=file_cache
+            "file1.cpp",
+            1,
+            "foo",
+            150,
+            15,
+            False,
+            file_cache=file_cache,
+            init_timeout=60,
         )
         mock_macro.assert_called_once()
         mock_ffi.assert_called_once()
@@ -438,7 +453,7 @@ class TestCallGraphTracer(unittest.TestCase):
     @patch("context_builder.graph_tracer.AST_ENGINE.is_supported", return_value=False)
     @patch("context_builder.graph_tracer.get_lsp_references", return_value=None)
     def test_resolve_references_uses_regex_when_lsp_and_ast_are_unavailable(
-        self, _mock_lsp, _mock_supported, mock_regex
+        self, mock_lsp, _mock_supported, mock_regex
     ):
         mock_regex.return_value = {"caller.txt": [{"line": 2, "code": "target()"}]}
         tracer = CallGraphTracer(
@@ -448,6 +463,16 @@ class TestCallGraphTracer(unittest.TestCase):
         callers = tracer._resolve_references("source.txt", 1, "target")
 
         self.assertEqual(callers, mock_regex.return_value)
+        mock_lsp.assert_called_once_with(
+            "source.txt",
+            1,
+            "target",
+            150,
+            15,
+            False,
+            file_cache=tracer.file_cache,
+            init_timeout=60,
+        )
         mock_regex.assert_called_once_with(
             "target", ["caller.txt"], file_cache=tracer.file_cache
         )

@@ -6,10 +6,11 @@ and managing event loop threads for async communication.
 
 import atexit
 import asyncio
-import concurrent.futures
 import inspect
+import math
 import os
 import re
+import sys
 import urllib.parse
 from collections.abc import Mapping
 from pathlib import Path
@@ -20,11 +21,145 @@ from lsprotocol import types
 from pygls.lsp.client import LanguageClient
 
 from .cache import get_global_cache
+from .config import DEFAULT_LSP_INIT_TIMEOUT, DEFAULT_LSP_QUERY_TIMEOUT
 from .languages import get_language_profile
 from .sys_utils import warn_once
 
 USE_LSP = True
 LSP_INSTANCES = {}
+_LSP_PROGRESS_BAR_WIDTH = 24
+
+
+def _is_timeout_error(exc):
+    """Return whether an exception represents an asyncio/future timeout."""
+    return isinstance(exc, TimeoutError)
+
+
+def _validate_lsp_timeout(value, default, config_key, cli_option):
+    """Validate a timeout and provide the same recovery guidance as ripgrep."""
+    is_valid = (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(value)
+        and value > 0
+    )
+    if is_valid:
+        return value
+    warn_once(
+        f"{config_key}_invalid",
+        f"Configured {config_key} ({value}) must be a positive number. "
+        f"Falling back to {default} seconds. You can set this limit using "
+        f"{cli_option} or by setting '{config_key}' in your config file.",
+    )
+    return default
+
+
+def _progress_field(value, name, default=None):
+    """Read a work-done progress field from protocol objects or raw mappings."""
+    if value is None:
+        return default
+    if isinstance(value, Mapping):
+        return value.get(name, default)
+    return getattr(value, name, default)
+
+
+class LSPProgressReporter:
+    """Render standard LSP work-done progress without requiring server-specific APIs."""
+
+    def __init__(self, server_name):
+        self.server_name = server_name
+        self._states = {}
+        self._lock = threading.Lock()
+        try:
+            self._is_tty = bool(sys.stderr.isatty())
+        except Exception:  # pylint: disable=broad-exception-caught
+            self._is_tty = False
+
+    def create(self, token):
+        """Record a server-created progress token."""
+        with self._lock:
+            self._states.setdefault(token, {})
+
+    def update(self, token, value):
+        """Render one begin, report, or end progress notification."""
+        kind = _progress_field(value, "kind")
+        with self._lock:
+            state = self._states.setdefault(token, {})
+            if kind == "begin":
+                state["title"] = _progress_field(
+                    value, "title", f"{self.server_name} indexing"
+                )
+                state["last_bucket"] = -1
+                state["last_message"] = None
+                self._render(state, value)
+            elif kind == "report":
+                self._render(state, value)
+            elif kind == "end":
+                self._finish(state, value)
+                self._states.pop(token, None)
+
+    def _render(self, state, value):
+        title = state.get("title", f"{self.server_name} indexing")
+        message = _progress_field(value, "message") or ""
+        percentage = _progress_field(value, "percentage")
+        if (
+            not isinstance(percentage, bool)
+            and isinstance(percentage, (int, float))
+            and math.isfinite(percentage)
+        ):
+            percentage = max(0, min(100, int(percentage)))
+            bucket = percentage // 5
+            if self._is_tty:
+                filled = (percentage * _LSP_PROGRESS_BAR_WIDTH) // 100
+                progress_bar = (
+                    "#" * filled
+                    + "-" * (_LSP_PROGRESS_BAR_WIDTH - filled)
+                )
+                print(
+                    f"\r  [{progress_bar}] {percentage:3d}%  [LSP] {title}"
+                    f"{': ' + message if message else ''}\033[K",
+                    end="",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            elif bucket != state.get("last_bucket"):
+                print(
+                    f"  [LSP {percentage:3d}%] {title}"
+                    f"{': ' + message if message else ''}",
+                    file=sys.stderr,
+                )
+            state["last_bucket"] = bucket
+        elif message != state.get("last_message"):
+            print(
+                f"  [LSP] {title}{': ' + message if message else ''}",
+                file=sys.stderr,
+            )
+        state["last_message"] = message
+
+    def _finish(self, state, value):
+        title = state.get("title", f"{self.server_name} indexing")
+        message = _progress_field(value, "message") or "complete"
+        prefix = "\r" if self._is_tty else ""
+        clear_line = "\033[K" if self._is_tty else ""
+        print(
+            f"{prefix}  [LSP] {title}: {message}{clear_line}",
+            file=sys.stderr,
+            flush=self._is_tty,
+        )
+
+
+def _register_lsp_progress_handlers(client, reporter):
+    """Register standard work-done progress request and notification handlers."""
+    @client.feature(types.WINDOW_WORK_DONE_PROGRESS_CREATE)
+    def create_progress(_client, params):
+        reporter.create(_progress_field(params, "token"))
+
+    @client.feature(types.PROGRESS)
+    def report_progress(_client, params):
+        reporter.update(
+            _progress_field(params, "token"),
+            _progress_field(params, "value"),
+        )
 
 
 def _register_notebook_filter_compatibility(client):
@@ -210,14 +345,22 @@ def _call_lsp_method(method, *args):
 class MinimalLSPClient:
     """A minimal LSP client managing initialize handshake and text document reference queries."""
 
-    def __init__(self, cmd):
+    def __init__(self, cmd, init_timeout=DEFAULT_LSP_INIT_TIMEOUT):
         """Initialize the client with language server launch command.
 
         Args:
             cmd (list): Subprocess command list.
+            init_timeout (float): Maximum seconds for the initialize handshake.
         """
         self.cmd = cmd
+        self.init_timeout = _validate_lsp_timeout(
+            init_timeout,
+            DEFAULT_LSP_INIT_TIMEOUT,
+            "lsp_init_timeout",
+            "--lsp-init-timeout",
+        )
         self.client = None
+        self.progress = LSPProgressReporter(cmd[0])
         self.loop = get_lsp_loop()
 
     def start(self) -> bool:
@@ -232,6 +375,7 @@ class MinimalLSPClient:
             nonlocal process_start_failed
             self.client = LanguageClient(name="SmartDiffContextBuilder-LSP", version="1.0")
             _register_notebook_filter_compatibility(self.client)
+            _register_lsp_progress_handlers(self.client, self.progress)
             # pygls owns stdin/stdout/stderr for its JSON-RPC transport and
             # captures stderr in a pipe. Supplying stderr here is not needed to
             # keep the console clean and breaks pygls 2.x by passing the keyword
@@ -269,9 +413,16 @@ class MinimalLSPClient:
                 params = types.InitializeParams(
                     process_id=os.getpid(),
                     root_uri=Path(".").absolute().as_uri(),
-                    capabilities=types.ClientCapabilities(),
+                    capabilities=types.ClientCapabilities(
+                        window=types.WindowClientCapabilities(
+                            work_done_progress=True
+                        )
+                    ),
                 )
-                await asyncio.wait_for(self.client.initialize_async(params), timeout=10.0)
+                await asyncio.wait_for(
+                    self.client.initialize_async(params),
+                    timeout=self.init_timeout,
+                )
                 self.client.initialized(types.InitializedParams())
                 return True
             except BaseException:
@@ -286,19 +437,25 @@ class MinimalLSPClient:
 
         try:
             fut = asyncio.run_coroutine_threadsafe(_async_start(), self.loop)
-            return fut.result(timeout=11.0)
+            return fut.result(timeout=self.init_timeout + 1.0)
         except Exception as e:  # pylint: disable=broad-exception-caught
             if "fut" in locals():
                 fut.cancel()
-            warn_once(
-                "lsp_fail",
-                f"Failed to start LSP {self.cmd[0]} "
-                f"({type(e).__name__}): {e}",
-            )
-            is_timeout = isinstance(
-                e,
-                (TimeoutError, asyncio.TimeoutError, concurrent.futures.TimeoutError),
-            )
+            is_timeout = _is_timeout_error(e)
+            if is_timeout:
+                warn_once(
+                    "lsp_init_timeout",
+                    f"LSP {self.cmd[0]} initialization timed out after "
+                    f"{self.init_timeout} seconds. You can increase this limit "
+                    "using --lsp-init-timeout or by setting 'lsp_init_timeout' "
+                    "in your config file.",
+                )
+            else:
+                warn_once(
+                    "lsp_fail",
+                    f"Failed to start LSP {self.cmd[0]} "
+                    f"({type(e).__name__}): {e}",
+                )
             if process_start_failed:
                 # No transport exists yet, so LSP shutdown notifications would
                 # only produce secondary "no available transport" errors.
@@ -319,6 +476,12 @@ class MinimalLSPClient:
         Returns:
             list: List of reference locations.
         """
+        timeout = _validate_lsp_timeout(
+            timeout,
+            DEFAULT_LSP_QUERY_TIMEOUT,
+            "lsp_timeout",
+            "--lsp-timeout",
+        )
         if not self.client or getattr(self.client, "stopped", False):
             return []
 
@@ -413,9 +576,18 @@ class MinimalLSPClient:
         except Exception as e:  # pylint: disable=broad-exception-caught
             if "fut" in locals():
                 fut.cancel()
-            warn_once(
-                "lsp_timeout", f"LSP query timed out after {timeout}s or failed: {e}"
-            )
+            if _is_timeout_error(e):
+                warn_once(
+                    "lsp_timeout",
+                    f"LSP query timed out after {timeout} seconds. You can "
+                    "increase this limit using --lsp-timeout or by setting "
+                    "'lsp_timeout' in your config file.",
+                )
+            else:
+                warn_once(
+                    "lsp_query_fail",
+                    f"LSP query failed ({type(e).__name__}): {e}",
+                )
             return []
 
     def cleanup(self, force_kill=False):
@@ -551,11 +723,13 @@ def _get_lsp_instance_key(command):
     return project_root, tuple(command)
 
 
-def _get_or_create_lsp_client(command):
+def _get_or_create_lsp_client(
+    command, init_timeout=DEFAULT_LSP_INIT_TIMEOUT
+):
     """Retrieve or start a client shared by identical server invocations."""
     instance_key = _get_lsp_instance_key(command)
     if instance_key not in LSP_INSTANCES:
-        client = MinimalLSPClient(command)
+        client = MinimalLSPClient(command, init_timeout=init_timeout)
         LSP_INSTANCES[instance_key] = client if client.start() else None
     return LSP_INSTANCES.get(instance_key)
 
@@ -568,6 +742,7 @@ def get_lsp_references(
     max_depth,
     disable_pruning,
     file_cache=None,
+    init_timeout=DEFAULT_LSP_INIT_TIMEOUT,
 ):
     """Find references using the active LSP.
 
@@ -579,6 +754,7 @@ def get_lsp_references(
         max_depth (int): Max number of references to parse.
         disable_pruning (bool): Disable reference pruning.
         file_cache (LRUFileCache, optional): Cache instance.
+        init_timeout (float): Language-server initialize timeout.
 
     Returns:
         dict: Mapping of relative file paths to reference lists.
@@ -594,7 +770,7 @@ def get_lsp_references(
         return None
     command = list(profile.lsp_command)
 
-    client = _get_or_create_lsp_client(command)
+    client = _get_or_create_lsp_client(command, init_timeout=init_timeout)
     if not client:
         return None
 

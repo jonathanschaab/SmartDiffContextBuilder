@@ -5,6 +5,7 @@
 # pylint: disable=too-few-public-methods,no-else-return
 
 import os
+import tempfile
 import unittest
 from unittest.mock import patch, MagicMock, ANY
 import argparse
@@ -864,6 +865,42 @@ class TestCLI(unittest.TestCase):
         self.assertIn("may take several minutes", output)
         self.assertIn("--no-language-server", output)
         mock_run_scan.assert_called_once()
+        worktree_args = mock_run_scan.call_args.args[0]
+        self.assertEqual(worktree_args.lsp_init_timeout, 120)
+        self.assertEqual(worktree_args.lsp_timeout, 300)
+        self.assertIsNot(worktree_args, args)
+        self.assertIsNone(args.lsp_init_timeout)
+        self.assertIsNone(args.lsp_timeout)
+
+    @patch("context_builder.cli._cleanup_temp_worktree")
+    @patch("context_builder.cli._setup_temp_worktree")
+    @patch("context_builder.cli.run_scan")
+    @patch("context_builder.cli.parse_and_resolve_range")
+    @patch("context_builder.cli.subprocess.run")
+    def test_worktree_preserves_larger_lsp_timeouts(
+        self,
+        mock_sub_run,
+        mock_resolve_range,
+        mock_run_scan,
+        _mock_setup,
+        _mock_cleanup,
+    ):
+        from context_builder.cli import _run_commit_range_worktree
+
+        args = CliNamespace(
+            no_language_server=False,
+            lsp_init_timeout=180,
+            lsp_timeout=420,
+        )
+        mock_resolve_range.return_value = ("start_sha", "end_sha")
+        mock_sub_run.return_value = MagicMock(stdout="other_sha\n")
+
+        with patch("context_builder.cli.os.chdir"):
+            _run_commit_range_worktree(args, "start..end")
+
+        worktree_args = mock_run_scan.call_args.args[0]
+        self.assertEqual(worktree_args.lsp_init_timeout, 180)
+        self.assertEqual(worktree_args.lsp_timeout, 420)
 
     @patch("context_builder.cli._cleanup_temp_worktree")
     @patch("context_builder.cli._setup_temp_worktree")
@@ -1185,3 +1222,56 @@ class TestCLI(unittest.TestCase):
         with self.assertRaises(SystemExit) as cm:
             main()
         self.assertEqual(cm.exception.code, 1)
+
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    @patch("context_builder.cli.run_scan")
+    def test_cli_lsp_timeout_mappings(self, mock_run_scan, mock_parse_args):
+        from context_builder.config import CONFIG, reset_config
+
+        reset_config()
+        mock_args = CliNamespace(
+            lsp_init_timeout=72.5,
+            lsp_timeout=185.5,
+        )
+        mock_parse_args.return_value = mock_args
+
+        main()
+
+        self.assertEqual(CONFIG["lsp_init_timeout"], 72.5)
+        self.assertEqual(CONFIG["lsp_timeout"], 185.5)
+        args_passed = mock_run_scan.call_args.args[0]
+        self.assertEqual(args_passed.lsp_init_timeout, 72.5)
+        self.assertEqual(args_passed.lsp_timeout, 185.5)
+        reset_config()
+
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    @patch("context_builder.cli.run_scan")
+    def test_config_file_lsp_timeout_mappings(
+        self, mock_run_scan, mock_parse_args
+    ):
+        from context_builder.config import CONFIG, reset_config
+
+        reset_config()
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=".json",
+            delete=False,
+            encoding="utf-8",
+        ) as config_file:
+            config_file.write(
+                '{"lsp_init_timeout": 80.5, "lsp_timeout": 210.5}'
+            )
+            config_path = config_file.name
+
+        try:
+            mock_parse_args.return_value = CliNamespace(config=config_path)
+            main()
+
+            self.assertEqual(CONFIG["lsp_init_timeout"], 80.5)
+            self.assertEqual(CONFIG["lsp_timeout"], 210.5)
+            args_passed = mock_run_scan.call_args.args[0]
+            self.assertEqual(args_passed.lsp_init_timeout, 80.5)
+            self.assertEqual(args_passed.lsp_timeout, 210.5)
+        finally:
+            os.remove(config_path)
+            reset_config()
