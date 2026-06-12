@@ -370,30 +370,32 @@ def _semantically_truncate_child(child, lines, profile):
         indent = len(sig_lines[0]) - len(sig_lines[0].lstrip())
         if uses_indentation_blocks:
             truncated_lines.append(
-                " " * (indent + 4) +
-                "# ... [Inner Body Omitted for Context Preservation] ..."
+                " " * (indent + 4)
+                + profile.format_omission_comment(
+                    "Inner Body Omitted for Context Preservation"
+                )
             )
             truncated_lines.append(" " * (indent + 4) + "pass")
         else:
             if has_brace:
                 truncated_lines.append(
-                    " " * (indent + 4) +
-                    "/* ... [Inner Body Omitted for Context Preservation] ... */"
+                    " " * (indent + 4)
+                    + profile.format_omission_comment(
+                        "Inner Body Omitted for Context Preservation"
+                    )
                 )
                 truncated_lines.append(" " * indent + "}")
     return truncated_lines
 
 
-def _get_fallback_truncated_text(lines, max_lines, is_python):
+def _get_fallback_truncated_text(lines, max_lines, profile):
     """Get fallback plain truncation when AST parsing is not supported."""
-    if is_python:
-        return "\n".join(lines[:max_lines]) + "\n# ... [Lines Omitted due to size] ..."
-    return "\n".join(lines[:max_lines]) + "\n/* ... [Lines Omitted due to size] ... */"
+    omission_comment = profile.format_omission_comment("Lines Omitted due to size")
+    return "\n".join(lines[:max_lines]) + f"\n{omission_comment}"
 
 
 def _get_group_min_lines(group, lines, profile):
     """Get the minimum representation lines for a group of children."""
-    uses_indentation_blocks = profile.uses_indentation_blocks
     start_line = group["start_line"]
     end_line = group["end_line"]
     group_children = group["children"]
@@ -418,10 +420,10 @@ def _get_group_min_lines(group, lines, profile):
                 last_line = min_lines[-1]
                 indent = len(last_line) - len(last_line.lstrip())
             indent_str = " " * indent
-            if uses_indentation_blocks:
-                min_lines.append(indent_str + "# ... [Data Structure Omitted] ...")
-            else:
-                min_lines.append(indent_str + "/* ... [Data Structure Omitted] ... */")
+            min_lines.append(
+                indent_str
+                + profile.format_omission_comment("Data Structure Omitted")
+            )
         return min_lines
 
     # If there are definitions, we want to semantically truncate each definition
@@ -472,7 +474,7 @@ def _collect_children_info(tree, lines, profile):
     return children_info
 
 
-def _build_with_omissions(children_info, max_lines, is_python):
+def _build_with_omissions(children_info, max_lines, profile):
     """Build list of lines when total minimum lines exceeds budget, showing omissions."""
     output_lines = []
     # Reserve 1 line for omission comment
@@ -494,10 +496,8 @@ def _build_with_omissions(children_info, max_lines, is_python):
         last_line = output_lines[-1]
         indent = len(last_line) - len(last_line.lstrip())
 
-    omission_comment = (
-        "# ... [Remaining Methods Omitted] ..."
-        if is_python
-        else "/* ... [Remaining Methods Omitted] ... */"
+    omission_comment = profile.format_omission_comment(
+        "Remaining Methods Omitted"
     )
     output_lines.append(" " * indent + omission_comment)
     return output_lines
@@ -522,11 +522,11 @@ def _build_upgraded(children_info, max_lines, total_min_lines):
     return output_lines
 
 
-def _allocate_budget_and_build(children_info, max_lines, is_python):
+def _allocate_budget_and_build(children_info, max_lines, profile):
     """Allocate budget and build final pruned line list."""
     total_min_lines = sum(len(info["min_lines"]) for info in children_info)
     if total_min_lines > max_lines:
-        return _build_with_omissions(children_info, max_lines, is_python)
+        return _build_with_omissions(children_info, max_lines, profile)
     return _build_upgraded(children_info, max_lines, total_min_lines)
 
 
@@ -539,19 +539,18 @@ def split_massive_block_ast(source_text, file_path, max_lines):
 
     ext = os.path.splitext(file_path)[1]
     profile = get_language_profile(file_path)
-    is_python = profile.uses_indentation_blocks
 
     if not AST_ENGINE.is_supported(ext):
-        fallback_text = _get_fallback_truncated_text(lines, max_lines, is_python)
+        fallback_text = _get_fallback_truncated_text(lines, max_lines, profile)
         return [{"suffix": " (Truncated)", "text": fallback_text}]
 
     tree = AST_ENGINE.parsers[ext].parse(source_text.encode('utf-8'))
     children_info = _collect_children_info(tree, lines, profile)
     if not children_info:
-        fallback_text = _get_fallback_truncated_text(lines, max_lines, is_python)
+        fallback_text = _get_fallback_truncated_text(lines, max_lines, profile)
         return [{"suffix": " (Truncated)", "text": fallback_text}]
 
-    output_lines = _allocate_budget_and_build(children_info, max_lines, is_python)
+    output_lines = _allocate_budget_and_build(children_info, max_lines, profile)
 
     return [{"suffix": " (AST Semantically Pruned)", "text": "\n".join(output_lines)}]
 

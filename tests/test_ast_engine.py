@@ -111,6 +111,29 @@ class TestAstEngine(unittest.TestCase):
         self.assertEqual(result[0]["suffix"], " (Truncated)")
         self.assertIn("/* ... [Lines Omitted due to size] ... */", result[0]["text"])
 
+    def test_split_massive_block_ast_hash_comment_fallbacks(self):
+        source = "line1\nline2\nline3\nline4\n"
+
+        for file_path in ("script.sh", "Makefile", "makefile-client"):
+            with self.subTest(file_path=file_path):
+                result = split_massive_block_ast(source, file_path, max_lines=2)
+                self.assertIn(
+                    "# ... [Lines Omitted due to size] ...",
+                    result[0]["text"],
+                )
+                self.assertNotIn("/*", result[0]["text"])
+
+    def test_split_massive_block_ast_batch_comment_fallback(self):
+        source = "line1\nline2\nline3\nline4\n"
+
+        result = split_massive_block_ast(source, "build.bat", max_lines=2)
+
+        self.assertIn(
+            "REM ... [Lines Omitted due to size] ...",
+            result[0]["text"],
+        )
+        self.assertNotIn("/*", result[0]["text"])
+
 
     def test_trace_lexical_dependencies_regex(self):
         code = (

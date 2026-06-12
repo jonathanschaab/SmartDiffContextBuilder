@@ -47,6 +47,13 @@ class LanguageProfile:
             cleaned = cleaned.split(self.line_comment, 1)[0]
         return cleaned
 
+    def format_omission_comment(self, message):
+        """Format generated truncation text using valid language comments."""
+        if self.supports_block_comments:
+            return f"/* ... [{message}] ... */"
+        comment_marker = self.line_comment or self.comment_prefix
+        return f"{comment_marker} ... [{message}] ..."
+
     def extract_function_name(self, cleaned_chunk, start, end):
         """Extract a declaration name, with a conservative call-style fallback."""
         declaration = _DECLARATION_PATTERN.search(cleaned_chunk)

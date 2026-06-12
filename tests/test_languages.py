@@ -22,6 +22,10 @@ class TestLanguageProfiles(unittest.TestCase):
             profile.strip_strings_and_comments("def foo(): # comment"),
             "def foo(): ",
         )
+        self.assertEqual(
+            profile.format_omission_comment("Body Omitted"),
+            "# ... [Body Omitted] ...",
+        )
 
     def test_c_family_profile(self):
         """C-family files expose preprocessing and compile database support."""
@@ -42,6 +46,10 @@ class TestLanguageProfiles(unittest.TestCase):
             self.assertEqual(
                 profile.lsp_command,
                 ("clangd", "--background-index"),
+            )
+            self.assertEqual(
+                profile.format_omission_comment("Body Omitted"),
+                "/* ... [Body Omitted] ... */",
             )
 
     def test_known_non_c_profiles(self):
