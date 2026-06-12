@@ -24,6 +24,8 @@ class LanguageProfile:
     extensions = frozenset()
     comment_prefix = "//"
     line_comment = "//"
+    block_comment_start = "/*"
+    block_comment_end = "*/"
     supports_block_comments = True
     uses_indentation_blocks = False
     supports_macro_expansion = False
@@ -46,6 +48,22 @@ class LanguageProfile:
         if self.line_comment and self.line_comment in cleaned:
             cleaned = cleaned.split(self.line_comment, 1)[0]
         return cleaned
+
+    def format_omission_comment(self, message):
+        """Format generated truncation text using valid language comments."""
+        if (
+            self.supports_block_comments
+            and self.block_comment_start
+            and self.block_comment_end
+        ):
+            return (
+                f"{self.block_comment_start} ... [{message}] ... "
+                f"{self.block_comment_end}"
+            )
+        comment_marker = self.line_comment or self.comment_prefix
+        if not comment_marker:
+            return f"... [{message}] ..."
+        return f"{comment_marker} ... [{message}] ..."
 
     def extract_function_name(self, cleaned_chunk, start, end):
         """Extract a declaration name, with a conservative call-style fallback."""

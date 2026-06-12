@@ -10,7 +10,6 @@ import importlib
 from .sys_utils import iter_scan_progress, warn_once, ripgrep_filter
 from .cache import get_global_cache
 from .languages import UNKNOWN_LANGUAGE, get_language_profile
-from .languages.python import PYTHON
 
 try:
     import tree_sitter
@@ -105,9 +104,9 @@ class AstEngine:
 AST_ENGINE = AstEngine()
 
 
-def strip_strings_and_comments(line, is_python=False):
-    """Compatibility wrapper around language-profile comment stripping."""
-    profile = PYTHON if is_python else UNKNOWN_LANGUAGE
+def strip_strings_and_comments(line, file_path_or_extension=None):
+    """Strip strings and comments using the registered language profile."""
+    profile = get_language_profile(file_path_or_extension)
     return profile.strip_strings_and_comments(line)
 
 
@@ -156,12 +155,12 @@ def _extract_bounds_py_regex(lines, start_idx):
     return start_idx, end_idx
 
 
-def _extract_bounds_non_py_regex(lines, start_idx, target_idx):
+def _extract_bounds_non_py_regex(lines, start_idx, target_idx, profile):
     """Fallback bounds extraction for non-Python using bracket counting."""
     end_idx = target_idx
     bracket_count, has_opened = 0, False
     for i in range(start_idx, len(lines)):
-        clean_line = strip_strings_and_comments(lines[i])
+        clean_line = profile.strip_strings_and_comments(lines[i])
         bracket_count += clean_line.count('{') - clean_line.count('}')
         if '{' in clean_line:
             has_opened = True
@@ -194,16 +193,17 @@ def extract_function_bounds_regex(file_path, line_num, file_cache=None):
     if start_idx < 0:
         start_idx = max(0, target_idx - 10)
 
-    if get_language_profile(file_path).uses_indentation_blocks:
+    profile = get_language_profile(file_path)
+    if profile.uses_indentation_blocks:
         return _extract_bounds_py_regex(lines, start_idx)
-    return _extract_bounds_non_py_regex(lines, start_idx, target_idx)
+    return _extract_bounds_non_py_regex(lines, start_idx, target_idx, profile)
 
 
 def extract_function_bounds(file_path, line_num, file_cache=None):
     """Extract start and end line bounds, preferring AST first and falling back to regex."""
     if line_num <= 0:
         return None, None
-    ext = os.path.splitext(file_path)[1]
+    ext = os.path.splitext(file_path)[1].lower()
     if AST_ENGINE.is_supported(ext):
         ast_bounds = extract_function_bounds_ast(file_path, line_num, ext, file_cache=file_cache)
         if ast_bounds[0] is not None:
@@ -213,8 +213,8 @@ def extract_function_bounds(file_path, line_num, file_cache=None):
 
 def _trace_file_ast_dependencies(file_path, func_name, file_cache, callers):
     """Process a single file for AST dependency tracking."""
-    ext = os.path.splitext(file_path)[1]
-    if get_language_profile(ext).name == "python":
+    ext = os.path.splitext(file_path)[1].lower()
+    if get_language_profile(file_path).name == "python":
         content = file_cache.get_content(file_path)
         if "typing" not in content:
             warn_once(
@@ -287,11 +287,16 @@ def trace_lexical_dependencies_ast(func_name, repo_files, file_cache=None):
 
 
 def _process_regex_file(
-    file_path, content, ext, call_pattern, def_keyword_pattern, def_cpp_pattern, callers
+    file_path,
+    content,
+    profile,
+    call_pattern,
+    def_keyword_pattern,
+    def_cpp_pattern,
+    callers,
 ):
     """Search regex patterns within a single file."""
     if call_pattern.search(content):
-        profile = get_language_profile(ext)
         for idx, line in enumerate(content.splitlines()):
             clean_line = profile.strip_strings_and_comments(line)
             if call_pattern.search(clean_line):
@@ -339,58 +344,68 @@ def trace_lexical_dependencies_regex(func_name, repo_files, file_cache=None):
         label=f"Scanning callers of '{func_name}' (regex pass)",
         min_files=100,
     ):
-        ext = os.path.splitext(file_path)[1]
-        if ext not in LANG_MAP or file_path.endswith('.md'):
+        profile = get_language_profile(file_path)
+        if profile is UNKNOWN_LANGUAGE or file_path.endswith('.md'):
             continue
         content = file_cache.get_content(file_path)
         _process_regex_file(
-            file_path, content, ext, call_pattern, def_keyword_pattern, def_cpp_pattern, callers
+            file_path,
+            content,
+            profile,
+            call_pattern,
+            def_keyword_pattern,
+            def_cpp_pattern,
+            callers,
         )
     return callers
 
 
-def _semantically_truncate_child(child, lines, is_python):
+def _semantically_truncate_child(child, lines, profile):
     """Perform semantic truncation of an AST node."""
+    uses_indentation_blocks = profile.uses_indentation_blocks
     sig_lines = []
     end_idx = min(child.end_point[0], len(lines) - 1)
     has_brace = False
     for idx in range(child.start_point[0], end_idx + 1):
         line = lines[idx]
         sig_lines.append(line)
-        clean_line = strip_strings_and_comments(line, is_python=is_python)
-        if not is_python and "{" in clean_line:
+        clean_line = profile.strip_strings_and_comments(line)
+        if not uses_indentation_blocks and "{" in clean_line:
             has_brace = True
             break
-        if is_python and clean_line.rstrip().endswith(":"):
+        if uses_indentation_blocks and clean_line.rstrip().endswith(":"):
             break
 
     truncated_lines = list(sig_lines)
     if sig_lines:
         indent = len(sig_lines[0]) - len(sig_lines[0].lstrip())
-        if is_python:
+        if uses_indentation_blocks:
             truncated_lines.append(
-                " " * (indent + 4) +
-                "# ... [Inner Body Omitted for Context Preservation] ..."
+                " " * (indent + 4)
+                + profile.format_omission_comment(
+                    "Inner Body Omitted for Context Preservation"
+                )
             )
             truncated_lines.append(" " * (indent + 4) + "pass")
         else:
             if has_brace:
                 truncated_lines.append(
-                    " " * (indent + 4) +
-                    "/* ... [Inner Body Omitted for Context Preservation] ... */"
+                    " " * (indent + 4)
+                    + profile.format_omission_comment(
+                        "Inner Body Omitted for Context Preservation"
+                    )
                 )
                 truncated_lines.append(" " * indent + "}")
     return truncated_lines
 
 
-def _get_fallback_truncated_text(lines, max_lines, is_python):
+def _get_fallback_truncated_text(lines, max_lines, profile):
     """Get fallback plain truncation when AST parsing is not supported."""
-    if is_python:
-        return "\n".join(lines[:max_lines]) + "\n# ... [Lines Omitted due to size] ..."
-    return "\n".join(lines[:max_lines]) + "\n/* ... [Lines Omitted due to size] ... */"
+    omission_comment = profile.format_omission_comment("Lines Omitted due to size")
+    return "\n".join(lines[:max_lines]) + f"\n{omission_comment}"
 
 
-def _get_group_min_lines(group, lines, is_python):
+def _get_group_min_lines(group, lines, profile):
     """Get the minimum representation lines for a group of children."""
     start_line = group["start_line"]
     end_line = group["end_line"]
@@ -416,10 +431,10 @@ def _get_group_min_lines(group, lines, is_python):
                 last_line = min_lines[-1]
                 indent = len(last_line) - len(last_line.lstrip())
             indent_str = " " * indent
-            if is_python:
-                min_lines.append(indent_str + "# ... [Data Structure Omitted] ...")
-            else:
-                min_lines.append(indent_str + "/* ... [Data Structure Omitted] ... */")
+            min_lines.append(
+                indent_str
+                + profile.format_omission_comment("Data Structure Omitted")
+            )
         return min_lines
 
     # If there are definitions, we want to semantically truncate each definition
@@ -431,13 +446,13 @@ def _get_group_min_lines(group, lines, is_python):
     for d in defs_sorted:
         d_start = d.start_point[0] - start_line
         d_end = d.end_point[0] - start_line
-        truncated_def = _semantically_truncate_child(d, lines, is_python)
+        truncated_def = _semantically_truncate_child(d, lines, profile)
         group_lines[d_start:d_end + 1] = truncated_def
 
     return group_lines
 
 
-def _collect_children_info(tree, lines, is_python):
+def _collect_children_info(tree, lines, profile):
     """Collect full and minimum representation lines for each child node,
     merging overlapping ranges."""
     groups = []
@@ -458,7 +473,7 @@ def _collect_children_info(tree, lines, is_python):
     children_info = []
     for group in groups:
         full_lines = lines[group["start_line"]:group["end_line"] + 1]
-        min_lines = _get_group_min_lines(group, lines, is_python)
+        min_lines = _get_group_min_lines(group, lines, profile)
 
         if len(min_lines) >= len(full_lines):
             min_lines = list(full_lines)
@@ -470,7 +485,7 @@ def _collect_children_info(tree, lines, is_python):
     return children_info
 
 
-def _build_with_omissions(children_info, max_lines, is_python):
+def _build_with_omissions(children_info, max_lines, profile):
     """Build list of lines when total minimum lines exceeds budget, showing omissions."""
     output_lines = []
     # Reserve 1 line for omission comment
@@ -492,10 +507,8 @@ def _build_with_omissions(children_info, max_lines, is_python):
         last_line = output_lines[-1]
         indent = len(last_line) - len(last_line.lstrip())
 
-    omission_comment = (
-        "# ... [Remaining Methods Omitted] ..."
-        if is_python
-        else "/* ... [Remaining Methods Omitted] ... */"
+    omission_comment = profile.format_omission_comment(
+        "Remaining Methods Omitted"
     )
     output_lines.append(" " * indent + omission_comment)
     return output_lines
@@ -520,11 +533,11 @@ def _build_upgraded(children_info, max_lines, total_min_lines):
     return output_lines
 
 
-def _allocate_budget_and_build(children_info, max_lines, is_python):
+def _allocate_budget_and_build(children_info, max_lines, profile):
     """Allocate budget and build final pruned line list."""
     total_min_lines = sum(len(info["min_lines"]) for info in children_info)
     if total_min_lines > max_lines:
-        return _build_with_omissions(children_info, max_lines, is_python)
+        return _build_with_omissions(children_info, max_lines, profile)
     return _build_upgraded(children_info, max_lines, total_min_lines)
 
 
@@ -535,20 +548,20 @@ def split_massive_block_ast(source_text, file_path, max_lines):
     if len(lines) <= max_lines:
         return [{"suffix": "", "text": source_text}]
 
-    ext = os.path.splitext(file_path)[1]
-    is_python = get_language_profile(ext).uses_indentation_blocks
+    ext = os.path.splitext(file_path)[1].lower()
+    profile = get_language_profile(file_path)
 
     if not AST_ENGINE.is_supported(ext):
-        fallback_text = _get_fallback_truncated_text(lines, max_lines, is_python)
+        fallback_text = _get_fallback_truncated_text(lines, max_lines, profile)
         return [{"suffix": " (Truncated)", "text": fallback_text}]
 
     tree = AST_ENGINE.parsers[ext].parse(source_text.encode('utf-8'))
-    children_info = _collect_children_info(tree, lines, is_python)
+    children_info = _collect_children_info(tree, lines, profile)
     if not children_info:
-        fallback_text = _get_fallback_truncated_text(lines, max_lines, is_python)
+        fallback_text = _get_fallback_truncated_text(lines, max_lines, profile)
         return [{"suffix": " (Truncated)", "text": fallback_text}]
 
-    output_lines = _allocate_budget_and_build(children_info, max_lines, is_python)
+    output_lines = _allocate_budget_and_build(children_info, max_lines, profile)
 
     return [{"suffix": " (AST Semantically Pruned)", "text": "\n".join(output_lines)}]
 
@@ -611,7 +624,7 @@ def extract_callees(file_path, start_line, end_line, file_cache=None):
     """Extract list of callees within line bounds, falling back from AST to regex."""
     if file_cache is None:
         file_cache = get_global_cache()
-    ext = os.path.splitext(file_path)[1]
+    ext = os.path.splitext(file_path)[1].lower()
     if AST_ENGINE.is_supported(ext):
         try:
             callees = extract_callees_ast(file_path, start_line, end_line, ext, file_cache)
@@ -659,12 +672,11 @@ def find_callee_definition(callee_name, all_repo_files, file_cache=None):
         label=f"Scanning definition of '{callee_name}'",
         min_files=100,
     ):
-        ext = os.path.splitext(file_path)[1]
-        if ext not in LANG_MAP:
+        profile = get_language_profile(file_path)
+        if profile is UNKNOWN_LANGUAGE:
             continue
 
         lines = file_cache.get_lines(file_path)
-        profile = get_language_profile(ext)
         for idx, line in enumerate(lines):
             clean_line = profile.strip_strings_and_comments(line)
             is_match = re.search(pattern, clean_line) or (

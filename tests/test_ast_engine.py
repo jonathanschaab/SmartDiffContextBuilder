@@ -30,9 +30,35 @@ class TestAstEngine(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_strip_strings_and_comments(self):
-        self.assertEqual(strip_strings_and_comments("int a = 5; // comment"), "int a = 5; ")
-        self.assertEqual(strip_strings_and_comments("def foo(): # python comment", is_python=True), "def foo(): ")
-        self.assertEqual(strip_strings_and_comments('std::string s = "hello // world";'), 'std::string s = ;')
+        self.assertEqual(
+            strip_strings_and_comments("int a = 5; // comment", ".cpp"),
+            "int a = 5; ",
+        )
+        self.assertEqual(
+            strip_strings_and_comments(
+                "def foo(): # python comment",
+                "module.py",
+            ),
+            "def foo(): ",
+        )
+        self.assertEqual(
+            strip_strings_and_comments(
+                'std::string s = "hello // world";',
+                "module.cpp",
+            ),
+            "std::string s = ;",
+        )
+
+    @patch("context_builder.ast_engine.get_language_profile")
+    def test_strip_strings_and_comments_uses_language_registry(self, mock_profile):
+        profile = mock_profile.return_value
+        profile.strip_strings_and_comments.return_value = "cleaned"
+
+        result = strip_strings_and_comments("source", "custom.language")
+
+        mock_profile.assert_called_once_with("custom.language")
+        profile.strip_strings_and_comments.assert_called_once_with("source")
+        self.assertEqual(result, "cleaned")
 
     def test_extract_function_bounds_regex_python(self):
         code = (
@@ -85,6 +111,58 @@ class TestAstEngine(unittest.TestCase):
         self.assertEqual(result[0]["suffix"], " (Truncated)")
         self.assertIn("/* ... [Lines Omitted due to size] ... */", result[0]["text"])
 
+    def test_split_massive_block_ast_hash_comment_fallbacks(self):
+        source = "line1\nline2\nline3\nline4\n"
+
+        for file_path in ("script.sh", "Makefile", "makefile-client"):
+            with self.subTest(file_path=file_path):
+                result = split_massive_block_ast(source, file_path, max_lines=2)
+                self.assertIn(
+                    "# ... [Lines Omitted due to size] ...",
+                    result[0]["text"],
+                )
+                self.assertNotIn("/*", result[0]["text"])
+
+    def test_split_massive_block_ast_batch_comment_fallback(self):
+        source = "line1\nline2\nline3\nline4\n"
+
+        result = split_massive_block_ast(source, "build.bat", max_lines=2)
+
+        self.assertIn(
+            "REM ... [Lines Omitted due to size] ...",
+            result[0]["text"],
+        )
+        self.assertNotIn("/*", result[0]["text"])
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_split_massive_block_ast_uppercase_extension_uses_ast(self, mock_ast_engine):
+        source = (
+            "def my_func():\n"
+            "    # body line 1\n"
+            "    # body line 2\n"
+            "    pass\n"
+        )
+
+        mock_parser = MagicMock()
+        mock_tree = MagicMock()
+        mock_child = MagicMock()
+        mock_tree.root_node.children = [mock_child]
+        mock_child.type = "function_definition"
+        mock_child.start_point = (0, 0)
+        mock_child.end_point = (3, 0)
+        mock_parser.parse.return_value = mock_tree
+
+        mock_ast_engine.is_supported.side_effect = lambda ext: ext == ".py"
+        mock_ast_engine.parsers = {".py": mock_parser}
+
+        result = split_massive_block_ast(source, "test.PY", max_lines=3)
+
+        self.assertEqual(result[0]["suffix"], " (AST Semantically Pruned)")
+        self.assertIn(
+            "# ... [Inner Body Omitted for Context Preservation] ...",
+            result[0]["text"],
+        )
+
 
     def test_trace_lexical_dependencies_regex(self):
         code = (
@@ -104,6 +182,28 @@ class TestAstEngine(unittest.TestCase):
         callers = trace_lexical_dependencies_regex("target_func", [file_path], file_cache=cache)
         self.assertIn(file_path, callers)
         self.assertEqual(len(callers[file_path]), 2)
+
+    def test_trace_lexical_dependencies_regex_supports_makefile_variants(self):
+        code = (
+            "# target_func() in a comment should be ignored\n"
+            "build:\n"
+            "\ttarget_func()\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "makefile-client")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        cache = LRUFileCache(capacity=5)
+        cache.get_content(file_path)
+
+        callers = trace_lexical_dependencies_regex(
+            "target_func",
+            [file_path],
+            file_cache=cache,
+        )
+
+        self.assertIn(file_path, callers)
+        self.assertEqual([match["line"] for match in callers[file_path]], [3])
 
     def test_extract_function_bounds_defensive(self):
         start, end = extract_function_bounds("some_file.py", 0, file_cache=self.cache)
@@ -422,6 +522,22 @@ class TestAstEngine(unittest.TestCase):
         path, line = find_callee_definition("my_header_func", [file_path], file_cache=self.cache)
         self.assertEqual(path, file_path)
         self.assertEqual(line, 1)
+
+    def test_find_callee_definition_supports_makefile_variants(self):
+        code = (
+            "# function deploy in comments should be ignored\n"
+            "function deploy\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "makefile-client")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        self.cache.get_content(file_path)
+
+        path, line = find_callee_definition("deploy", [file_path], file_cache=self.cache)
+
+        self.assertEqual(path, file_path)
+        self.assertEqual(line, 2)
 
     @patch("context_builder.ast_engine.AST_ENGINE")
     def test_split_massive_block_ast_declaration_no_brace(self, mock_ast_engine):
