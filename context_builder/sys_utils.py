@@ -6,6 +6,7 @@ import sys
 import time
 
 from .languages import get_language_profile
+from .path_utils import normalize_for_path_match
 
 WARNED_MISSING_DEPS = set()
 
@@ -412,7 +413,7 @@ def is_in_repo(file_path):
     if not file_path:
         return False
     # Normalize paths
-    normalized = file_path.replace("\\", "/").lower()
+    normalized = normalize_for_path_match(file_path)
     # Check ignore list patterns
     for pattern in ["node_modules/", "target/", ".git/", "/usr/include/", "/lib/", "sdk/"]:
         if pattern in normalized:
@@ -424,7 +425,8 @@ def is_in_repo(file_path):
         common = os.path.commonpath([repo_root, abs_path])
         # Compare normalized absolute paths case-insensitively for Windows compatibility
         return (
-            os.path.abspath(common).lower() == repo_root.lower()
+            normalize_for_path_match(os.path.abspath(common))
+            == normalize_for_path_match(repo_root)
             and os.path.exists(file_path)
         )
     except Exception:  # pylint: disable=broad-exception-caught

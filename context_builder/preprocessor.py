@@ -9,6 +9,11 @@ from collections import OrderedDict
 from .cache import get_global_cache
 from .config import CONFIG
 from .languages import get_language_profile
+from .path_utils import (
+    normalize_for_path_match,
+    normalize_root_for_path_match,
+    to_forward_slashes,
+)
 from .sys_utils import (
     get_comment_prefix,
     iter_scan_progress,
@@ -389,7 +394,7 @@ def _process_compilation_entry(
 
     # If repo_root is provided, we are running inside a temporary worktree.
     if repo_root and norm_root:
-        norm_ref = abs_ref_file.replace("\\", "/").lower()
+        norm_ref = normalize_for_path_match(abs_ref_file)
         if norm_ref.startswith(norm_root):
             try:
                 rel_to_root = os.path.relpath(abs_ref_file, repo_root)
@@ -411,9 +416,9 @@ def _process_compilation_entry(
     if is_linked:
         # Compute a path relative to the active worktree root (CWD)
         try:
-            rel_ref_file = os.path.relpath(abs_ref_file, cwd).replace("\\", "/")
+            rel_ref_file = to_forward_slashes(os.path.relpath(abs_ref_file, cwd))
         except ValueError:
-            rel_ref_file = abs_ref_file.replace("\\", "/")
+            rel_ref_file = to_forward_slashes(abs_ref_file)
         if rel_ref_file not in callers:
             callers[rel_ref_file] = []
         callers[rel_ref_file].append({
@@ -509,9 +514,7 @@ def analyze_compile_commands(target_file, file_cache=None, repo_root=None):
         abs_target_file = os.path.abspath(target_file)
         norm_root = None
         if repo_root:
-            norm_root = os.path.abspath(repo_root).replace("\\", "/").lower()
-            if not norm_root.endswith("/"):
-                norm_root += "/"
+            norm_root = normalize_root_for_path_match(os.path.abspath(repo_root))
         cwd = os.getcwd()
 
         for entry in db:

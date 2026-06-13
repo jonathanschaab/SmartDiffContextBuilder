@@ -31,6 +31,7 @@ from .config import (
 )
 from .lsp_client import cleanup_zombie_lsps
 from .languages import get_language_profile
+from .path_utils import build_root_replacement_variants
 from .preprocessor import (
     analyze_compile_commands,
     build_ffi_registry,
@@ -511,32 +512,7 @@ def _setup_temp_worktree(temp_worktree_dir, end_sha, original_cwd):
 
 def _build_worktree_root_replacements(original_root, worktree_root):
     """Build boundary-aware root replacements for both slash styles."""
-    if not isinstance(original_root, str) or not isinstance(worktree_root, str):
-        return []
-    original_root = original_root.rstrip("/\\")
-    worktree_root = worktree_root.rstrip("/\\")
-    variants = []
-    for source_root, target_root in (
-        (original_root.replace("\\", "/"), worktree_root.replace("\\", "/")),
-        (original_root.replace("/", "\\"), worktree_root.replace("/", "\\")),
-    ):
-        variants.append((source_root, target_root))
-        if re.match(r"^[A-Za-z]:", source_root):
-            # Windows paths are case-insensitive, but compile_commands.json can
-            # contain either drive-letter case. Add both variants so the cheap
-            # substring guard and regex replacement stay accurate.
-            variants.append(
-                (
-                    source_root[0].lower() + source_root[1:],
-                    target_root,
-                )
-            )
-            variants.append(
-                (
-                    source_root[0].upper() + source_root[1:],
-                    target_root,
-                )
-            )
+    variants = build_root_replacement_variants(original_root, worktree_root)
     replacements = []
     seen_sources = set()
     for source_root, target_root in variants:
