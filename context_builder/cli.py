@@ -495,9 +495,11 @@ def _setup_temp_worktree(temp_worktree_dir, end_sha, original_cwd):
 
     compile_commands_path = os.path.join(original_cwd, "compile_commands.json")
     if os.path.exists(compile_commands_path):
-        shutil.copy(
+        _rewrite_worktree_compile_commands(
             compile_commands_path,
-            os.path.join(temp_worktree_dir, "compile_commands.json")
+            os.path.join(temp_worktree_dir, "compile_commands.json"),
+            original_cwd,
+            temp_worktree_dir,
         )
 
     coverage_xml_path = os.path.join(original_cwd, "coverage.xml")
@@ -506,6 +508,62 @@ def _setup_temp_worktree(temp_worktree_dir, end_sha, original_cwd):
             coverage_xml_path,
             os.path.join(temp_worktree_dir, "coverage.xml")
         )
+
+
+def _replace_worktree_root(value, original_root, worktree_root):
+    """Rewrite repository-rooted strings to point at the detached worktree."""
+    if not isinstance(value, str):
+        return value
+
+    replacements = [
+        (original_root, worktree_root),
+        (original_root.replace("\\", "/"), worktree_root.replace("\\", "/")),
+        (original_root.replace("/", "\\"), worktree_root.replace("/", "\\")),
+    ]
+    rewritten = value
+    for source_root, target_root in replacements:
+        if source_root:
+            rewritten = rewritten.replace(source_root, target_root)
+    return rewritten
+
+
+def _rewrite_compile_commands_payload(payload, original_root, worktree_root):
+    """Recursively rewrite compile database paths from the source repo to the worktree."""
+    if isinstance(payload, dict):
+        return {
+            key: _rewrite_compile_commands_payload(value, original_root, worktree_root)
+            for key, value in payload.items()
+        }
+    if isinstance(payload, list):
+        return [
+            _rewrite_compile_commands_payload(item, original_root, worktree_root)
+            for item in payload
+        ]
+    return _replace_worktree_root(payload, original_root, worktree_root)
+
+
+def _rewrite_worktree_compile_commands(
+    compile_commands_path,
+    worktree_compile_commands_path,
+    original_root,
+    worktree_root,
+):
+    """Copy and rewrite compile_commands.json so clangd stays inside the worktree."""
+    with open(compile_commands_path, encoding="utf-8") as source_file:
+        payload = json.load(source_file)
+
+    rewritten_payload = _rewrite_compile_commands_payload(
+        payload,
+        original_root,
+        worktree_root,
+    )
+
+    with open(
+        worktree_compile_commands_path,
+        "w",
+        encoding="utf-8",
+    ) as target_file:
+        json.dump(rewritten_payload, target_file, indent=2)
 
 
 def _cleanup_temp_worktree(temp_worktree_dir, original_cwd):

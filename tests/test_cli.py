@@ -4,6 +4,7 @@
 # pylint: disable=line-too-long,too-many-lines,too-many-public-methods,broad-exception-caught
 # pylint: disable=too-few-public-methods,no-else-return
 
+import json
 import os
 import tempfile
 import unittest
@@ -18,6 +19,80 @@ class CliNamespace(argparse.Namespace):
         return None
 
 class TestCLI(unittest.TestCase):
+    def test_rewrite_compile_commands_payload_rewrites_both_slash_styles(self):
+        from context_builder.cli import _rewrite_compile_commands_payload
+
+        payload = [
+            {
+                "directory": "C:/repo/build",
+                "file": r"C:\repo\src\main.cpp",
+                "command": 'clang++ -I C:/repo/include "C:/repo/src/main.cpp"',
+                "arguments": [
+                    "clang++",
+                    r"C:\repo\src\main.cpp",
+                    "-I",
+                    "C:/repo/include",
+                ],
+                "output": "C:/repo/build/main.o",
+            }
+        ]
+
+        rewritten = _rewrite_compile_commands_payload(
+            payload,
+            r"C:\repo",
+            r"D:\worktree",
+        )
+
+        entry = rewritten[0]
+        self.assertEqual(entry["directory"], "D:/worktree/build")
+        self.assertEqual(entry["file"], r"D:\worktree\src\main.cpp")
+        self.assertIn('D:/worktree/src/main.cpp', entry["command"])
+        self.assertEqual(entry["arguments"][1], r"D:\worktree\src\main.cpp")
+        self.assertEqual(entry["arguments"][3], "D:/worktree/include")
+        self.assertEqual(entry["output"], "D:/worktree/build/main.o")
+
+    def test_setup_temp_worktree_rewrites_compile_commands_json(self):
+        from context_builder.cli import _setup_temp_worktree
+
+        with tempfile.TemporaryDirectory() as original_cwd, tempfile.TemporaryDirectory() as temp_root:
+            temp_worktree_dir = os.path.join(temp_root, "worktree")
+            os.makedirs(temp_worktree_dir, exist_ok=True)
+
+            compile_commands_path = os.path.join(original_cwd, "compile_commands.json")
+            with open(compile_commands_path, "w", encoding="utf-8") as compile_file:
+                json.dump(
+                    [
+                        {
+                            "directory": original_cwd.replace("\\", "/"),
+                            "file": os.path.join(original_cwd, "src", "main.cpp"),
+                            "command": (
+                                f'clang++ -I {original_cwd.replace("\\", "/")}/include '
+                                f'"{original_cwd.replace("\\", "/")}/src/main.cpp"'
+                            ),
+                        }
+                    ],
+                    compile_file,
+                )
+
+            with patch("context_builder.cli.subprocess.run") as mock_sub_run:
+                mock_sub_run.return_value = MagicMock(returncode=0, stderr="")
+                _setup_temp_worktree(temp_worktree_dir, "sha_end", original_cwd)
+
+            rewritten_path = os.path.join(temp_worktree_dir, "compile_commands.json")
+            with open(rewritten_path, encoding="utf-8") as rewritten_file:
+                rewritten = json.load(rewritten_file)
+
+            entry = rewritten[0]
+            self.assertEqual(entry["directory"], temp_worktree_dir.replace("\\", "/"))
+            self.assertEqual(
+                entry["file"],
+                os.path.join(temp_worktree_dir, "src", "main.cpp"),
+            )
+            self.assertIn(
+                f'{temp_worktree_dir.replace("\\", "/")}/src/main.cpp',
+                entry["command"],
+            )
+
     @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
     @patch("context_builder.cli.get_git_diff_files")
     @patch("context_builder.cli.get_git_tracked_files")
@@ -774,10 +849,11 @@ class TestCLI(unittest.TestCase):
     @patch("context_builder.cli.cleanup_zombie_lsps")
     @patch("subprocess.run")
     @patch("shutil.rmtree")
+    @patch("context_builder.cli._rewrite_worktree_compile_commands")
     @patch("shutil.copy")
     @patch("os.path.exists")
     def test_cli_worktree_copies_coverage_xml(
-        self, mock_exists, mock_copy, mock_rmtree, mock_sub_run, mock_cleanup_lsps, mock_run_scan, mock_resolve_range, mock_parse_args
+        self, mock_exists, mock_copy, mock_rewrite_compile_commands, mock_rmtree, mock_sub_run, mock_cleanup_lsps, mock_run_scan, mock_resolve_range, mock_parse_args
     ):
         """Verify that coverage.xml is copied to the temporary worktree if it exists in the original repo root."""
         mock_args = CliNamespace()
@@ -801,9 +877,9 @@ class TestCLI(unittest.TestCase):
 
         main()
 
-        # Check that shutil.copy was called for both compile_commands.json and coverage.xml
+        # compile_commands.json is rewritten, coverage.xml is still copied directly
+        mock_rewrite_compile_commands.assert_called_once()
         copy_calls = [call[0][0] for call in mock_copy.call_args_list]
-        self.assertTrue(any("compile_commands.json" in c for c in copy_calls))
         self.assertTrue(any("coverage.xml" in c for c in copy_calls))
 
     @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
