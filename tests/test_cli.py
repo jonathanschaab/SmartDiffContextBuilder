@@ -314,6 +314,7 @@ class TestCLI(unittest.TestCase):
     @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
     @patch("context_builder.cli.get_git_diff_files")
     @patch("context_builder.cli.get_git_tracked_files")
+    @patch("context_builder.cli.run_git_command")
     @patch("context_builder.cli.run_command")
     @patch("context_builder.cli.extract_function_bounds")
     @patch("context_builder.graph_tracer.extract_function_bounds")
@@ -321,7 +322,7 @@ class TestCLI(unittest.TestCase):
     @patch("context_builder.cli.VolumeManager")
     def test_cli_bfs_traversal(
         self, mock_vm_cls, mock_get_lsp, mock_tracer_bounds, mock_cli_bounds,
-        mock_run, mock_git_tracked, mock_git_diff, mock_parse_args
+        mock_run, mock_run_git, mock_git_tracked, mock_git_diff, mock_parse_args
     ):
         # 1. Setup argparse mock options
         mock_args = CliNamespace()
@@ -345,6 +346,10 @@ class TestCLI(unittest.TestCase):
         mock_git_diff.return_value = ["file1.py"]
         mock_git_tracked.return_value = ["file1.py", "file2.py", "file3.py"]
         mock_run.side_effect = lambda cmd, **kwargs: "@@ -9,1 +10,1 @@\n" if "diff" in cmd else ""
+        mock_run_git.side_effect = (
+            lambda cmd, **kwargs: "@@ -9,1 +10,1 @@\n"
+            if "diff" in cmd else ""
+        )
 
         # Function bounds mock:
         # file1.py line 10 -> starts at line 9 (0-indexed), ends at 15
@@ -407,11 +412,13 @@ class TestCLI(unittest.TestCase):
     @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
     @patch("context_builder.cli.get_git_diff_files")
     @patch("context_builder.cli.get_git_tracked_files")
+    @patch("context_builder.cli.run_git_command")
     @patch("context_builder.cli.run_command")
     @patch("context_builder.cli.extract_function_bounds")
     @patch("context_builder.cli.VolumeManager")
     def test_cli_hunk_header_parsing(
-        self, mock_vm_cls, mock_bounds, mock_run, mock_git_tracked, mock_git_diff, mock_parse_args
+        self, mock_vm_cls, mock_bounds, mock_run, mock_run_git, mock_git_tracked,
+        mock_git_diff, mock_parse_args
     ):
         mock_args = CliNamespace()
         mock_args.format = "md"
@@ -445,6 +452,9 @@ class TestCLI(unittest.TestCase):
         mock_git_diff.return_value = ["file1.py"]
         mock_git_tracked.return_value = ["file1.py"]
         mock_run.side_effect = lambda cmd, **kwargs: diff_output if "diff" in cmd else ""
+        mock_run_git.side_effect = (
+            lambda cmd, **kwargs: diff_output if "diff" in cmd else ""
+        )
 
         # Function bounds mock: we want to capture what line_numbers were queried!
         queried_lines = []
@@ -472,6 +482,7 @@ class TestCLI(unittest.TestCase):
     @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
     @patch("context_builder.cli.get_git_diff_files")
     @patch("context_builder.cli.get_git_tracked_files")
+    @patch("context_builder.cli.run_git_command")
     @patch("context_builder.cli.run_command")
     @patch("context_builder.cli.extract_function_bounds")
     @patch("context_builder.graph_tracer.extract_function_bounds")
@@ -480,8 +491,8 @@ class TestCLI(unittest.TestCase):
     @patch("context_builder.cli.VolumeManager")
     def test_cli_callee_depth_bfs_traversal(
         self, mock_vm_cls, mock_find_def, mock_extract_callees,
-        mock_tracer_bounds, mock_cli_bounds, mock_run, mock_git_tracked,
-        mock_git_diff, mock_parse_args
+        mock_tracer_bounds, mock_cli_bounds, mock_run, mock_run_git,
+        mock_git_tracked, mock_git_diff, mock_parse_args
     ):
         mock_args = CliNamespace()
         mock_args.format = "md"
@@ -503,6 +514,10 @@ class TestCLI(unittest.TestCase):
         mock_git_diff.return_value = ["root.py"]
         mock_git_tracked.return_value = ["root.py", "callee1.py", "callee2.py"]
         mock_run.side_effect = lambda cmd, **kwargs: "@@ -1,1 +1,1 @@\n" if "diff" in cmd else ""
+        mock_run_git.side_effect = (
+            lambda cmd, **kwargs: "@@ -1,1 +1,1 @@\n"
+            if "diff" in cmd else ""
+        )
 
         # Setup bounds mock:
         # root.py: line 1 -> start=0, end=4 (def foo)
@@ -570,13 +585,14 @@ class TestCLI(unittest.TestCase):
     @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
     @patch("context_builder.cli.get_git_diff_files")
     @patch("context_builder.cli.get_git_tracked_files")
+    @patch("context_builder.cli.run_git_command")
     @patch("context_builder.cli.run_command")
     @patch("context_builder.cli.extract_function_bounds")
     @patch("context_builder.graph_tracer.extract_function_bounds")
     @patch("context_builder.cli.VolumeManager")
     def test_cli_decorator_and_multiline_parsing(
         self, mock_vm_cls, mock_tracer_bounds, mock_cli_bounds, mock_run,
-        mock_git_tracked, mock_git_diff, mock_parse_args
+        mock_run_git, mock_git_tracked, mock_git_diff, mock_parse_args
     ):
         mock_args = CliNamespace()
         mock_args.format = "md"
@@ -599,6 +615,10 @@ class TestCLI(unittest.TestCase):
         mock_git_diff.return_value = ["root.py"]
         mock_git_tracked.return_value = ["root.py", "caller.py"]
         mock_run.side_effect = lambda cmd, **kwargs: "@@ -1,1 +1,1 @@\n" if "diff" in cmd else ""
+        mock_run_git.side_effect = (
+            lambda cmd, **kwargs: "@@ -1,1 +1,1 @@\n"
+            if "diff" in cmd else ""
+        )
 
         # root.py bounds: start=0, end=5
         # caller.py bounds: start=0, end=5
@@ -648,11 +668,13 @@ class TestCLI(unittest.TestCase):
     @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
     @patch("context_builder.cli.get_git_diff_files")
     @patch("context_builder.cli.get_git_tracked_files")
+    @patch("context_builder.cli.run_git_command")
     @patch("context_builder.cli.run_command")
     @patch("context_builder.cli.extract_function_bounds")
     @patch("context_builder.cli.VolumeManager")
     def test_cli_function_name_extraction_comments_and_strings(
-        self, mock_vm_cls, mock_bounds, mock_run, mock_git_tracked, mock_git_diff, mock_parse_args
+        self, mock_vm_cls, mock_bounds, mock_run, mock_run_git, mock_git_tracked,
+        mock_git_diff, mock_parse_args
     ):
         mock_args = CliNamespace()
         mock_args.format = "md"
@@ -674,6 +696,10 @@ class TestCLI(unittest.TestCase):
         mock_git_diff.return_value = ["root.py"]
         mock_git_tracked.return_value = ["root.py"]
         mock_run.side_effect = lambda cmd, **kwargs: "@@ -1,1 +1,1 @@\n" if "diff" in cmd else ""
+        mock_run_git.side_effect = (
+            lambda cmd, **kwargs: "@@ -1,1 +1,1 @@\n"
+            if "diff" in cmd else ""
+        )
 
         mock_bounds.return_value = (0, 5)
 
