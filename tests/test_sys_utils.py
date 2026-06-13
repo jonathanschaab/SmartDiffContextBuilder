@@ -66,6 +66,44 @@ class TestSysUtils(unittest.TestCase):
 
     @patch("context_builder.sys_utils.warn_once")
     @patch("subprocess.run")
+    def test_run_git_process_custom_timeout_warns_with_custom_help(self, mock_run, mock_warn):
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd=["git"], timeout=5)
+
+        result = run_git_process(
+            ["git", "status"],
+            timeout=5.0,
+            timeout_key="git_probe_timeout",
+            timeout_option="--git-probe-timeout",
+        )
+
+        self.assertIsNone(result)
+        mock_warn.assert_called_once()
+        self.assertEqual(mock_warn.call_args.args[0], "git_probe_timeout")
+        self.assertIn("--git-probe-timeout", mock_warn.call_args.args[1])
+        self.assertIn("'git_probe_timeout'", mock_warn.call_args.args[1])
+
+    @patch("context_builder.sys_utils.warn_once")
+    @patch("subprocess.run")
+    def test_run_git_process_custom_timeout_config_lookup(self, mock_run, mock_warn):
+        from context_builder.config import CONFIG
+        mock_run.return_value = MagicMock(returncode=0)
+        old_val = CONFIG.get("git_probe_timeout", 5.0)
+        CONFIG["git_probe_timeout"] = 12.0
+        try:
+            run_git_process(
+                ["git", "status"],
+                timeout=None,
+                timeout_key="git_probe_timeout",
+                timeout_option="--git-probe-timeout",
+            )
+        finally:
+            CONFIG["git_probe_timeout"] = old_val
+
+        kwargs = mock_run.call_args.kwargs
+        self.assertEqual(kwargs["timeout"], 12.0)
+
+    @patch("context_builder.sys_utils.warn_once")
+    @patch("subprocess.run")
     def test_run_git_process_invalid_timeout_warns_and_uses_default(self, mock_run, mock_warn):
         from context_builder.config import CONFIG
 

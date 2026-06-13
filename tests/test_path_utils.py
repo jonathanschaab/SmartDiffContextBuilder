@@ -1,10 +1,12 @@
 # pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
 
+import subprocess
 import unittest
 from unittest.mock import MagicMock, patch
 
 from context_builder.config import CONFIG, reset_config
 from context_builder.path_utils import (
+    _iter_case_override_candidates,  # pylint: disable=protected-access
     build_root_replacement_variants,
     clear_path_case_caches,
     detect_root_case_sensitivity,
@@ -100,12 +102,12 @@ class TestPathUtils(unittest.TestCase):
         clear_path_case_caches()
         self.assertTrue(detect_root_case_sensitivity("/repo"))
 
-    @patch("context_builder.path_utils._warn_once")
-    @patch("context_builder.path_utils._run_git_probe_process")
+    @patch("context_builder.sys_utils.warn_once")
+    @patch("subprocess.run")
     def test_detect_root_case_sensitivity_warns_on_git_timeout(
         self, mock_run, mock_warn
     ):
-        mock_run.return_value = None
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd=["git"], timeout=5)
 
         self.assertFalse(detect_root_case_sensitivity(r"C:\Repo"))
         mock_warn.assert_called_once()
@@ -113,7 +115,7 @@ class TestPathUtils(unittest.TestCase):
         self.assertIn("--git-probe-timeout", mock_warn.call_args.args[1])
         self.assertIn("'git_probe_timeout'", mock_warn.call_args.args[1])
 
-    @patch("context_builder.path_utils._warn_once")
+    @patch("context_builder.sys_utils.warn_once")
     @patch("context_builder.path_utils._run_git_probe_process")
     def test_detect_root_case_sensitivity_warns_on_invalid_git_probe_timeout(
         self, mock_run, mock_warn
@@ -122,6 +124,7 @@ class TestPathUtils(unittest.TestCase):
         CONFIG["git_probe_timeout"] = "bad"
 
         self.assertTrue(detect_root_case_sensitivity("/repo"))
+        mock_warn.assert_called_once()
         self.assertEqual(mock_warn.call_args.args[0], "git_probe_timeout_invalid")
         self.assertIn("--git-probe-timeout", mock_warn.call_args.args[1])
         self.assertIn("'git_probe_timeout'", mock_warn.call_args.args[1])
@@ -179,6 +182,17 @@ class TestPathUtils(unittest.TestCase):
                 case_sensitive=True,
             )
         )
+
+    @patch("os.path.isabs", return_value=False)
+    def test_iter_case_override_candidates_absolute_windows_path_on_linux(self, _mock_isabs):
+        # Even if os.path.isabs returns False (simulating Linux environment),
+        # a Windows absolute path should not be treated as relative and joined with root.
+        candidates = list(_iter_case_override_candidates(
+            r"C:\Repo\src\main.cpp",
+            root_path=r"C:\Repo"
+        ))
+        self.assertNotIn("C:/Repo/C:/Repo/src/main.cpp", candidates)
+        self.assertIn("C:/Repo/src/main.cpp", candidates)
 
 
 if __name__ == "__main__":

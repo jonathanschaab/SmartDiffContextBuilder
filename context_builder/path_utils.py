@@ -34,6 +34,8 @@ def _run_git_probe_process(cmd, timeout, **kwargs):
     return import_module("context_builder.sys_utils").run_git_process(
         cmd,
         timeout=timeout,
+        timeout_key="git_probe_timeout",
+        timeout_option="--git-probe-timeout",
         **kwargs,
     )
 
@@ -130,7 +132,12 @@ def _iter_case_override_candidates(path_value, root_path=None):
         if normalized and normalized not in seen:
             seen.add(normalized)
             yield normalized
-    if path_value and root_path and not os.path.isabs(path_value):
+    is_abs = (
+        os.path.isabs(path_value)
+        or is_windows_drive_path(path_value)
+        or is_windows_unc_path(path_value)
+    )
+    if path_value and root_path and not is_abs:
         root_norm = normalize_case_rule_path(root_path)
         rel_norm = normalize_case_rule_path(path_value).lstrip("/")
         if root_norm and rel_norm:
@@ -167,20 +174,13 @@ def _get_git_ignorecase(root_path):
     """Query Git's case-sensitivity hint for a repository root."""
     from .config import DEFAULT_GIT_PROBE_TIMEOUT  # pylint: disable=import-outside-toplevel
 
-    timeout = _get_config_value("git_probe_timeout", DEFAULT_GIT_PROBE_TIMEOUT)
-    if (
-        isinstance(timeout, bool)
-        or not isinstance(timeout, (int, float))
-        or not (timeout > 0)
-    ):  # pylint: disable=superfluous-parens
-        _warn_once(
-            "git_probe_timeout_invalid",
-            f"Configured git_probe_timeout ({timeout}) must be a positive number. "
-            f"Falling back to {DEFAULT_GIT_PROBE_TIMEOUT} seconds. You can set this "
-            "limit using --git-probe-timeout or by setting 'git_probe_timeout' in "
-            "your config file.",
-        )
-        timeout = DEFAULT_GIT_PROBE_TIMEOUT
+    timeout_val = _get_config_value("git_probe_timeout", DEFAULT_GIT_PROBE_TIMEOUT)
+    timeout = import_module("context_builder.sys_utils").validate_timeout_setting(
+        timeout_val,
+        DEFAULT_GIT_PROBE_TIMEOUT,
+        "git_probe_timeout",
+        "--git-probe-timeout",
+    )
 
     try:
         result = _run_git_probe_process(
@@ -194,12 +194,6 @@ def _get_git_ignorecase(root_path):
     except OSError:
         return None
     if result is None:
-        _warn_once(
-            "git_probe_timeout",
-            f"git config probe timed out after {timeout} seconds. You can increase "
-            "this limit using --git-probe-timeout or by setting 'git_probe_timeout' "
-            "in your config file.",
-        )
         return None
     if result.returncode != 0:
         return None

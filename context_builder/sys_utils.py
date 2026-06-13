@@ -23,7 +23,7 @@ def warn_once(key, message):
         WARNED_MISSING_DEPS.add(key)
 
 
-def _validate_timeout_setting(value, default, config_key, cli_option):
+def validate_timeout_setting(value, default, config_key, cli_option):
     """Validate a positive numeric timeout and warn on invalid config values."""
     is_valid = (
         not isinstance(value, bool)
@@ -51,15 +51,21 @@ def _build_git_env(extra_env=None):
     return env
 
 
-def run_git_process(cmd, timeout=None, **kwargs):
+def run_git_process(
+    cmd,
+    timeout=None,
+    timeout_key="git_timeout",
+    timeout_option="--git-timeout",
+    **kwargs,
+):
     """Run a Git subprocess with non-interactive defaults and a timeout."""
     resolved_timeout = timeout
     if resolved_timeout is None:
-        resolved_timeout = _validate_timeout_setting(
-            CONFIG.get("git_timeout", DEFAULT_GIT_TIMEOUT),
+        resolved_timeout = validate_timeout_setting(
+            CONFIG.get(timeout_key, DEFAULT_GIT_TIMEOUT),
             DEFAULT_GIT_TIMEOUT,
-            "git_timeout",
-            "--git-timeout",
+            timeout_key,
+            timeout_option,
         )
     extra_env = kwargs.pop("env", None)
     check = kwargs.pop("check", False)
@@ -73,15 +79,21 @@ def run_git_process(cmd, timeout=None, **kwargs):
         )
     except subprocess.TimeoutExpired:
         warn_once(
-            "git_timeout",
+            timeout_key,
             f"git command timed out after {resolved_timeout} seconds. You can increase "
-            "this limit using --git-timeout or by setting 'git_timeout' in your "
+            f"this limit using {timeout_option} or by setting '{timeout_key}' in your "
             "config file.",
         )
         return None
 
 
-def run_git_command(cmd, exit_on_fail=False, timeout=None):
+def run_git_command(
+    cmd,
+    exit_on_fail=False,
+    timeout=None,
+    timeout_key="git_timeout",
+    timeout_option="--git-timeout",
+):
     """Run a Git command and return its standard output."""
     try:
         res = run_git_process(
@@ -91,6 +103,8 @@ def run_git_command(cmd, exit_on_fail=False, timeout=None):
             text=True,
             check=True,
             timeout=timeout,
+            timeout_key=timeout_key,
+            timeout_option=timeout_option,
         )
         if res is None:
             return ""
