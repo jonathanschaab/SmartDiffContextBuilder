@@ -37,7 +37,12 @@ class TestSysUtils(unittest.TestCase):
         old_timeout = CONFIG.get("git_timeout", 30.0)
         CONFIG["git_timeout"] = 42
         try:
-            run_git_process(["git", "status"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            run_git_process(
+                ["git", "status"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
         finally:
             CONFIG["git_timeout"] = old_timeout
 
@@ -160,7 +165,7 @@ class TestSysUtils(unittest.TestCase):
                 except Exception:
                     pass
 
-    @patch("context_builder.sys_utils.detect_root_case_sensitivity", return_value=True)
+    @patch("context_builder.path_utils.detect_root_case_sensitivity", return_value=True)
     def test_is_in_repo_honors_case_sensitive_root(self, _mock_case_sensitive):
         from context_builder.config import reset_config
         from context_builder.sys_utils import is_in_repo

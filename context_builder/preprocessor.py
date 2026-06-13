@@ -11,7 +11,6 @@ from .config import CONFIG
 from .languages import get_language_profile
 from .path_utils import (
     detect_root_case_sensitivity,
-    normalize_for_path_match,
     path_is_within_root,
     to_forward_slashes,
 )

@@ -178,13 +178,6 @@ def reset_config():
         'ffi_patterns': DEFAULT_FFI_PATTERNS.copy(),
         'ffi_rg_pattern': DEFAULT_FFI_RG_PATTERN,
     })
-    try:
-        from .path_utils import clear_path_case_caches  # pylint: disable=import-outside-toplevel
-        clear_path_case_caches()
-    except Exception:  # pylint: disable=broad-exception-caught
-        pass
-
-
 # Initialize configuration
 reset_config()
 
@@ -211,7 +204,8 @@ def generate_commented_config(active_options):
         "General Settings": [
             'format', 'max_lines', 'max_mb', 'base_name', 'max_cache_size_mb',
             'max_interface_depth', 'disable_pruning', 'lsp_init_timeout',
-            'lsp_timeout', 'ripgrep_timeout', 'git_timeout', 'git_probe_timeout', 'no_language_server',
+            'lsp_timeout', 'ripgrep_timeout', 'git_timeout',
+            'git_probe_timeout', 'no_language_server',
             'skip_ffi', 'skip_macro_expansion', 'path_case_rules',
             'caller_depth', 'callee_depth', 'commit_range'
         ],

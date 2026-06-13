@@ -8,13 +8,34 @@ heuristics.
 import os
 import re
 import subprocess
-from .config import CONFIG, DEFAULT_GIT_PROBE_TIMEOUT
+from importlib import import_module
 
 
 _WINDOWS_DRIVE_PATTERN = re.compile(r"^[A-Za-z]:")
 _WINDOWS_UNC_PATTERN = re.compile(r"^(?:\\\\|//)[^/\\]+[/\\][^/\\]+")
 _PATH_CASE_RULE_CACHE = {}
 _ROOT_CASE_CACHE = {}
+
+
+def _get_config_value(key, default=None):
+    """Read a config value lazily to avoid import cycles at module load time."""
+    from .config import CONFIG  # pylint: disable=import-outside-toplevel
+
+    return CONFIG.get(key, default)
+
+
+def _warn_once(key, message):
+    """Delegate warnings lazily to avoid import cycles at module load time."""
+    import_module("context_builder.sys_utils").warn_once(key, message)
+
+
+def _run_git_probe_process(cmd, timeout, **kwargs):
+    """Delegate git subprocess execution lazily to avoid import cycles."""
+    return import_module("context_builder.sys_utils").run_git_process(
+        cmd,
+        timeout=timeout,
+        **kwargs,
+    )
 
 
 def to_forward_slashes(value):
@@ -120,7 +141,7 @@ def _iter_case_override_candidates(path_value, root_path=None):
 
 def get_path_case_override(path_value, root_path=None):
     """Return an explicit case-sensitivity override for a path, if configured."""
-    rules = CONFIG.get("path_case_rules") or []
+    rules = _get_config_value("path_case_rules") or []
     if not isinstance(rules, list):
         return None
     candidates = tuple(_iter_case_override_candidates(path_value, root_path))
@@ -144,15 +165,15 @@ def get_path_case_override(path_value, root_path=None):
 
 def _get_git_ignorecase(root_path):
     """Query Git's case-sensitivity hint for a repository root."""
-    from .sys_utils import run_git_process, warn_once  # pylint: disable=import-outside-toplevel
+    from .config import DEFAULT_GIT_PROBE_TIMEOUT  # pylint: disable=import-outside-toplevel
 
-    timeout = CONFIG.get("git_probe_timeout", DEFAULT_GIT_PROBE_TIMEOUT)
+    timeout = _get_config_value("git_probe_timeout", DEFAULT_GIT_PROBE_TIMEOUT)
     if (
         isinstance(timeout, bool)
         or not isinstance(timeout, (int, float))
         or not (timeout > 0)
     ):  # pylint: disable=superfluous-parens
-        warn_once(
+        _warn_once(
             "git_probe_timeout_invalid",
             f"Configured git_probe_timeout ({timeout}) must be a positive number. "
             f"Falling back to {DEFAULT_GIT_PROBE_TIMEOUT} seconds. You can set this "
@@ -162,18 +183,18 @@ def _get_git_ignorecase(root_path):
         timeout = DEFAULT_GIT_PROBE_TIMEOUT
 
     try:
-        result = run_git_process(
+        result = _run_git_probe_process(
             ["git", "-C", root_path, "config", "--bool", "core.ignorecase"],
+            timeout=timeout,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             check=False,
-            timeout=timeout,
         )
     except OSError:
         return None
     if result is None:
-        warn_once(
+        _warn_once(
             "git_probe_timeout",
             f"git config probe timed out after {timeout} seconds. You can increase "
             "this limit using --git-probe-timeout or by setting 'git_probe_timeout' "

@@ -141,7 +141,7 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(rewritten[0]["file"], r"D:\worktree\src\main.cpp")
         self.assertEqual(rewritten[1]["file"], r"D:\worktree\include\lib.hpp")
 
-    @patch("context_builder.sys_utils.run_git_process")
+    @patch("context_builder.path_utils._run_git_probe_process")
     def test_rewrite_compile_commands_payload_handles_full_windows_path_case_mismatch(
         self, mock_run
     ):
@@ -167,7 +167,7 @@ class TestCLI(unittest.TestCase):
             r'clang++ "D:/worktree/Src/main.cpp" -I D:/worktree/include',
         )
 
-    @patch("context_builder.sys_utils.run_git_process")
+    @patch("context_builder.path_utils._run_git_probe_process")
     def test_rewrite_compile_commands_payload_respects_case_sensitive_override(
         self, mock_run
     ):

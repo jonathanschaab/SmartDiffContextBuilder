@@ -301,7 +301,7 @@ class TestPreprocessor(unittest.TestCase):
             finally:
                 os.chdir(old_cwd)
 
-    @patch("context_builder.sys_utils.run_git_process")
+    @patch("context_builder.path_utils._run_git_probe_process")
     def test_analyze_compile_commands_repo_root_honors_case_sensitive_root(
         self, mock_run
     ):

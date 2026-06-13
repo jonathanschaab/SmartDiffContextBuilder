@@ -7,7 +7,6 @@ import time
 
 from .config import CONFIG, DEFAULT_GIT_TIMEOUT
 from .languages import get_language_profile
-from .path_utils import detect_root_case_sensitivity, normalize_for_path_match, path_is_within_root
 
 WARNED_MISSING_DEPS = set()
 
@@ -63,11 +62,13 @@ def run_git_process(cmd, timeout=None, **kwargs):
             "--git-timeout",
         )
     extra_env = kwargs.pop("env", None)
+    check = kwargs.pop("check", False)
     try:
         return subprocess.run(
             cmd,
             timeout=resolved_timeout,
             env=_build_git_env(extra_env),
+            check=check,
             **kwargs,
         )
     except subprocess.TimeoutExpired:
@@ -439,8 +440,6 @@ def ripgrep_filter(files, token, fixed_strings=True, fallback_hint=None):
                 "progress will be shown for long scans.",
             )
         return _fallback_candidates(files, fallback_hint)
-    from .config import CONFIG  # pylint: disable=import-outside-toplevel
-
     timeout = CONFIG.get("ripgrep_timeout", 10)
     if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not (timeout > 0):  # pylint: disable=superfluous-parens
         warn_once(
@@ -497,6 +496,12 @@ def is_in_repo(file_path):
     Returns:
         bool: True if the file exists and is in the repo, False otherwise.
     """
+    from .path_utils import (  # pylint: disable=import-outside-toplevel
+        detect_root_case_sensitivity,
+        normalize_for_path_match,
+        path_is_within_root,
+    )
+
     if not file_path:
         return False
     # Normalize paths

@@ -494,9 +494,14 @@ def _setup_temp_worktree(temp_worktree_dir, end_sha, original_cwd):
         check=False,
     )
     if not add_res or add_res.returncode != 0:
+        error_text = (
+            add_res.stderr.strip()
+            if add_res and add_res.stderr
+            else "git worktree add failed"
+        )
         print(
             f"\n[SmartDiffContextBuilder Error] Failed to create git worktree: "
-            f"{(add_res.stderr.strip() if add_res and add_res.stderr else 'git worktree add failed')}"
+            f"{error_text}"
         )
         try:
             shutil.rmtree(temp_worktree_dir, ignore_errors=True)

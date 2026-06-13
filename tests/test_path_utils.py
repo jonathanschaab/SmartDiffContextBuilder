@@ -84,7 +84,7 @@ class TestPathUtils(unittest.TestCase):
             )
         )
 
-    @patch("context_builder.sys_utils.run_git_process")
+    @patch("context_builder.path_utils._run_git_probe_process")
     def test_detect_root_case_sensitivity_prefers_git_signal(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stdout="true\n", stderr="")
 
@@ -92,7 +92,7 @@ class TestPathUtils(unittest.TestCase):
         mock_run.assert_called_once()
         self.assertEqual(mock_run.call_args.kwargs["timeout"], 5.0)
 
-    @patch("context_builder.sys_utils.run_git_process")
+    @patch("context_builder.path_utils._run_git_probe_process")
     def test_detect_root_case_sensitivity_falls_back_to_root_style(self, mock_run):
         mock_run.side_effect = OSError("git unavailable")
 
@@ -100,8 +100,8 @@ class TestPathUtils(unittest.TestCase):
         clear_path_case_caches()
         self.assertTrue(detect_root_case_sensitivity("/repo"))
 
-    @patch("context_builder.sys_utils.warn_once")
-    @patch("context_builder.sys_utils.run_git_process")
+    @patch("context_builder.path_utils._warn_once")
+    @patch("context_builder.path_utils._run_git_probe_process")
     def test_detect_root_case_sensitivity_warns_on_git_timeout(
         self, mock_run, mock_warn
     ):
@@ -113,8 +113,8 @@ class TestPathUtils(unittest.TestCase):
         self.assertIn("--git-probe-timeout", mock_warn.call_args.args[1])
         self.assertIn("'git_probe_timeout'", mock_warn.call_args.args[1])
 
-    @patch("context_builder.sys_utils.warn_once")
-    @patch("context_builder.sys_utils.run_git_process")
+    @patch("context_builder.path_utils._warn_once")
+    @patch("context_builder.path_utils._run_git_probe_process")
     def test_detect_root_case_sensitivity_warns_on_invalid_git_probe_timeout(
         self, mock_run, mock_warn
     ):
@@ -127,7 +127,7 @@ class TestPathUtils(unittest.TestCase):
         self.assertIn("'git_probe_timeout'", mock_warn.call_args.args[1])
         self.assertEqual(mock_run.call_args.kwargs["timeout"], 5.0)
 
-    @patch("context_builder.sys_utils.run_git_process")
+    @patch("context_builder.path_utils._run_git_probe_process")
     def test_is_path_case_sensitive_uses_override_before_root_heuristic(self, mock_run):
         mock_run.side_effect = OSError("git unavailable")
         CONFIG["path_case_rules"] = [
@@ -145,7 +145,7 @@ class TestPathUtils(unittest.TestCase):
             )
         )
 
-    @patch("context_builder.sys_utils.run_git_process")
+    @patch("context_builder.path_utils._run_git_probe_process")
     def test_is_path_case_sensitive_treats_explicit_posix_relative_path_as_sensitive(
         self, mock_run
     ):
