@@ -108,6 +108,35 @@ class TestCLI(unittest.TestCase):
 
         self.assertEqual(rewritten[0]["file"], "/worktree/src/main.cpp")
 
+    def test_rewrite_compile_commands_payload_rewrites_colon_separated_path_lists(self):
+        from context_builder.cli import _rewrite_compile_commands_payload
+
+        payload = [
+            {
+                "command": "-Wl,-rpath,/repo/lib:/repo/third_party/lib:/repo-utils/lib",
+            }
+        ]
+
+        rewritten = _rewrite_compile_commands_payload(payload, "/repo", "/worktree")
+
+        self.assertEqual(
+            rewritten[0]["command"],
+            "-Wl,-rpath,/worktree/lib:/worktree/third_party/lib:/repo-utils/lib",
+        )
+
+    def test_rewrite_compile_commands_payload_keeps_windows_drive_letter_paths_valid(self):
+        from context_builder.cli import _rewrite_compile_commands_payload
+
+        payload = [{"file": r"C:\repo\src\main.cpp"}]
+
+        rewritten = _rewrite_compile_commands_payload(
+            payload,
+            r"C:\repo",
+            r"D:\worktree",
+        )
+
+        self.assertEqual(rewritten[0]["file"], r"D:\worktree\src\main.cpp")
+
     def test_setup_temp_worktree_rewrites_compile_commands_json(self):
         from context_builder.cli import _setup_temp_worktree
 

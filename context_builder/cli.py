@@ -526,7 +526,7 @@ def _build_worktree_root_replacements(original_root, worktree_root):
             continue
         seen_sources.add(source_root)
         pattern = re.compile(
-            re.escape(source_root) + r'(?=[/\\\s"\']|$)'
+            re.escape(source_root) + r'(?=[/\\:;\s"\']|$)'
         )
         replacements.append((source_root, target_root, pattern))
     return replacements
