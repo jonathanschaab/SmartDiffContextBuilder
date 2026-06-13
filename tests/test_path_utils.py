@@ -1,5 +1,6 @@
 # pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
 
+import subprocess
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -90,6 +91,11 @@ class TestPathUtils(unittest.TestCase):
 
         self.assertFalse(detect_root_case_sensitivity(r"C:\Repo"))
         mock_run.assert_called_once()
+        self.assertEqual(mock_run.call_args.kwargs["timeout"], 5)
+        self.assertEqual(
+            mock_run.call_args.kwargs["env"]["GIT_TERMINAL_PROMPT"],
+            "0",
+        )
 
     @patch("context_builder.path_utils.subprocess.run")
     def test_detect_root_case_sensitivity_falls_back_to_root_style(self, mock_run):
@@ -98,6 +104,12 @@ class TestPathUtils(unittest.TestCase):
         self.assertFalse(detect_root_case_sensitivity(r"C:\Repo"))
         clear_path_case_caches()
         self.assertTrue(detect_root_case_sensitivity("/repo"))
+
+    @patch("context_builder.path_utils.subprocess.run")
+    def test_detect_root_case_sensitivity_ignores_git_timeout(self, mock_run):
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd="git", timeout=5)
+
+        self.assertFalse(detect_root_case_sensitivity(r"C:\Repo"))
 
     @patch("context_builder.path_utils.subprocess.run")
     def test_is_path_case_sensitive_uses_override_before_root_heuristic(self, mock_run):

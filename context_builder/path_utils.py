@@ -145,6 +145,10 @@ def get_path_case_override(path_value, root_path=None):
 
 def _get_git_ignorecase(root_path):
     """Query Git's case-sensitivity hint for a repository root."""
+    env = os.environ.copy()
+    # This helper runs inside non-interactive automation. Disable terminal
+    # prompts so Git cannot block indefinitely waiting for user input.
+    env["GIT_TERMINAL_PROMPT"] = "0"
     try:
         result = subprocess.run(
             ["git", "-C", root_path, "config", "--bool", "core.ignorecase"],
@@ -152,8 +156,10 @@ def _get_git_ignorecase(root_path):
             stderr=subprocess.PIPE,
             text=True,
             check=False,
+            timeout=5,
+            env=env,
         )
-    except OSError:
+    except (OSError, subprocess.SubprocessError):
         return None
     if result.returncode != 0:
         return None
