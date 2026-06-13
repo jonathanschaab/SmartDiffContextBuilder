@@ -10,8 +10,9 @@ from .cache import get_global_cache
 from .config import CONFIG
 from .languages import get_language_profile
 from .path_utils import (
+    detect_root_case_sensitivity,
     normalize_for_path_match,
-    normalize_root_for_path_match,
+    path_is_within_root,
     to_forward_slashes,
 )
 from .sys_utils import (
@@ -375,7 +376,7 @@ def _process_compilation_entry(
     abs_target_file,
     target_base,
     repo_root,
-    norm_root,
+    root_case_sensitive,
     cwd,
     callers,
     file_cache,
@@ -393,9 +394,12 @@ def _process_compilation_entry(
     abs_ref_file = os.path.abspath(ref_file)
 
     # If repo_root is provided, we are running inside a temporary worktree.
-    if repo_root and norm_root:
-        norm_ref = normalize_for_path_match(abs_ref_file)
-        if norm_ref.startswith(norm_root):
+    if repo_root and root_case_sensitive is not None:
+        if path_is_within_root(
+            abs_ref_file,
+            repo_root,
+            case_sensitive=root_case_sensitive,
+        ):
             try:
                 rel_to_root = os.path.relpath(abs_ref_file, repo_root)
                 # Map to the current temporary worktree CWD
@@ -512,9 +516,10 @@ def analyze_compile_commands(target_file, file_cache=None, repo_root=None):
         """
         include_pattern = re.compile(pattern, re.M | re.X)
         abs_target_file = os.path.abspath(target_file)
-        norm_root = None
+        root_case_sensitive = None
         if repo_root:
-            norm_root = normalize_root_for_path_match(os.path.abspath(repo_root))
+            repo_root = os.path.abspath(repo_root)
+            root_case_sensitive = detect_root_case_sensitivity(repo_root)
         cwd = os.getcwd()
 
         for entry in db:
@@ -524,7 +529,7 @@ def analyze_compile_commands(target_file, file_cache=None, repo_root=None):
                 abs_target_file,
                 target_base,
                 repo_root,
-                norm_root,
+                root_case_sensitive,
                 cwd,
                 callers,
                 file_cache,

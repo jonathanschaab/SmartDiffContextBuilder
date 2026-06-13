@@ -41,6 +41,16 @@ def normalize_root_for_path_match(value):
     return normalized + "/"
 
 
+def normalize_root_for_explicit_match(value, case_sensitive):
+    """Normalize a root path for prefix/equality checks using explicit case policy."""
+    normalized = to_forward_slashes(value).rstrip("/")
+    if not case_sensitive:
+        normalized = normalized.lower()
+    if not normalized:
+        return normalized
+    return normalized + "/"
+
+
 def is_windows_drive_path(value):
     """Return whether a path starts with a Windows drive prefix."""
     return bool(_WINDOWS_DRIVE_PATTERN.match(str(value or "")))
@@ -203,6 +213,21 @@ def is_path_case_sensitive(path_value, root_path=None):
     if root_path:
         return detect_root_case_sensitivity(root_path)
     return True
+
+
+def path_is_within_root(path_value, root_path, case_sensitive=None):
+    """Return whether a path is equal to or contained within a root path."""
+    if case_sensitive is None:
+        case_sensitive = is_path_case_sensitive(path_value, root_path=root_path)
+    normalized_path = to_forward_slashes(path_value).rstrip("/")
+    normalized_root = to_forward_slashes(root_path).rstrip("/")
+    if not case_sensitive:
+        normalized_path = normalized_path.lower()
+        normalized_root = normalized_root.lower()
+    return (
+        normalized_path == normalized_root
+        or normalized_path.startswith(normalize_root_for_explicit_match(root_path, case_sensitive))
+    )
 
 
 def build_root_replacement_variants(original_root, target_root):

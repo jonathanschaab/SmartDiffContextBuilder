@@ -100,6 +100,30 @@ class TestSysUtils(unittest.TestCase):
                 except Exception:
                     pass
 
+    @patch("context_builder.sys_utils.detect_root_case_sensitivity", return_value=True)
+    def test_is_in_repo_honors_case_sensitive_root(self, _mock_case_sensitive):
+        from context_builder.config import reset_config
+        from context_builder.sys_utils import is_in_repo
+
+        old_cwd = os.getcwd()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.chdir(temp_dir)
+            try:
+                reset_config()
+
+                in_repo_file = "file.py"
+                with open(in_repo_file, "w") as f:
+                    f.write("pass")
+
+                mismatched_root = temp_dir.swapcase()
+                if mismatched_root == temp_dir:
+                    mismatched_root = temp_dir.upper()
+                mismatched_case_path = os.path.join(mismatched_root, "file.py")
+                self.assertFalse(is_in_repo(mismatched_case_path))
+            finally:
+                reset_config()
+                os.chdir(old_cwd)
+
     @patch("context_builder.sys_utils.HAS_RG", True)
     @patch("subprocess.run")
     def test_ripgrep_filter_windows_separator(self, mock_run):

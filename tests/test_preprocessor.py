@@ -10,6 +10,7 @@ import unittest
 from unittest.mock import patch, MagicMock, ANY
 import json
 from context_builder.cache import LRUFileCache
+from context_builder.config import CONFIG
 import context_builder.preprocessor as _preprocessor_mod
 from context_builder.sys_utils import FileScanCandidates
 from context_builder.preprocessor import (
@@ -299,6 +300,58 @@ class TestPreprocessor(unittest.TestCase):
                                  "Path must not start with '..' when repo_root is provided")
             finally:
                 os.chdir(old_cwd)
+
+    @patch("context_builder.path_utils.subprocess.run")
+    def test_analyze_compile_commands_repo_root_honors_case_sensitive_root(
+        self, mock_run
+    ):
+        mock_run.side_effect = OSError("git unavailable")
+        from context_builder.path_utils import clear_path_case_caches
+
+        with tempfile.TemporaryDirectory() as original_repo, \
+             tempfile.TemporaryDirectory() as worktree:
+            clear_path_case_caches()
+            ref_cpp = os.path.join(original_repo, "src", "other.cpp")
+            os.makedirs(os.path.dirname(ref_cpp), exist_ok=True)
+            with open(ref_cpp, "w") as f:
+                f.write('#include "other.h"\n')
+
+            mismatched_ref_cpp = ref_cpp.replace(original_repo, original_repo.lower())
+            db = [
+                {
+                    "directory": os.path.dirname(mismatched_ref_cpp),
+                    "command": f"clang++ -c {mismatched_ref_cpp}",
+                    "file": mismatched_ref_cpp,
+                }
+            ]
+            with open(os.path.join(worktree, "compile_commands.json"), "w") as f:
+                json.dump(db, f)
+
+            target_header = os.path.join(original_repo, "src", "other.h")
+            old_cwd = os.getcwd()
+            os.chdir(worktree)
+            try:
+                with patch.dict(
+                    CONFIG,
+                    {
+                        "path_case_rules": [
+                            {
+                                "pattern": "^/",
+                                "case_sensitive": True,
+                            }
+                        ]
+                    },
+                    clear=False,
+                ):
+                    clear_path_case_caches()
+                    callers = analyze_compile_commands(
+                        target_header,
+                        repo_root=original_repo,
+                    )
+            finally:
+                os.chdir(old_cwd)
+
+            self.assertNotIn("src/other.cpp", callers)
 
     def test_trace_macro_expansion_header_file(self):
         # Create a header file (.h)

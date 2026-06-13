@@ -6,7 +6,7 @@ import sys
 import time
 
 from .languages import get_language_profile
-from .path_utils import normalize_for_path_match
+from .path_utils import detect_root_case_sensitivity, normalize_for_path_match, path_is_within_root
 
 WARNED_MISSING_DEPS = set()
 
@@ -421,12 +421,13 @@ def is_in_repo(file_path):
     try:
         abs_path = os.path.abspath(file_path)
         repo_root = os.path.abspath(".")
-        # Safely verify if the file resides within the repository root using commonpath
-        common = os.path.commonpath([repo_root, abs_path])
-        # Compare normalized absolute paths case-insensitively for Windows compatibility
+        case_sensitive = detect_root_case_sensitivity(repo_root)
         return (
-            normalize_for_path_match(os.path.abspath(common))
-            == normalize_for_path_match(repo_root)
+            path_is_within_root(
+                abs_path,
+                repo_root,
+                case_sensitive=case_sensitive,
+            )
             and os.path.exists(file_path)
         )
     except Exception:  # pylint: disable=broad-exception-caught

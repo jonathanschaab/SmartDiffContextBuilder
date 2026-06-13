@@ -15,6 +15,7 @@ from context_builder.path_utils import (
     is_windows_style_path,
     normalize_for_path_match,
     normalize_case_rule_path,
+    path_is_within_root,
     normalize_root_for_path_match,
     to_backslashes,
     to_forward_slashes,
@@ -133,6 +134,22 @@ class TestPathUtils(unittest.TestCase):
         self.assertEqual(
             normalize_case_rule_path(r"C:\Repo\CaseSensitive\\"),
             "C:/Repo/CaseSensitive",
+        )
+
+    def test_path_is_within_root_honors_case_sensitivity(self):
+        self.assertTrue(
+            path_is_within_root(
+                r"C:\Repo\Src\main.cpp",
+                r"C:\Repo",
+                case_sensitive=False,
+            )
+        )
+        self.assertFalse(
+            path_is_within_root(
+                r"c:\repo\Src\main.cpp",
+                r"C:\Repo",
+                case_sensitive=True,
+            )
         )
 
 
