@@ -532,21 +532,26 @@ def _build_worktree_root_replacements(original_root, worktree_root):
 def _rewrite_compile_commands_payload(payload, original_root, worktree_root):
     """Recursively rewrite compile database paths from the source repo to the worktree."""
     replacements = _build_worktree_root_replacements(original_root, worktree_root)
-    return _rewrite_compile_commands_payload_with_replacements(payload, replacements)
+    _rewrite_compile_commands_payload_with_replacements(payload, replacements)
+    return payload
 
 
 def _rewrite_compile_commands_payload_with_replacements(payload, replacements):
-    """Recursively rewrite compile database paths using precomputed replacements."""
+    """Recursively rewrite compile database paths in place using precomputed replacements."""
     if isinstance(payload, dict):
-        return {
-            key: _rewrite_compile_commands_payload_with_replacements(value, replacements)
-            for key, value in payload.items()
-        }
+        for key, value in payload.items():
+            payload[key] = _rewrite_compile_commands_payload_with_replacements(
+                value,
+                replacements,
+            )
+        return payload
     if isinstance(payload, list):
-        return [
-            _rewrite_compile_commands_payload_with_replacements(item, replacements)
-            for item in payload
-        ]
+        for idx, item in enumerate(payload):
+            payload[idx] = _rewrite_compile_commands_payload_with_replacements(
+                item,
+                replacements,
+            )
+        return payload
     if not isinstance(payload, str):
         return payload
     rewritten = payload

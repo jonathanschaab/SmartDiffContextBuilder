@@ -72,6 +72,16 @@ class TestCLI(unittest.TestCase):
         self.assertIn("/worktree/src/main.cpp", entry["command"])
         self.assertEqual(entry["output"], "/repo-utils/build/main.o")
 
+    def test_rewrite_compile_commands_payload_rewrites_in_place(self):
+        from context_builder.cli import _rewrite_compile_commands_payload
+
+        payload = [{"file": "/repo/src/main.cpp"}]
+
+        rewritten = _rewrite_compile_commands_payload(payload, "/repo", "/worktree")
+
+        self.assertIs(rewritten, payload)
+        self.assertEqual(payload[0]["file"], "/worktree/src/main.cpp")
+
     def test_setup_temp_worktree_rewrites_compile_commands_json(self):
         from context_builder.cli import _setup_temp_worktree
 
