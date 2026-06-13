@@ -82,6 +82,32 @@ class TestCLI(unittest.TestCase):
         self.assertIs(rewritten, payload)
         self.assertEqual(payload[0]["file"], "/worktree/src/main.cpp")
 
+    def test_rewrite_compile_commands_payload_normalizes_mixed_slash_roots(self):
+        from context_builder.cli import _rewrite_compile_commands_payload
+
+        payload = [{"file": "C:/repo/src/main.cpp"}]
+
+        rewritten = _rewrite_compile_commands_payload(
+            payload,
+            r"C:\repo",
+            r"D:\worktree",
+        )
+
+        self.assertEqual(rewritten[0]["file"], "D:/worktree/src/main.cpp")
+
+    def test_rewrite_compile_commands_payload_handles_trailing_root_separators(self):
+        from context_builder.cli import _rewrite_compile_commands_payload
+
+        payload = [{"file": "/repo/src/main.cpp"}]
+
+        rewritten = _rewrite_compile_commands_payload(
+            payload,
+            "/repo/",
+            "/worktree/",
+        )
+
+        self.assertEqual(rewritten[0]["file"], "/worktree/src/main.cpp")
+
     def test_setup_temp_worktree_rewrites_compile_commands_json(self):
         from context_builder.cli import _setup_temp_worktree
 
