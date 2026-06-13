@@ -534,8 +534,10 @@ def _build_worktree_root_replacements(original_root, worktree_root):
 def _rewrite_compile_commands_payload(payload, original_root, worktree_root):
     """Recursively rewrite compile database paths from the source repo to the worktree."""
     replacements = _build_worktree_root_replacements(original_root, worktree_root)
-    _rewrite_compile_commands_payload_with_replacements(payload, replacements)
-    return payload
+    return _rewrite_compile_commands_payload_with_replacements(
+        payload,
+        replacements,
+    )
 
 
 def _rewrite_compile_commands_payload_with_replacements(payload, replacements):
