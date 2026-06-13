@@ -509,24 +509,6 @@ def _setup_temp_worktree(temp_worktree_dir, end_sha, original_cwd):
             os.path.join(temp_worktree_dir, "coverage.xml")
         )
 
-
-def _replace_worktree_root(value, original_root, worktree_root):
-    """Rewrite repository-rooted strings to point at the detached worktree."""
-    if not isinstance(value, str):
-        return value
-
-    replacements = _build_worktree_root_replacements(original_root, worktree_root)
-    rewritten = value
-    for source_root, target_root, pattern in replacements:
-        if source_root not in rewritten:
-            continue
-        rewritten = pattern.sub(
-            lambda _match, replacement=target_root: replacement,
-            rewritten,
-        )
-    return rewritten
-
-
 def _build_worktree_root_replacements(original_root, worktree_root):
     """Build boundary-aware root replacements for both slash styles."""
     variants = [
@@ -601,7 +583,7 @@ def _rewrite_worktree_compile_commands(
             encoding="utf-8",
         ) as target_file:
             json.dump(rewritten_payload, target_file, indent=2)
-    except (OSError, TypeError, json.JSONDecodeError):
+    except (OSError, TypeError, UnicodeDecodeError, json.JSONDecodeError):
         shutil.copy(compile_commands_path, worktree_compile_commands_path)
 
 

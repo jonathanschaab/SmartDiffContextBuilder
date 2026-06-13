@@ -135,6 +135,27 @@ class TestCLI(unittest.TestCase):
 
         mock_copy.assert_called_once_with(compile_commands_path, rewritten_path)
 
+    @patch("context_builder.cli.shutil.copy")
+    def test_rewrite_worktree_compile_commands_falls_back_to_copy_on_invalid_utf8(
+        self, mock_copy
+    ):
+        from context_builder.cli import _rewrite_worktree_compile_commands
+
+        with tempfile.TemporaryDirectory() as original_cwd, tempfile.TemporaryDirectory() as temp_root:
+            compile_commands_path = os.path.join(original_cwd, "compile_commands.json")
+            rewritten_path = os.path.join(temp_root, "compile_commands.json")
+            with open(compile_commands_path, "wb") as compile_file:
+                compile_file.write(b'[\xff{"file":"main.cpp"}]')
+
+            _rewrite_worktree_compile_commands(
+                compile_commands_path,
+                rewritten_path,
+                original_cwd,
+                temp_root,
+            )
+
+        mock_copy.assert_called_once_with(compile_commands_path, rewritten_path)
+
     @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
     @patch("context_builder.cli.get_git_diff_files")
     @patch("context_builder.cli.get_git_tracked_files")
