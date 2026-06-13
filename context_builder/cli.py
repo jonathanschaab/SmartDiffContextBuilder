@@ -517,7 +517,6 @@ def _build_worktree_root_replacements(original_root, worktree_root):
     worktree_root = worktree_root.rstrip("/\\")
     variants = [
         (original_root.replace("\\", "/"), worktree_root.replace("\\", "/")),
-        (original_root.replace("\\", "/"), worktree_root.replace("\\", "/")),
         (original_root.replace("/", "\\"), worktree_root.replace("/", "\\")),
     ]
     replacements = []
