@@ -397,6 +397,7 @@ def _merge_cli_mappings(args, active_overrides):
         "lsp_init_timeout": "lsp_init_timeout",
         "lsp_timeout": "lsp_timeout",
         "ripgrep_timeout": "ripgrep_timeout",
+        "git_probe_timeout": "git_probe_timeout",
         "no_language_server": "no_language_server",
         "skip_ffi": "skip_ffi",
         "skip_macro_expansion": "skip_macro_expansion",
@@ -739,6 +740,7 @@ def main():
     parser.add_argument("--lsp-init-timeout", type=float, default=None)
     parser.add_argument("--lsp-timeout", type=float, default=None)
     parser.add_argument("--ripgrep-timeout", type=float, default=None)
+    parser.add_argument("--git-probe-timeout", type=float, default=None)
     parser.add_argument("--no-language-server", action="store_true", default=None)
     parser.add_argument("--skip-ffi", action="store_true", default=None)
     parser.add_argument("--skip-macro-expansion", action="store_true", default=None)

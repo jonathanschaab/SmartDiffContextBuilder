@@ -71,6 +71,7 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(CONFIG["format"], "md")
         self.assertEqual(CONFIG["lsp_init_timeout"], 60)
         self.assertEqual(CONFIG["lsp_timeout"], 150)
+        self.assertEqual(CONFIG["git_probe_timeout"], 5.0)
 
     def test_generate_commented_config(self):
         reset_config()

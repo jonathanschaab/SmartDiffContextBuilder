@@ -9,7 +9,7 @@ import os
 import re
 import subprocess
 
-from .config import CONFIG
+from .config import CONFIG, DEFAULT_GIT_PROBE_TIMEOUT
 
 
 _WINDOWS_DRIVE_PATTERN = re.compile(r"^[A-Za-z]:")
@@ -145,6 +145,23 @@ def get_path_case_override(path_value, root_path=None):
 
 def _get_git_ignorecase(root_path):
     """Query Git's case-sensitivity hint for a repository root."""
+    from .sys_utils import warn_once  # pylint: disable=import-outside-toplevel
+
+    timeout = CONFIG.get("git_probe_timeout", DEFAULT_GIT_PROBE_TIMEOUT)
+    if (
+        isinstance(timeout, bool)
+        or not isinstance(timeout, (int, float))
+        or not (timeout > 0)
+    ):  # pylint: disable=superfluous-parens
+        warn_once(
+            "git_probe_timeout_invalid",
+            f"Configured git_probe_timeout ({timeout}) must be a positive number. "
+            f"Falling back to {DEFAULT_GIT_PROBE_TIMEOUT} seconds. You can set this "
+            "limit using --git-probe-timeout or by setting 'git_probe_timeout' in "
+            "your config file.",
+        )
+        timeout = DEFAULT_GIT_PROBE_TIMEOUT
+
     env = os.environ.copy()
     # This helper runs inside non-interactive automation. Disable terminal
     # prompts so Git cannot block indefinitely waiting for user input.
@@ -156,9 +173,17 @@ def _get_git_ignorecase(root_path):
             stderr=subprocess.PIPE,
             text=True,
             check=False,
-            timeout=5,
+            timeout=timeout,
             env=env,
         )
+    except subprocess.TimeoutExpired:
+        warn_once(
+            "git_probe_timeout",
+            f"git config probe timed out after {timeout} seconds. You can increase "
+            "this limit using --git-probe-timeout or by setting 'git_probe_timeout' "
+            "in your config file.",
+        )
+        return None
     except (OSError, subprocess.SubprocessError):
         return None
     if result.returncode != 0:

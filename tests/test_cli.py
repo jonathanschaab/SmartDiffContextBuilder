@@ -1519,6 +1519,28 @@ class TestCLI(unittest.TestCase):
 
     @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
     @patch("context_builder.cli.run_scan")
+    def test_cli_git_probe_timeout_mapping(self, mock_run_scan, mock_parse_args):
+        """Verify that CLI parameter --git-probe-timeout updates CONFIG."""
+        from context_builder.config import CONFIG, reset_config
+        reset_config()
+
+        mock_args = CliNamespace()
+        mock_args.git_probe_timeout = 12.5
+        mock_parse_args.return_value = mock_args
+
+        main()
+
+        self.assertEqual(CONFIG["git_probe_timeout"], 12.5)
+        args_passed = mock_run_scan.call_args[0][0]
+        self.assertEqual(args_passed.git_probe_timeout, 12.5)
+
+        mock_args.git_probe_timeout = "not_a_float"
+        with self.assertRaises(SystemExit) as cm:
+            main()
+        self.assertEqual(cm.exception.code, 1)
+
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    @patch("context_builder.cli.run_scan")
     def test_cli_lsp_timeout_mappings(self, mock_run_scan, mock_parse_args):
         from context_builder.config import CONFIG, reset_config
 

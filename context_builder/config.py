@@ -125,6 +125,7 @@ DEFAULT_FFI_RG_PATTERN = (
     "no_mangle|wasm_bindgen|extern \"C\"|EMSCRIPTEN_KEEPALIVE|PYBIND11_MODULE|m.def"
 )
 DEFAULT_PATH_CASE_RULES = []
+DEFAULT_GIT_PROBE_TIMEOUT = 5.0
 DEFAULT_LSP_INIT_TIMEOUT = 60.0
 DEFAULT_LSP_QUERY_TIMEOUT = 150.0
 WORKTREE_LSP_INIT_TIMEOUT = 120.0
@@ -149,6 +150,7 @@ def reset_config():
         'lsp_init_timeout': DEFAULT_LSP_INIT_TIMEOUT,
         'lsp_timeout': DEFAULT_LSP_QUERY_TIMEOUT,
         'ripgrep_timeout': 10.0,
+        'git_probe_timeout': DEFAULT_GIT_PROBE_TIMEOUT,
         'no_language_server': False,
         'skip_ffi': False,
         'skip_macro_expansion': False,
@@ -207,7 +209,7 @@ def generate_commented_config(active_options):
         "General Settings": [
             'format', 'max_lines', 'max_mb', 'base_name', 'max_cache_size_mb',
             'max_interface_depth', 'disable_pruning', 'lsp_init_timeout',
-            'lsp_timeout', 'ripgrep_timeout', 'no_language_server',
+            'lsp_timeout', 'ripgrep_timeout', 'git_probe_timeout', 'no_language_server',
             'skip_ffi', 'skip_macro_expansion', 'path_case_rules',
             'caller_depth', 'callee_depth', 'commit_range'
         ],
