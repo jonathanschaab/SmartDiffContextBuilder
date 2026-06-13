@@ -5,6 +5,8 @@ multiple scanners can reuse the same behavior instead of each inventing its own
 heuristics.
 """
 
+# pylint: disable=cyclic-import
+
 import os
 import re
 import subprocess
