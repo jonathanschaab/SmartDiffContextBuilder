@@ -2,6 +2,7 @@
 
 import os
 
+from ..path_utils import to_forward_slashes
 from .batch import BATCH
 from .c_family import C_FAMILY
 from .go import GO
@@ -31,7 +32,7 @@ _BY_EXTENSION = {
 
 def get_language_profile(file_path_or_extension):
     """Return the registered profile or the unknown-language fallback."""
-    value = str(file_path_or_extension or "").replace("\\", "/")
+    value = to_forward_slashes(file_path_or_extension)
     base_name = os.path.basename(value)
     if base_name.lower().startswith("makefile"):
         return HASH_COMMENTS

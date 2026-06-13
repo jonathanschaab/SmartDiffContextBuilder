@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 import context_builder.sys_utils as sys_utils
 from context_builder.sys_utils import (
     iter_scan_progress,
+    run_git_process,
     run_command,
     get_git_diff_files,
     get_git_tracked_files,
@@ -27,6 +28,108 @@ class TestSysUtils(unittest.TestCase):
     def test_run_command_failure(self):
         output = run_command(["nonexistent_command_12345"])
         self.assertEqual(output, "")
+
+    @patch("subprocess.run")
+    def test_run_git_process_sets_non_interactive_env_and_timeout(self, mock_run):
+        from context_builder.config import CONFIG
+
+        mock_run.return_value = MagicMock(returncode=0)
+        old_timeout = CONFIG.get("git_timeout", 30.0)
+        CONFIG["git_timeout"] = 42
+        try:
+            run_git_process(
+                ["git", "status"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+        finally:
+            CONFIG["git_timeout"] = old_timeout
+
+        kwargs = mock_run.call_args.kwargs
+        self.assertEqual(kwargs["timeout"], 42)
+        self.assertEqual(kwargs["env"]["GIT_TERMINAL_PROMPT"], "0")
+        self.assertEqual(kwargs["env"]["GCM_INTERACTIVE"], "never")
+
+    @patch("context_builder.sys_utils.warn_once")
+    @patch("subprocess.run")
+    def test_run_git_process_timeout_warns_with_adjustment_help(self, mock_run, mock_warn):
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd=["git"], timeout=30)
+
+        result = run_git_process(["git", "status"])
+
+        self.assertIsNone(result)
+        mock_warn.assert_called_once()
+        self.assertEqual(mock_warn.call_args.args[0], "git_timeout")
+        self.assertIn("--git-timeout", mock_warn.call_args.args[1])
+        self.assertIn("'git_timeout'", mock_warn.call_args.args[1])
+
+    @patch("context_builder.sys_utils.warn_once")
+    @patch("subprocess.run")
+    def test_run_git_process_custom_timeout_warns_with_custom_help(self, mock_run, mock_warn):
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd=["git"], timeout=5)
+
+        result = run_git_process(
+            ["git", "status"],
+            timeout=5.0,
+            timeout_key="git_probe_timeout",
+            timeout_option="--git-probe-timeout",
+        )
+
+        self.assertIsNone(result)
+        mock_warn.assert_called_once()
+        self.assertEqual(mock_warn.call_args.args[0], "git_probe_timeout")
+        self.assertIn("--git-probe-timeout", mock_warn.call_args.args[1])
+        self.assertIn("'git_probe_timeout'", mock_warn.call_args.args[1])
+
+    @patch("context_builder.sys_utils.warn_once")
+    @patch("subprocess.run")
+    def test_run_git_process_custom_timeout_config_lookup(self, mock_run, mock_warn):
+        from context_builder.config import CONFIG
+        mock_run.return_value = MagicMock(returncode=0)
+        old_val = CONFIG.get("git_probe_timeout", 5.0)
+        CONFIG["git_probe_timeout"] = 12.0
+        try:
+            run_git_process(
+                ["git", "status"],
+                timeout=None,
+                timeout_key="git_probe_timeout",
+                timeout_option="--git-probe-timeout",
+            )
+        finally:
+            CONFIG["git_probe_timeout"] = old_val
+
+        kwargs = mock_run.call_args.kwargs
+        self.assertEqual(kwargs["timeout"], 12.0)
+
+    @patch("context_builder.sys_utils.warn_once")
+    @patch("subprocess.run")
+    def test_run_git_process_invalid_timeout_warns_and_uses_default(self, mock_run, mock_warn):
+        from context_builder.config import CONFIG
+
+        mock_run.return_value = MagicMock(returncode=0)
+        old_timeout = CONFIG.get("git_timeout", 30.0)
+        CONFIG["git_timeout"] = "bad"
+        try:
+            run_git_process(["git", "status"])
+        finally:
+            CONFIG["git_timeout"] = old_timeout
+
+        self.assertEqual(mock_warn.call_args.args[0], "git_timeout_invalid")
+        self.assertEqual(mock_run.call_args.kwargs["timeout"], 30.0)
+
+    @patch("context_builder.sys_utils.run_git_command")
+    def test_run_command_routes_git_through_git_helper(self, mock_git_command):
+        mock_git_command.return_value = "ok"
+
+        output = run_command(["git", "status"])
+
+        self.assertEqual(output, "ok")
+        mock_git_command.assert_called_once_with(
+            ["git", "status"],
+            exit_on_fail=False,
+            timeout=None,
+        )
 
     @patch("context_builder.sys_utils.run_command")
     def test_get_git_diff_files(self, mock_run):
@@ -99,6 +202,30 @@ class TestSysUtils(unittest.TestCase):
                         shutil.rmtree(sibling_dir)
                 except Exception:
                     pass
+
+    @patch("context_builder.path_utils.detect_root_case_sensitivity", return_value=True)
+    def test_is_in_repo_honors_case_sensitive_root(self, _mock_case_sensitive):
+        from context_builder.config import reset_config
+        from context_builder.sys_utils import is_in_repo
+
+        old_cwd = os.getcwd()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.chdir(temp_dir)
+            try:
+                reset_config()
+
+                in_repo_file = "file.py"
+                with open(in_repo_file, "w") as f:
+                    f.write("pass")
+
+                mismatched_root = temp_dir.swapcase()
+                if mismatched_root == temp_dir:
+                    mismatched_root = temp_dir.upper()
+                mismatched_case_path = os.path.join(mismatched_root, "file.py")
+                self.assertFalse(is_in_repo(mismatched_case_path))
+            finally:
+                reset_config()
+                os.chdir(old_cwd)
 
     @patch("context_builder.sys_utils.HAS_RG", True)
     @patch("subprocess.run")

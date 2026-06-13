@@ -5,6 +5,7 @@ import subprocess
 import sys
 import time
 
+from .config import CONFIG, DEFAULT_GIT_TIMEOUT
 from .languages import get_language_profile
 
 WARNED_MISSING_DEPS = set()
@@ -22,6 +23,106 @@ def warn_once(key, message):
         WARNED_MISSING_DEPS.add(key)
 
 
+def validate_timeout_setting(value, default, config_key, cli_option):
+    """Validate a positive numeric timeout and warn on invalid config values."""
+    is_valid = (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and value > 0
+    )
+    if is_valid:
+        return value
+    warn_once(
+        f"{config_key}_invalid",
+        f"Configured {config_key} ({value}) must be a positive number. "
+        f"Falling back to {default} seconds. You can set this limit using "
+        f"{cli_option} or by setting '{config_key}' in your config file.",
+    )
+    return default
+
+
+def _build_git_env(extra_env=None):
+    """Build a non-interactive environment for Git subprocesses."""
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GCM_INTERACTIVE"] = "never"
+    if extra_env:
+        env.update(extra_env)
+    return env
+
+
+def run_git_process(
+    cmd,
+    timeout=None,
+    timeout_key="git_timeout",
+    timeout_option="--git-timeout",
+    **kwargs,
+):
+    """Run a Git subprocess with non-interactive defaults and a timeout."""
+    resolved_timeout = timeout
+    if resolved_timeout is None:
+        resolved_timeout = validate_timeout_setting(
+            CONFIG.get(timeout_key, DEFAULT_GIT_TIMEOUT),
+            DEFAULT_GIT_TIMEOUT,
+            timeout_key,
+            timeout_option,
+        )
+    extra_env = kwargs.pop("env", None)
+    check = kwargs.pop("check", False)
+    try:
+        return subprocess.run(
+            cmd,
+            timeout=resolved_timeout,
+            env=_build_git_env(extra_env),
+            check=check,
+            **kwargs,
+        )
+    except subprocess.TimeoutExpired:
+        warn_once(
+            timeout_key,
+            f"git command timed out after {resolved_timeout} seconds. You can increase "
+            f"this limit using {timeout_option} or by setting '{timeout_key}' in your "
+            "config file.",
+        )
+        return None
+
+
+def run_git_command(
+    cmd,
+    exit_on_fail=False,
+    timeout=None,
+    timeout_key="git_timeout",
+    timeout_option="--git-timeout",
+):
+    """Run a Git command and return its standard output."""
+    try:
+        res = run_git_process(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True,
+            timeout=timeout,
+            timeout_key=timeout_key,
+            timeout_option=timeout_option,
+        )
+        if res is None:
+            return ""
+        return res.stdout
+    except subprocess.CalledProcessError as e:
+        if exit_on_fail:
+            print(f"\n[SmartDiffContextBuilder Error] Command failed: {' '.join(cmd)}")
+            if e.stderr and e.stderr.strip():
+                print(f"  Reason: {e.stderr.strip()}")
+            sys.exit(1)
+        return ""
+    except FileNotFoundError:
+        if exit_on_fail:
+            print(f"\n[SmartDiffContextBuilder Error] Executable not found: {cmd[0]}")
+            sys.exit(1)
+        return ""
+
+
 def run_command(cmd, exit_on_fail=False, timeout=None):
     """Run a system command and return its standard output.
 
@@ -33,6 +134,8 @@ def run_command(cmd, exit_on_fail=False, timeout=None):
     Returns:
         str: Decoded standard output.
     """
+    if cmd and cmd[0] == "git":
+        return run_git_command(cmd, exit_on_fail=exit_on_fail, timeout=timeout)
     try:
         res = subprocess.run(
             cmd,
@@ -351,8 +454,6 @@ def ripgrep_filter(files, token, fixed_strings=True, fallback_hint=None):
                 "progress will be shown for long scans.",
             )
         return _fallback_candidates(files, fallback_hint)
-    from .config import CONFIG  # pylint: disable=import-outside-toplevel
-
     timeout = CONFIG.get("ripgrep_timeout", 10)
     if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not (timeout > 0):  # pylint: disable=superfluous-parens
         warn_once(
@@ -409,10 +510,16 @@ def is_in_repo(file_path):
     Returns:
         bool: True if the file exists and is in the repo, False otherwise.
     """
+    from .path_utils import (  # pylint: disable=import-outside-toplevel
+        detect_root_case_sensitivity,
+        normalize_for_path_match,
+        path_is_within_root,
+    )
+
     if not file_path:
         return False
     # Normalize paths
-    normalized = file_path.replace("\\", "/").lower()
+    normalized = normalize_for_path_match(file_path)
     # Check ignore list patterns
     for pattern in ["node_modules/", "target/", ".git/", "/usr/include/", "/lib/", "sdk/"]:
         if pattern in normalized:
@@ -420,11 +527,13 @@ def is_in_repo(file_path):
     try:
         abs_path = os.path.abspath(file_path)
         repo_root = os.path.abspath(".")
-        # Safely verify if the file resides within the repository root using commonpath
-        common = os.path.commonpath([repo_root, abs_path])
-        # Compare normalized absolute paths case-insensitively for Windows compatibility
+        case_sensitive = detect_root_case_sensitivity(repo_root)
         return (
-            os.path.abspath(common).lower() == repo_root.lower()
+            path_is_within_root(
+                abs_path,
+                repo_root,
+                case_sensitive=case_sensitive,
+            )
             and os.path.exists(file_path)
         )
     except Exception:  # pylint: disable=broad-exception-caught

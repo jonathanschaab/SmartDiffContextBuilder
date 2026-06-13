@@ -4,6 +4,7 @@
 # pylint: disable=line-too-long,too-many-lines,too-many-public-methods,broad-exception-caught
 # pylint: disable=too-few-public-methods,no-else-return
 
+import json
 import os
 import tempfile
 import unittest
@@ -18,9 +19,302 @@ class CliNamespace(argparse.Namespace):
         return None
 
 class TestCLI(unittest.TestCase):
+    def test_rewrite_compile_commands_payload_rewrites_both_slash_styles(self):
+        from context_builder.cli import _rewrite_compile_commands_payload
+
+        payload = [
+            {
+                "directory": "C:/repo/build",
+                "file": r"C:\repo\src\main.cpp",
+                "command": 'clang++ -I C:/repo/include "C:/repo/src/main.cpp"',
+                "arguments": [
+                    "clang++",
+                    r"C:\repo\src\main.cpp",
+                    "-I",
+                    "C:/repo/include",
+                ],
+                "output": "C:/repo/build/main.o",
+            }
+        ]
+
+        rewritten = _rewrite_compile_commands_payload(
+            payload,
+            r"C:\repo",
+            r"D:\worktree",
+        )
+
+        entry = rewritten[0]
+        self.assertEqual(entry["directory"], "D:/worktree/build")
+        self.assertEqual(entry["file"], r"D:\worktree\src\main.cpp")
+        self.assertIn('D:/worktree/src/main.cpp', entry["command"])
+        self.assertEqual(entry["arguments"][1], r"D:\worktree\src\main.cpp")
+        self.assertEqual(entry["arguments"][3], "D:/worktree/include")
+        self.assertEqual(entry["output"], "D:/worktree/build/main.o")
+
+    def test_rewrite_compile_commands_payload_does_not_rewrite_path_prefixes(self):
+        from context_builder.cli import _rewrite_compile_commands_payload
+
+        payload = [
+            {
+                "directory": "/repo/build",
+                "file": "/repo/src/main.cpp",
+                "command": "clang++ /repo-utils/generated.cpp /repo/src/main.cpp",
+                "output": "/repo-utils/build/main.o",
+            }
+        ]
+
+        rewritten = _rewrite_compile_commands_payload(payload, "/repo", "/worktree")
+        entry = rewritten[0]
+
+        self.assertEqual(entry["directory"], "/worktree/build")
+        self.assertEqual(entry["file"], "/worktree/src/main.cpp")
+        self.assertIn("/repo-utils/generated.cpp", entry["command"])
+        self.assertIn("/worktree/src/main.cpp", entry["command"])
+        self.assertEqual(entry["output"], "/repo-utils/build/main.o")
+
+    def test_rewrite_compile_commands_payload_rewrites_in_place(self):
+        from context_builder.cli import _rewrite_compile_commands_payload
+
+        payload = [{"file": "/repo/src/main.cpp"}]
+
+        rewritten = _rewrite_compile_commands_payload(payload, "/repo", "/worktree")
+
+        self.assertIs(rewritten, payload)
+        self.assertEqual(payload[0]["file"], "/worktree/src/main.cpp")
+
+    def test_rewrite_compile_commands_payload_normalizes_mixed_slash_roots(self):
+        from context_builder.cli import _rewrite_compile_commands_payload
+
+        payload = [{"file": "C:/repo/src/main.cpp"}]
+
+        rewritten = _rewrite_compile_commands_payload(
+            payload,
+            r"C:\repo",
+            r"D:\worktree",
+        )
+
+        self.assertEqual(rewritten[0]["file"], "D:/worktree/src/main.cpp")
+
+    def test_rewrite_compile_commands_payload_handles_trailing_root_separators(self):
+        from context_builder.cli import _rewrite_compile_commands_payload
+
+        payload = [{"file": "/repo/src/main.cpp"}]
+
+        rewritten = _rewrite_compile_commands_payload(
+            payload,
+            "/repo/",
+            "/worktree/",
+        )
+
+        self.assertEqual(rewritten[0]["file"], "/worktree/src/main.cpp")
+
+    def test_rewrite_compile_commands_payload_rewrites_colon_separated_path_lists(self):
+        from context_builder.cli import _rewrite_compile_commands_payload
+
+        payload = [
+            {
+                "command": "-Wl,-rpath,/repo/lib:/repo/third_party/lib:/repo-utils/lib",
+            }
+        ]
+
+        rewritten = _rewrite_compile_commands_payload(payload, "/repo", "/worktree")
+
+        self.assertEqual(
+            rewritten[0]["command"],
+            "-Wl,-rpath,/worktree/lib:/worktree/third_party/lib:/repo-utils/lib",
+        )
+
+    def test_rewrite_compile_commands_payload_keeps_windows_drive_letter_paths_valid(self):
+        from context_builder.cli import _rewrite_compile_commands_payload
+
+        payload = [
+            {"file": r"C:\repo\src\main.cpp"},
+            {"file": r"c:\repo\include\lib.hpp"},
+        ]
+
+        rewritten = _rewrite_compile_commands_payload(
+            payload,
+            r"C:\repo",
+            r"D:\worktree",
+        )
+
+        self.assertEqual(rewritten[0]["file"], r"D:\worktree\src\main.cpp")
+        self.assertEqual(rewritten[1]["file"], r"D:\worktree\include\lib.hpp")
+
+    @patch("context_builder.path_utils._run_git_probe_process")
+    def test_rewrite_compile_commands_payload_handles_full_windows_path_case_mismatch(
+        self, mock_run
+    ):
+        from context_builder.cli import _rewrite_compile_commands_payload
+        from context_builder.path_utils import clear_path_case_caches
+
+        mock_run.side_effect = OSError("git unavailable")
+        clear_path_case_caches()
+        payload = [
+            {"file": r"c:\REPO\Src\main.cpp"},
+            {"command": r'clang++ "C:/REPO/Src/main.cpp" -I c:/REPO/include'},
+        ]
+
+        rewritten = _rewrite_compile_commands_payload(
+            payload,
+            r"C:\repo",
+            r"D:\worktree",
+        )
+
+        self.assertEqual(rewritten[0]["file"], r"D:\worktree\Src\main.cpp")
+        self.assertEqual(
+            rewritten[1]["command"],
+            r'clang++ "D:/worktree/Src/main.cpp" -I D:/worktree/include',
+        )
+
+    @patch("context_builder.path_utils._run_git_probe_process")
+    def test_rewrite_compile_commands_payload_respects_case_sensitive_override(
+        self, mock_run
+    ):
+        from context_builder.cli import _rewrite_compile_commands_payload
+        from context_builder.config import CONFIG, reset_config
+        from context_builder.path_utils import clear_path_case_caches
+
+        mock_run.side_effect = OSError("git unavailable")
+        reset_config()
+        CONFIG["path_case_rules"] = [
+            {
+                "pattern": r"^C:/repo/case-sensitive(?:/|$)",
+                "case_sensitive": True,
+            }
+        ]
+        clear_path_case_caches()
+        payload = [{"file": r"c:\REPO\case-sensitive\src\main.cpp"}]
+
+        try:
+            rewritten = _rewrite_compile_commands_payload(
+                payload,
+                r"C:\repo\case-sensitive",
+                r"D:\worktree",
+            )
+
+            self.assertEqual(
+                rewritten[0]["file"],
+                r"c:\REPO\case-sensitive\src\main.cpp",
+            )
+        finally:
+            reset_config()
+
+    def test_setup_temp_worktree_rewrites_compile_commands_json(self):
+        from context_builder.cli import _setup_temp_worktree
+
+        with tempfile.TemporaryDirectory() as original_cwd, tempfile.TemporaryDirectory() as temp_root:
+            temp_worktree_dir = os.path.join(temp_root, "worktree")
+            os.makedirs(temp_worktree_dir, exist_ok=True)
+
+            compile_commands_path = os.path.join(original_cwd, "compile_commands.json")
+            normalized_original_cwd = original_cwd.replace("\\", "/")
+            with open(compile_commands_path, "w", encoding="utf-8") as compile_file:
+                json.dump(
+                    [
+                        {
+                            "directory": normalized_original_cwd,
+                            "file": os.path.join(original_cwd, "src", "main.cpp"),
+                            "command": (
+                                f"clang++ -I {normalized_original_cwd}/include "
+                                f'"{normalized_original_cwd}/src/main.cpp"'
+                            ),
+                        }
+                    ],
+                    compile_file,
+                )
+
+            with patch("context_builder.cli.subprocess.run") as mock_sub_run:
+                mock_sub_run.return_value = MagicMock(returncode=0, stderr="")
+                _setup_temp_worktree(temp_worktree_dir, "sha_end", original_cwd)
+
+            rewritten_path = os.path.join(temp_worktree_dir, "compile_commands.json")
+            with open(rewritten_path, encoding="utf-8") as rewritten_file:
+                rewritten = json.load(rewritten_file)
+
+            entry = rewritten[0]
+            normalized_temp_worktree_dir = temp_worktree_dir.replace("\\", "/")
+            self.assertEqual(entry["directory"], normalized_temp_worktree_dir)
+            self.assertEqual(
+                entry["file"],
+                os.path.join(temp_worktree_dir, "src", "main.cpp"),
+            )
+            self.assertIn(
+                f"{normalized_temp_worktree_dir}/src/main.cpp",
+                entry["command"],
+            )
+
+    @patch("context_builder.cli.shutil.copy")
+    def test_rewrite_worktree_compile_commands_falls_back_to_copy_on_invalid_json(
+        self, mock_copy
+    ):
+        from context_builder.cli import _rewrite_worktree_compile_commands
+
+        with tempfile.TemporaryDirectory() as original_cwd, tempfile.TemporaryDirectory() as temp_root:
+            compile_commands_path = os.path.join(original_cwd, "compile_commands.json")
+            rewritten_path = os.path.join(temp_root, "compile_commands.json")
+            with open(compile_commands_path, "w", encoding="utf-8") as compile_file:
+                compile_file.write("{ not valid json")
+
+            _rewrite_worktree_compile_commands(
+                compile_commands_path,
+                rewritten_path,
+                original_cwd,
+                temp_root,
+            )
+
+        mock_copy.assert_called_once_with(compile_commands_path, rewritten_path)
+
+    @patch("context_builder.cli.shutil.copy")
+    def test_rewrite_worktree_compile_commands_falls_back_to_copy_on_invalid_utf8(
+        self, mock_copy
+    ):
+        from context_builder.cli import _rewrite_worktree_compile_commands
+
+        with tempfile.TemporaryDirectory() as original_cwd, tempfile.TemporaryDirectory() as temp_root:
+            compile_commands_path = os.path.join(original_cwd, "compile_commands.json")
+            rewritten_path = os.path.join(temp_root, "compile_commands.json")
+            with open(compile_commands_path, "wb") as compile_file:
+                compile_file.write(b'[\xff{"file":"main.cpp"}]')
+
+            _rewrite_worktree_compile_commands(
+                compile_commands_path,
+                rewritten_path,
+                original_cwd,
+                temp_root,
+            )
+
+        mock_copy.assert_called_once_with(compile_commands_path, rewritten_path)
+
+    @patch("context_builder.cli.shutil.copy")
+    def test_rewrite_worktree_compile_commands_handles_non_string_roots(
+        self, mock_copy
+    ):
+        from context_builder.cli import _rewrite_worktree_compile_commands
+
+        with tempfile.TemporaryDirectory() as original_cwd, tempfile.TemporaryDirectory() as temp_root:
+            compile_commands_path = os.path.join(original_cwd, "compile_commands.json")
+            rewritten_path = os.path.join(temp_root, "compile_commands.json")
+            with open(compile_commands_path, "w", encoding="utf-8") as compile_file:
+                json.dump([{"file": "main.cpp"}], compile_file)
+
+            _rewrite_worktree_compile_commands(
+                compile_commands_path,
+                rewritten_path,
+                None,
+                temp_root,
+            )
+
+            with open(rewritten_path, encoding="utf-8") as rewritten_file:
+                rewritten = json.load(rewritten_file)
+
+        self.assertEqual(rewritten, [{"file": "main.cpp"}])
+        mock_copy.assert_not_called()
+
     @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
     @patch("context_builder.cli.get_git_diff_files")
     @patch("context_builder.cli.get_git_tracked_files")
+    @patch("context_builder.cli.run_git_command")
     @patch("context_builder.cli.run_command")
     @patch("context_builder.cli.extract_function_bounds")
     @patch("context_builder.graph_tracer.extract_function_bounds")
@@ -28,7 +322,7 @@ class TestCLI(unittest.TestCase):
     @patch("context_builder.cli.VolumeManager")
     def test_cli_bfs_traversal(
         self, mock_vm_cls, mock_get_lsp, mock_tracer_bounds, mock_cli_bounds,
-        mock_run, mock_git_tracked, mock_git_diff, mock_parse_args
+        mock_run, mock_run_git, mock_git_tracked, mock_git_diff, mock_parse_args
     ):
         # 1. Setup argparse mock options
         mock_args = CliNamespace()
@@ -52,6 +346,10 @@ class TestCLI(unittest.TestCase):
         mock_git_diff.return_value = ["file1.py"]
         mock_git_tracked.return_value = ["file1.py", "file2.py", "file3.py"]
         mock_run.side_effect = lambda cmd, **kwargs: "@@ -9,1 +10,1 @@\n" if "diff" in cmd else ""
+        mock_run_git.side_effect = (
+            lambda cmd, **kwargs: "@@ -9,1 +10,1 @@\n"
+            if "diff" in cmd else ""
+        )
 
         # Function bounds mock:
         # file1.py line 10 -> starts at line 9 (0-indexed), ends at 15
@@ -114,11 +412,13 @@ class TestCLI(unittest.TestCase):
     @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
     @patch("context_builder.cli.get_git_diff_files")
     @patch("context_builder.cli.get_git_tracked_files")
+    @patch("context_builder.cli.run_git_command")
     @patch("context_builder.cli.run_command")
     @patch("context_builder.cli.extract_function_bounds")
     @patch("context_builder.cli.VolumeManager")
     def test_cli_hunk_header_parsing(
-        self, mock_vm_cls, mock_bounds, mock_run, mock_git_tracked, mock_git_diff, mock_parse_args
+        self, mock_vm_cls, mock_bounds, mock_run, mock_run_git, mock_git_tracked,
+        mock_git_diff, mock_parse_args
     ):
         mock_args = CliNamespace()
         mock_args.format = "md"
@@ -152,6 +452,9 @@ class TestCLI(unittest.TestCase):
         mock_git_diff.return_value = ["file1.py"]
         mock_git_tracked.return_value = ["file1.py"]
         mock_run.side_effect = lambda cmd, **kwargs: diff_output if "diff" in cmd else ""
+        mock_run_git.side_effect = (
+            lambda cmd, **kwargs: diff_output if "diff" in cmd else ""
+        )
 
         # Function bounds mock: we want to capture what line_numbers were queried!
         queried_lines = []
@@ -179,6 +482,7 @@ class TestCLI(unittest.TestCase):
     @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
     @patch("context_builder.cli.get_git_diff_files")
     @patch("context_builder.cli.get_git_tracked_files")
+    @patch("context_builder.cli.run_git_command")
     @patch("context_builder.cli.run_command")
     @patch("context_builder.cli.extract_function_bounds")
     @patch("context_builder.graph_tracer.extract_function_bounds")
@@ -187,8 +491,8 @@ class TestCLI(unittest.TestCase):
     @patch("context_builder.cli.VolumeManager")
     def test_cli_callee_depth_bfs_traversal(
         self, mock_vm_cls, mock_find_def, mock_extract_callees,
-        mock_tracer_bounds, mock_cli_bounds, mock_run, mock_git_tracked,
-        mock_git_diff, mock_parse_args
+        mock_tracer_bounds, mock_cli_bounds, mock_run, mock_run_git,
+        mock_git_tracked, mock_git_diff, mock_parse_args
     ):
         mock_args = CliNamespace()
         mock_args.format = "md"
@@ -210,6 +514,10 @@ class TestCLI(unittest.TestCase):
         mock_git_diff.return_value = ["root.py"]
         mock_git_tracked.return_value = ["root.py", "callee1.py", "callee2.py"]
         mock_run.side_effect = lambda cmd, **kwargs: "@@ -1,1 +1,1 @@\n" if "diff" in cmd else ""
+        mock_run_git.side_effect = (
+            lambda cmd, **kwargs: "@@ -1,1 +1,1 @@\n"
+            if "diff" in cmd else ""
+        )
 
         # Setup bounds mock:
         # root.py: line 1 -> start=0, end=4 (def foo)
@@ -277,13 +585,14 @@ class TestCLI(unittest.TestCase):
     @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
     @patch("context_builder.cli.get_git_diff_files")
     @patch("context_builder.cli.get_git_tracked_files")
+    @patch("context_builder.cli.run_git_command")
     @patch("context_builder.cli.run_command")
     @patch("context_builder.cli.extract_function_bounds")
     @patch("context_builder.graph_tracer.extract_function_bounds")
     @patch("context_builder.cli.VolumeManager")
     def test_cli_decorator_and_multiline_parsing(
         self, mock_vm_cls, mock_tracer_bounds, mock_cli_bounds, mock_run,
-        mock_git_tracked, mock_git_diff, mock_parse_args
+        mock_run_git, mock_git_tracked, mock_git_diff, mock_parse_args
     ):
         mock_args = CliNamespace()
         mock_args.format = "md"
@@ -306,6 +615,10 @@ class TestCLI(unittest.TestCase):
         mock_git_diff.return_value = ["root.py"]
         mock_git_tracked.return_value = ["root.py", "caller.py"]
         mock_run.side_effect = lambda cmd, **kwargs: "@@ -1,1 +1,1 @@\n" if "diff" in cmd else ""
+        mock_run_git.side_effect = (
+            lambda cmd, **kwargs: "@@ -1,1 +1,1 @@\n"
+            if "diff" in cmd else ""
+        )
 
         # root.py bounds: start=0, end=5
         # caller.py bounds: start=0, end=5
@@ -355,11 +668,13 @@ class TestCLI(unittest.TestCase):
     @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
     @patch("context_builder.cli.get_git_diff_files")
     @patch("context_builder.cli.get_git_tracked_files")
+    @patch("context_builder.cli.run_git_command")
     @patch("context_builder.cli.run_command")
     @patch("context_builder.cli.extract_function_bounds")
     @patch("context_builder.cli.VolumeManager")
     def test_cli_function_name_extraction_comments_and_strings(
-        self, mock_vm_cls, mock_bounds, mock_run, mock_git_tracked, mock_git_diff, mock_parse_args
+        self, mock_vm_cls, mock_bounds, mock_run, mock_run_git, mock_git_tracked,
+        mock_git_diff, mock_parse_args
     ):
         mock_args = CliNamespace()
         mock_args.format = "md"
@@ -381,6 +696,10 @@ class TestCLI(unittest.TestCase):
         mock_git_diff.return_value = ["root.py"]
         mock_git_tracked.return_value = ["root.py"]
         mock_run.side_effect = lambda cmd, **kwargs: "@@ -1,1 +1,1 @@\n" if "diff" in cmd else ""
+        mock_run_git.side_effect = (
+            lambda cmd, **kwargs: "@@ -1,1 +1,1 @@\n"
+            if "diff" in cmd else ""
+        )
 
         mock_bounds.return_value = (0, 5)
 
@@ -408,7 +727,7 @@ class TestCLI(unittest.TestCase):
     @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
     @patch("context_builder.cli.parse_and_resolve_range")
     @patch("context_builder.cli.run_scan")
-    @patch("subprocess.run")
+    @patch("context_builder.cli.run_git_process")
     @patch("shutil.rmtree")
     def test_cli_robust_worktree_cleanup(
         self, mock_rmtree, mock_sub_run, mock_run_scan, mock_resolve_range, mock_parse_args
@@ -446,7 +765,7 @@ class TestCLI(unittest.TestCase):
     @patch("context_builder.cli.parse_and_resolve_range")
     @patch("context_builder.cli.run_scan")
     @patch("context_builder.cli.cleanup_zombie_lsps")
-    @patch("subprocess.run")
+    @patch("context_builder.cli.run_git_process")
     @patch("shutil.rmtree")
     def test_cli_worktree_cleanup_calls_lsp_cleanup_before_remove(
         self, mock_rmtree, mock_sub_run, mock_cleanup_lsps, mock_run_scan, mock_resolve_range, mock_parse_args
@@ -524,7 +843,7 @@ class TestCLI(unittest.TestCase):
         res = extract_function_name("MyClass::~MyClass() {", 50, 55)
         self.assertEqual(res, "~MyClass")
 
-    @patch("context_builder.cli.run_command")
+    @patch("context_builder.cli.run_git_command")
     def test_get_default_branch(self, mock_run):
         from context_builder.cli import get_default_branch
 
@@ -548,7 +867,7 @@ class TestCLI(unittest.TestCase):
         mock_run.side_effect = lambda cmd, **kwargs: ""
         self.assertEqual(get_default_branch(), "main")
 
-    @patch("context_builder.cli.run_command")
+    @patch("context_builder.cli.run_git_command")
     def test_resolve_commit_ref_retries_without_verify(self, mock_run):
         from context_builder.cli import resolve_commit_ref
 
@@ -586,7 +905,7 @@ class TestCLI(unittest.TestCase):
         )
 
     @patch("context_builder.cli.get_default_branch", return_value="main")
-    @patch("context_builder.cli.run_command")
+    @patch("context_builder.cli.run_git_command")
     @patch("context_builder.cli.resolve_commit_ref", return_value="start-sha")
     def test_parse_start_plus_count_falls_back_to_default_branch(
         self, _mock_resolve, mock_run, _mock_default
@@ -602,7 +921,7 @@ class TestCLI(unittest.TestCase):
         self.assertIn("start-sha..main", mock_run.call_args_list[1].args[0])
 
     @patch("context_builder.cli.get_default_branch", return_value="main")
-    @patch("context_builder.cli.run_command", return_value="")
+    @patch("context_builder.cli.run_git_command", return_value="")
     @patch("context_builder.cli.resolve_commit_ref", return_value="start-sha")
     def test_parse_start_plus_count_rejects_insufficient_history(
         self, _mock_resolve, _mock_run, _mock_default
@@ -625,7 +944,7 @@ class TestCLI(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Could not resolve end commit"):
             parse_and_resolve_range("base..missing")
 
-    @patch("context_builder.cli.run_command")
+    @patch("context_builder.cli.run_git_command")
     def test_extract_line_numbers_from_diff_parses_hunks(self, mock_run):
         from context_builder.cli import _extract_line_numbers_from_diff
 
@@ -720,7 +1039,7 @@ class TestCLI(unittest.TestCase):
     @patch("context_builder.cli.parse_and_resolve_range")
     @patch("context_builder.cli.run_scan")
     @patch("context_builder.cli.cleanup_zombie_lsps")
-    @patch("subprocess.run")
+    @patch("context_builder.cli.run_git_process")
     @patch("shutil.rmtree")
     @patch("shutil.copy")
     @patch("os.path.exists")
@@ -772,12 +1091,13 @@ class TestCLI(unittest.TestCase):
     @patch("context_builder.cli.parse_and_resolve_range")
     @patch("context_builder.cli.run_scan")
     @patch("context_builder.cli.cleanup_zombie_lsps")
-    @patch("subprocess.run")
+    @patch("context_builder.cli.run_git_process")
     @patch("shutil.rmtree")
+    @patch("context_builder.cli._rewrite_worktree_compile_commands")
     @patch("shutil.copy")
     @patch("os.path.exists")
     def test_cli_worktree_copies_coverage_xml(
-        self, mock_exists, mock_copy, mock_rmtree, mock_sub_run, mock_cleanup_lsps, mock_run_scan, mock_resolve_range, mock_parse_args
+        self, mock_exists, mock_copy, mock_rewrite_compile_commands, mock_rmtree, mock_sub_run, mock_cleanup_lsps, mock_run_scan, mock_resolve_range, mock_parse_args
     ):
         """Verify that coverage.xml is copied to the temporary worktree if it exists in the original repo root."""
         mock_args = CliNamespace()
@@ -801,17 +1121,18 @@ class TestCLI(unittest.TestCase):
 
         main()
 
-        # Check that shutil.copy was called for both compile_commands.json and coverage.xml
+        # compile_commands.json is rewritten, coverage.xml is still copied directly
+        mock_rewrite_compile_commands.assert_called_once()
         copy_calls = [call[0][0] for call in mock_copy.call_args_list]
-        self.assertTrue(any("compile_commands.json" in c for c in copy_calls))
         self.assertTrue(any("coverage.xml" in c for c in copy_calls))
 
     @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
     @patch("context_builder.cli.parse_and_resolve_range")
     @patch("context_builder.cli.run_scan")
-    @patch("subprocess.run")
+    @patch("context_builder.cli.run_git_command")
+    @patch("context_builder.cli.run_git_process")
     def test_worktree_bypassed_if_head_matches_end_sha(
-        self, mock_sub_run, mock_run_scan, mock_resolve_range, mock_parse_args
+        self, mock_git_process, mock_git_command, mock_run_scan, mock_resolve_range, mock_parse_args
     ):
         """Verify that temporary worktree creation is bypassed if HEAD matches end_sha."""
         mock_args = CliNamespace()
@@ -821,15 +1142,12 @@ class TestCLI(unittest.TestCase):
         # Resolve range returns "sha_end" as the end SHA
         mock_resolve_range.return_value = ("sha_start", "sha_end")
 
-        # Mock git rev-parse HEAD subprocess call to return "sha_end"
-        mock_res = MagicMock(returncode=0)
-        mock_res.stdout = "sha_end\n"
-        mock_sub_run.return_value = mock_res
+        mock_git_command.return_value = "sha_end\n"
 
         main()
 
         # Verify that git worktree add was NOT called
-        for call in mock_sub_run.call_args_list:
+        for call in mock_git_process.call_args_list:
             cmd = call[0][0]
             self.assertFalse("worktree" in cmd and "add" in cmd)
 
@@ -840,7 +1158,7 @@ class TestCLI(unittest.TestCase):
     @patch("context_builder.cli._setup_temp_worktree")
     @patch("context_builder.cli.run_scan")
     @patch("context_builder.cli.parse_and_resolve_range")
-    @patch("context_builder.cli.subprocess.run")
+    @patch("context_builder.cli.run_git_command")
     def test_worktree_warns_when_lsp_is_enabled(
         self,
         mock_sub_run,
@@ -854,7 +1172,7 @@ class TestCLI(unittest.TestCase):
 
         args = CliNamespace(no_language_server=False)
         mock_resolve_range.return_value = ("start_sha", "end_sha")
-        mock_sub_run.return_value = MagicMock(stdout="other_sha\n")
+        mock_sub_run.return_value = "other_sha\n"
 
         with patch("context_builder.cli.os.chdir"), patch(
             "builtins.print"
@@ -876,7 +1194,7 @@ class TestCLI(unittest.TestCase):
     @patch("context_builder.cli._setup_temp_worktree")
     @patch("context_builder.cli.run_scan")
     @patch("context_builder.cli.parse_and_resolve_range")
-    @patch("context_builder.cli.subprocess.run")
+    @patch("context_builder.cli.run_git_command")
     def test_worktree_preserves_larger_lsp_timeouts(
         self,
         mock_sub_run,
@@ -893,7 +1211,7 @@ class TestCLI(unittest.TestCase):
             lsp_timeout=420,
         )
         mock_resolve_range.return_value = ("start_sha", "end_sha")
-        mock_sub_run.return_value = MagicMock(stdout="other_sha\n")
+        mock_sub_run.return_value = "other_sha\n"
 
         with patch("context_builder.cli.os.chdir"):
             _run_commit_range_worktree(args, "start..end")
@@ -906,7 +1224,7 @@ class TestCLI(unittest.TestCase):
     @patch("context_builder.cli._setup_temp_worktree")
     @patch("context_builder.cli.run_scan")
     @patch("context_builder.cli.parse_and_resolve_range")
-    @patch("context_builder.cli.subprocess.run")
+    @patch("context_builder.cli.run_git_command")
     def test_worktree_omits_lsp_warning_when_disabled(
         self,
         mock_sub_run,
@@ -920,7 +1238,7 @@ class TestCLI(unittest.TestCase):
 
         args = CliNamespace(no_language_server=True)
         mock_resolve_range.return_value = ("start_sha", "end_sha")
-        mock_sub_run.return_value = MagicMock(stdout="other_sha\n")
+        mock_sub_run.return_value = "other_sha\n"
 
         with patch("context_builder.cli.os.chdir"), patch(
             "builtins.print"
@@ -1219,6 +1537,50 @@ class TestCLI(unittest.TestCase):
 
         # 3. Verify type validation (should fail if not an int/float, e.g. a string)
         mock_args.ripgrep_timeout = "not_a_float"
+        with self.assertRaises(SystemExit) as cm:
+            main()
+        self.assertEqual(cm.exception.code, 1)
+
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    @patch("context_builder.cli.run_scan")
+    def test_cli_git_probe_timeout_mapping(self, mock_run_scan, mock_parse_args):
+        """Verify that CLI parameter --git-probe-timeout updates CONFIG."""
+        from context_builder.config import CONFIG, reset_config
+        reset_config()
+
+        mock_args = CliNamespace()
+        mock_args.git_probe_timeout = 12.5
+        mock_parse_args.return_value = mock_args
+
+        main()
+
+        self.assertEqual(CONFIG["git_probe_timeout"], 12.5)
+        args_passed = mock_run_scan.call_args[0][0]
+        self.assertEqual(args_passed.git_probe_timeout, 12.5)
+
+        mock_args.git_probe_timeout = "not_a_float"
+        with self.assertRaises(SystemExit) as cm:
+            main()
+        self.assertEqual(cm.exception.code, 1)
+
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    @patch("context_builder.cli.run_scan")
+    def test_cli_git_timeout_mapping(self, mock_run_scan, mock_parse_args):
+        """Verify that CLI parameter --git-timeout updates CONFIG."""
+        from context_builder.config import CONFIG, reset_config
+        reset_config()
+
+        mock_args = CliNamespace()
+        mock_args.git_timeout = 40.5
+        mock_parse_args.return_value = mock_args
+
+        main()
+
+        self.assertEqual(CONFIG["git_timeout"], 40.5)
+        args_passed = mock_run_scan.call_args[0][0]
+        self.assertEqual(args_passed.git_timeout, 40.5)
+
+        mock_args.git_timeout = "not_a_float"
         with self.assertRaises(SystemExit) as cm:
             main()
         self.assertEqual(cm.exception.code, 1)
