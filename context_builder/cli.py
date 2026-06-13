@@ -589,7 +589,7 @@ def _rewrite_worktree_compile_commands(
             "w",
             encoding="utf-8",
         ) as target_file:
-            json.dump(rewritten_payload, target_file, indent=2)
+            json.dump(rewritten_payload, target_file, separators=(",", ":"))
     except (OSError, TypeError, UnicodeDecodeError, json.JSONDecodeError):
         shutil.copy(compile_commands_path, worktree_compile_commands_path)
 
