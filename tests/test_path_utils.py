@@ -194,6 +194,12 @@ class TestPathUtils(unittest.TestCase):
         self.assertNotIn("C:/Repo/C:/Repo/src/main.cpp", candidates)
         self.assertIn("C:/Repo/src/main.cpp", candidates)
 
+    def test_iter_case_override_candidates_handles_none_path_value(self):
+        # When path_value is None, it should not raise a TypeError
+        # and should return candidates for root_path.
+        candidates = list(_iter_case_override_candidates(None, root_path=r"C:\Repo"))
+        self.assertIn("C:/Repo", candidates)
+
 
 if __name__ == "__main__":
     unittest.main()

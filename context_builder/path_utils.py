@@ -132,11 +132,13 @@ def _iter_case_override_candidates(path_value, root_path=None):
         if normalized and normalized not in seen:
             seen.add(normalized)
             yield normalized
-    is_abs = (
-        os.path.isabs(path_value)
-        or is_windows_drive_path(path_value)
-        or is_windows_unc_path(path_value)
-    )
+    is_abs = False
+    if path_value:
+        is_abs = (
+            os.path.isabs(path_value)
+            or is_windows_drive_path(path_value)
+            or is_windows_unc_path(path_value)
+        )
     if path_value and root_path and not is_abs:
         root_norm = normalize_case_rule_path(root_path)
         rel_norm = normalize_case_rule_path(path_value).lstrip("/")
