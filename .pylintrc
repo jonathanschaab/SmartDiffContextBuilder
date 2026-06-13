@@ -7,7 +7,8 @@ disable=
     too-many-locals,
     too-many-instance-attributes,
     too-many-arguments,
-    too-many-positional-arguments
+    too-many-positional-arguments,
+    cyclic-import
 
 [FORMAT]
 max-line-length=100

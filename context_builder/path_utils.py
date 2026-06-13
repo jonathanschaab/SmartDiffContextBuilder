@@ -8,7 +8,6 @@ heuristics.
 import os
 import re
 import subprocess
-from importlib import import_module
 
 
 _WINDOWS_DRIVE_PATTERN = re.compile(r"^[A-Za-z]:")
@@ -26,12 +25,16 @@ def _get_config_value(key, default=None):
 
 def _warn_once(key, message):
     """Delegate warnings lazily to avoid import cycles at module load time."""
-    import_module("context_builder.sys_utils").warn_once(key, message)
+    from .sys_utils import warn_once  # pylint: disable=import-outside-toplevel
+
+    warn_once(key, message)
 
 
 def _run_git_probe_process(cmd, timeout, **kwargs):
     """Delegate git subprocess execution lazily to avoid import cycles."""
-    return import_module("context_builder.sys_utils").run_git_process(
+    from .sys_utils import run_git_process  # pylint: disable=import-outside-toplevel
+
+    return run_git_process(
         cmd,
         timeout=timeout,
         timeout_key="git_probe_timeout",
@@ -175,9 +178,10 @@ def get_path_case_override(path_value, root_path=None):
 def _get_git_ignorecase(root_path):
     """Query Git's case-sensitivity hint for a repository root."""
     from .config import DEFAULT_GIT_PROBE_TIMEOUT  # pylint: disable=import-outside-toplevel
+    from .sys_utils import validate_timeout_setting  # pylint: disable=import-outside-toplevel
 
     timeout_val = _get_config_value("git_probe_timeout", DEFAULT_GIT_PROBE_TIMEOUT)
-    timeout = import_module("context_builder.sys_utils").validate_timeout_setting(
+    timeout = validate_timeout_setting(
         timeout_val,
         DEFAULT_GIT_PROBE_TIMEOUT,
         "git_probe_timeout",
