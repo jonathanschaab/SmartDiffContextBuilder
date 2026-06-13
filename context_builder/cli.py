@@ -581,6 +581,16 @@ def _rewrite_worktree_compile_commands(
         with open(compile_commands_path, encoding="utf-8") as source_file:
             payload = json.load(source_file)
 
+        # We benchmarked three approaches here on a 50k-entry synthetic compile
+        # database. Raw JSON text replacement was faster than the structured
+        # walk, but it increased peak memory and was more fragile around escaped
+        # paths and boundary handling. An ijson streaming prototype reduced peak
+        # memory dramatically (~0.65 MiB versus ~63 MiB traced peak for the
+        # current file-to-file rewrite) but was slower (~4.27s versus ~3.64s).
+        # We keep the structured in-memory rewrite because it preserves path
+        # correctness, avoids an extra dependency, and is still the faster
+        # default unless real-world memory pressure makes the streaming tradeoff
+        # worthwhile.
         rewritten_payload = _rewrite_compile_commands_payload(
             payload,
             original_root,
