@@ -127,7 +127,10 @@ class TestCLI(unittest.TestCase):
     def test_rewrite_compile_commands_payload_keeps_windows_drive_letter_paths_valid(self):
         from context_builder.cli import _rewrite_compile_commands_payload
 
-        payload = [{"file": r"C:\repo\src\main.cpp"}]
+        payload = [
+            {"file": r"C:\repo\src\main.cpp"},
+            {"file": r"c:\repo\include\lib.hpp"},
+        ]
 
         rewritten = _rewrite_compile_commands_payload(
             payload,
@@ -136,6 +139,7 @@ class TestCLI(unittest.TestCase):
         )
 
         self.assertEqual(rewritten[0]["file"], r"D:\worktree\src\main.cpp")
+        self.assertEqual(rewritten[1]["file"], r"D:\worktree\include\lib.hpp")
 
     def test_setup_temp_worktree_rewrites_compile_commands_json(self):
         from context_builder.cli import _setup_temp_worktree
@@ -145,15 +149,16 @@ class TestCLI(unittest.TestCase):
             os.makedirs(temp_worktree_dir, exist_ok=True)
 
             compile_commands_path = os.path.join(original_cwd, "compile_commands.json")
+            normalized_original_cwd = original_cwd.replace("\\", "/")
             with open(compile_commands_path, "w", encoding="utf-8") as compile_file:
                 json.dump(
                     [
                         {
-                            "directory": original_cwd.replace("\\", "/"),
+                            "directory": normalized_original_cwd,
                             "file": os.path.join(original_cwd, "src", "main.cpp"),
                             "command": (
-                                f'clang++ -I {original_cwd.replace("\\", "/")}/include '
-                                f'"{original_cwd.replace("\\", "/")}/src/main.cpp"'
+                                f"clang++ -I {normalized_original_cwd}/include "
+                                f'"{normalized_original_cwd}/src/main.cpp"'
                             ),
                         }
                     ],
@@ -169,13 +174,14 @@ class TestCLI(unittest.TestCase):
                 rewritten = json.load(rewritten_file)
 
             entry = rewritten[0]
-            self.assertEqual(entry["directory"], temp_worktree_dir.replace("\\", "/"))
+            normalized_temp_worktree_dir = temp_worktree_dir.replace("\\", "/")
+            self.assertEqual(entry["directory"], normalized_temp_worktree_dir)
             self.assertEqual(
                 entry["file"],
                 os.path.join(temp_worktree_dir, "src", "main.cpp"),
             )
             self.assertIn(
-                f'{temp_worktree_dir.replace("\\", "/")}/src/main.cpp',
+                f"{normalized_temp_worktree_dir}/src/main.cpp",
                 entry["command"],
             )
 

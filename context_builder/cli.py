@@ -515,10 +515,28 @@ def _build_worktree_root_replacements(original_root, worktree_root):
         return []
     original_root = original_root.rstrip("/\\")
     worktree_root = worktree_root.rstrip("/\\")
-    variants = [
+    variants = []
+    for source_root, target_root in (
         (original_root.replace("\\", "/"), worktree_root.replace("\\", "/")),
         (original_root.replace("/", "\\"), worktree_root.replace("/", "\\")),
-    ]
+    ):
+        variants.append((source_root, target_root))
+        if re.match(r"^[A-Za-z]:", source_root):
+            # Windows paths are case-insensitive, but compile_commands.json can
+            # contain either drive-letter case. Add both variants so the cheap
+            # substring guard and regex replacement stay accurate.
+            variants.append(
+                (
+                    source_root[0].lower() + source_root[1:],
+                    target_root,
+                )
+            )
+            variants.append(
+                (
+                    source_root[0].upper() + source_root[1:],
+                    target_root,
+                )
+            )
     replacements = []
     seen_sources = set()
     for source_root, target_root in variants:
@@ -564,6 +582,9 @@ def _rewrite_compile_commands_payload_with_replacements(payload, replacements):
         if source_root not in rewritten:
             continue
         rewritten = pattern.sub(
+            # Bind the replacement in the lambda default so each compiled
+            # substitution keeps its own target_root and pylint does not flag a
+            # late-binding loop closure here.
             lambda _match, replacement=target_root: replacement,
             rewritten,
         )
