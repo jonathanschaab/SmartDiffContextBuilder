@@ -31,7 +31,11 @@ from .config import (
 )
 from .lsp_client import cleanup_zombie_lsps
 from .languages import get_language_profile
-from .path_utils import build_root_replacement_variants
+from .path_utils import (
+    build_root_replacement_variants,
+    clear_path_case_caches,
+    detect_root_case_sensitivity,
+)
 from .preprocessor import (
     analyze_compile_commands,
     build_ffi_registry,
@@ -372,6 +376,7 @@ def _parse_config_file(args_config):
                 print(f"[Warning] Unknown config key: {k}")
                 continue
             _apply_config_override(k, v)
+        clear_path_case_caches()
     except Exception as e:  # pylint: disable=broad-exception-caught
         if isinstance(e, SystemExit):
             raise
@@ -449,6 +454,7 @@ def _merge_cli_overrides(args):
     active_overrides = []
     _merge_cli_mappings(args, active_overrides)
     _merge_json_mappings(args, active_overrides)
+    clear_path_case_caches()
 
     # Force AST engine re-initialization because config might have changed bindings
     # pylint: disable=protected-access
@@ -513,16 +519,19 @@ def _setup_temp_worktree(temp_worktree_dir, end_sha, original_cwd):
 def _build_worktree_root_replacements(original_root, worktree_root):
     """Build boundary-aware root replacements for both slash styles."""
     variants = build_root_replacement_variants(original_root, worktree_root)
+    case_sensitive = detect_root_case_sensitivity(original_root)
     replacements = []
     seen_sources = set()
     for source_root, target_root in variants:
-        if not source_root or source_root in seen_sources:
+        dedupe_key = source_root if case_sensitive else source_root.lower()
+        if not source_root or dedupe_key in seen_sources:
             continue
-        seen_sources.add(source_root)
+        seen_sources.add(dedupe_key)
         pattern = re.compile(
-            re.escape(source_root) + r'(?=[/\\:;\s"\']|$)'
+            re.escape(source_root) + r'(?=[/\\:;\s"\']|$)',
+            0 if case_sensitive else re.IGNORECASE,
         )
-        replacements.append((source_root, target_root, pattern))
+        replacements.append((source_root, target_root, pattern, case_sensitive))
     return replacements
 
 
@@ -554,8 +563,10 @@ def _rewrite_compile_commands_payload_with_replacements(payload, replacements):
     if not isinstance(payload, str):
         return payload
     rewritten = payload
-    for source_root, target_root, pattern in replacements:
-        if source_root not in rewritten:
+    for source_root, target_root, pattern, case_sensitive in replacements:
+        haystack = rewritten if case_sensitive else rewritten.lower()
+        needle = source_root if case_sensitive else source_root.lower()
+        if needle not in haystack:
             continue
         rewritten = pattern.sub(
             # Bind the replacement in the lambda default so each compiled

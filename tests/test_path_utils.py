@@ -1,11 +1,20 @@
 # pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
 
 import unittest
+from unittest.mock import MagicMock, patch
 
+from context_builder.config import CONFIG, reset_config
 from context_builder.path_utils import (
     build_root_replacement_variants,
+    clear_path_case_caches,
+    detect_root_case_sensitivity,
+    get_path_case_override,
+    is_explicit_posix_style_path,
+    is_path_case_sensitive,
     is_windows_drive_path,
+    is_windows_style_path,
     normalize_for_path_match,
+    normalize_case_rule_path,
     normalize_root_for_path_match,
     to_backslashes,
     to_forward_slashes,
@@ -13,6 +22,14 @@ from context_builder.path_utils import (
 
 
 class TestPathUtils(unittest.TestCase):
+    def setUp(self):
+        reset_config()
+        clear_path_case_caches()
+
+    def tearDown(self):
+        reset_config()
+        clear_path_case_caches()
+
     def test_slash_normalizers_are_explicit(self):
         self.assertEqual(to_forward_slashes(r"C:\repo\src\main.cpp"), "C:/repo/src/main.cpp")
         self.assertEqual(to_backslashes("C:/repo/src/main.cpp"), r"C:\repo\src\main.cpp")
@@ -36,6 +53,12 @@ class TestPathUtils(unittest.TestCase):
         self.assertFalse(is_windows_drive_path("/repo"))
         self.assertFalse(is_windows_drive_path("relative/path"))
 
+    def test_path_style_detection_distinguishes_posix_windows_and_ambiguous(self):
+        self.assertTrue(is_windows_style_path(r"..\src\main.cpp"))
+        self.assertTrue(is_windows_style_path(r"\\server\share\repo"))
+        self.assertTrue(is_explicit_posix_style_path("../../mnt/c/Users"))
+        self.assertFalse(is_explicit_posix_style_path("src/main.cpp"))
+
     def test_build_root_replacement_variants_covers_slash_styles_and_drive_case(self):
         variants = build_root_replacement_variants(r"C:\Repo", r"D:\worktree")
 
@@ -43,6 +66,74 @@ class TestPathUtils(unittest.TestCase):
         self.assertIn(("c:/Repo", "D:/worktree"), variants)
         self.assertIn((r"C:\Repo", r"D:\worktree"), variants)
         self.assertIn((r"c:\Repo", r"D:\worktree"), variants)
+
+    def test_case_override_matches_normalized_root_path(self):
+        CONFIG["path_case_rules"] = [
+            {
+                "pattern": r"^C:/Repo/CaseSensitive(?:/|$)",
+                "case_sensitive": True,
+            }
+        ]
+        clear_path_case_caches()
+
+        self.assertTrue(
+            get_path_case_override(
+                "src/main.cpp",
+                root_path=r"C:\Repo\CaseSensitive",
+            )
+        )
+
+    @patch("context_builder.path_utils.subprocess.run")
+    def test_detect_root_case_sensitivity_prefers_git_signal(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stdout="true\n", stderr="")
+
+        self.assertFalse(detect_root_case_sensitivity(r"C:\Repo"))
+        mock_run.assert_called_once()
+
+    @patch("context_builder.path_utils.subprocess.run")
+    def test_detect_root_case_sensitivity_falls_back_to_root_style(self, mock_run):
+        mock_run.side_effect = OSError("git unavailable")
+
+        self.assertFalse(detect_root_case_sensitivity(r"C:\Repo"))
+        clear_path_case_caches()
+        self.assertTrue(detect_root_case_sensitivity("/repo"))
+
+    @patch("context_builder.path_utils.subprocess.run")
+    def test_is_path_case_sensitive_uses_override_before_root_heuristic(self, mock_run):
+        mock_run.side_effect = OSError("git unavailable")
+        CONFIG["path_case_rules"] = [
+            {
+                "pattern": r"^/repo/case-insensitive(?:/|$)",
+                "case_sensitive": False,
+            }
+        ]
+        clear_path_case_caches()
+
+        self.assertFalse(
+            is_path_case_sensitive(
+                "src/main.cpp",
+                root_path="/repo/case-insensitive",
+            )
+        )
+
+    @patch("context_builder.path_utils.subprocess.run")
+    def test_is_path_case_sensitive_treats_explicit_posix_relative_path_as_sensitive(
+        self, mock_run
+    ):
+        mock_run.side_effect = OSError("git unavailable")
+
+        self.assertTrue(
+            is_path_case_sensitive(
+                "../../mnt/c/Users",
+                root_path=r"C:\Repo",
+            )
+        )
+
+    def test_normalize_case_rule_path_trims_trailing_separator(self):
+        self.assertEqual(
+            normalize_case_rule_path(r"C:\Repo\CaseSensitive\\"),
+            "C:/Repo/CaseSensitive",
+        )
 
 
 if __name__ == "__main__":

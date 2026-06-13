@@ -141,6 +141,65 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(rewritten[0]["file"], r"D:\worktree\src\main.cpp")
         self.assertEqual(rewritten[1]["file"], r"D:\worktree\include\lib.hpp")
 
+    @patch("context_builder.path_utils.subprocess.run")
+    def test_rewrite_compile_commands_payload_handles_full_windows_path_case_mismatch(
+        self, mock_run
+    ):
+        from context_builder.cli import _rewrite_compile_commands_payload
+        from context_builder.path_utils import clear_path_case_caches
+
+        mock_run.side_effect = OSError("git unavailable")
+        clear_path_case_caches()
+        payload = [
+            {"file": r"c:\REPO\Src\main.cpp"},
+            {"command": r'clang++ "C:/REPO/Src/main.cpp" -I c:/REPO/include'},
+        ]
+
+        rewritten = _rewrite_compile_commands_payload(
+            payload,
+            r"C:\repo",
+            r"D:\worktree",
+        )
+
+        self.assertEqual(rewritten[0]["file"], r"D:\worktree\Src\main.cpp")
+        self.assertEqual(
+            rewritten[1]["command"],
+            r'clang++ "D:/worktree/Src/main.cpp" -I D:/worktree/include',
+        )
+
+    @patch("context_builder.path_utils.subprocess.run")
+    def test_rewrite_compile_commands_payload_respects_case_sensitive_override(
+        self, mock_run
+    ):
+        from context_builder.cli import _rewrite_compile_commands_payload
+        from context_builder.config import CONFIG, reset_config
+        from context_builder.path_utils import clear_path_case_caches
+
+        mock_run.side_effect = OSError("git unavailable")
+        reset_config()
+        CONFIG["path_case_rules"] = [
+            {
+                "pattern": r"^C:/repo/case-sensitive(?:/|$)",
+                "case_sensitive": True,
+            }
+        ]
+        clear_path_case_caches()
+        payload = [{"file": r"c:\REPO\case-sensitive\src\main.cpp"}]
+
+        try:
+            rewritten = _rewrite_compile_commands_payload(
+                payload,
+                r"C:\repo\case-sensitive",
+                r"D:\worktree",
+            )
+
+            self.assertEqual(
+                rewritten[0]["file"],
+                r"c:\REPO\case-sensitive\src\main.cpp",
+            )
+        finally:
+            reset_config()
+
     def test_setup_temp_worktree_rewrites_compile_commands_json(self):
         from context_builder.cli import _setup_temp_worktree
 

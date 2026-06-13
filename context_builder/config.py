@@ -124,6 +124,7 @@ DEFAULT_FFI_PATTERNS = [
 DEFAULT_FFI_RG_PATTERN = (
     "no_mangle|wasm_bindgen|extern \"C\"|EMSCRIPTEN_KEEPALIVE|PYBIND11_MODULE|m.def"
 )
+DEFAULT_PATH_CASE_RULES = []
 DEFAULT_LSP_INIT_TIMEOUT = 60.0
 DEFAULT_LSP_QUERY_TIMEOUT = 150.0
 WORKTREE_LSP_INIT_TIMEOUT = 120.0
@@ -151,6 +152,7 @@ def reset_config():
         'no_language_server': False,
         'skip_ffi': False,
         'skip_macro_expansion': False,
+        'path_case_rules': DEFAULT_PATH_CASE_RULES.copy(),
         'caller_depth': 1,
         'callee_depth': 1,
         'commit_range': None,
@@ -172,6 +174,11 @@ def reset_config():
         'ffi_patterns': DEFAULT_FFI_PATTERNS.copy(),
         'ffi_rg_pattern': DEFAULT_FFI_RG_PATTERN,
     })
+    try:
+        from .path_utils import clear_path_case_caches  # pylint: disable=import-outside-toplevel
+        clear_path_case_caches()
+    except Exception:  # pylint: disable=broad-exception-caught
+        pass
 
 
 # Initialize configuration
@@ -201,7 +208,7 @@ def generate_commented_config(active_options):
             'format', 'max_lines', 'max_mb', 'base_name', 'max_cache_size_mb',
             'max_interface_depth', 'disable_pruning', 'lsp_init_timeout',
             'lsp_timeout', 'ripgrep_timeout', 'no_language_server',
-            'skip_ffi', 'skip_macro_expansion',
+            'skip_ffi', 'skip_macro_expansion', 'path_case_rules',
             'caller_depth', 'callee_depth', 'commit_range'
         ],
         "Language Definitions": [
