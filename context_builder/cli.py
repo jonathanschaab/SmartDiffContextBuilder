@@ -515,31 +515,67 @@ def _replace_worktree_root(value, original_root, worktree_root):
     if not isinstance(value, str):
         return value
 
-    replacements = [
+    replacements = _build_worktree_root_replacements(original_root, worktree_root)
+    rewritten = value
+    for source_root, target_root, pattern in replacements:
+        if source_root not in rewritten:
+            continue
+        rewritten = pattern.sub(
+            lambda _match, replacement=target_root: replacement,
+            rewritten,
+        )
+    return rewritten
+
+
+def _build_worktree_root_replacements(original_root, worktree_root):
+    """Build boundary-aware root replacements for both slash styles."""
+    variants = [
         (original_root, worktree_root),
         (original_root.replace("\\", "/"), worktree_root.replace("\\", "/")),
         (original_root.replace("/", "\\"), worktree_root.replace("/", "\\")),
     ]
-    rewritten = value
-    for source_root, target_root in replacements:
-        if source_root:
-            rewritten = rewritten.replace(source_root, target_root)
-    return rewritten
+    replacements = []
+    seen_sources = set()
+    for source_root, target_root in variants:
+        if not source_root or source_root in seen_sources:
+            continue
+        seen_sources.add(source_root)
+        pattern = re.compile(
+            re.escape(source_root) + r'(?=[/\\\s"\']|$)'
+        )
+        replacements.append((source_root, target_root, pattern))
+    return replacements
 
 
 def _rewrite_compile_commands_payload(payload, original_root, worktree_root):
     """Recursively rewrite compile database paths from the source repo to the worktree."""
+    replacements = _build_worktree_root_replacements(original_root, worktree_root)
+    return _rewrite_compile_commands_payload_with_replacements(payload, replacements)
+
+
+def _rewrite_compile_commands_payload_with_replacements(payload, replacements):
+    """Recursively rewrite compile database paths using precomputed replacements."""
     if isinstance(payload, dict):
         return {
-            key: _rewrite_compile_commands_payload(value, original_root, worktree_root)
+            key: _rewrite_compile_commands_payload_with_replacements(value, replacements)
             for key, value in payload.items()
         }
     if isinstance(payload, list):
         return [
-            _rewrite_compile_commands_payload(item, original_root, worktree_root)
+            _rewrite_compile_commands_payload_with_replacements(item, replacements)
             for item in payload
         ]
-    return _replace_worktree_root(payload, original_root, worktree_root)
+    if not isinstance(payload, str):
+        return payload
+    rewritten = payload
+    for source_root, target_root, pattern in replacements:
+        if source_root not in rewritten:
+            continue
+        rewritten = pattern.sub(
+            lambda _match, replacement=target_root: replacement,
+            rewritten,
+        )
+    return rewritten
 
 
 def _rewrite_worktree_compile_commands(
@@ -549,21 +585,24 @@ def _rewrite_worktree_compile_commands(
     worktree_root,
 ):
     """Copy and rewrite compile_commands.json so clangd stays inside the worktree."""
-    with open(compile_commands_path, encoding="utf-8") as source_file:
-        payload = json.load(source_file)
+    try:
+        with open(compile_commands_path, encoding="utf-8") as source_file:
+            payload = json.load(source_file)
 
-    rewritten_payload = _rewrite_compile_commands_payload(
-        payload,
-        original_root,
-        worktree_root,
-    )
+        rewritten_payload = _rewrite_compile_commands_payload(
+            payload,
+            original_root,
+            worktree_root,
+        )
 
-    with open(
-        worktree_compile_commands_path,
-        "w",
-        encoding="utf-8",
-    ) as target_file:
-        json.dump(rewritten_payload, target_file, indent=2)
+        with open(
+            worktree_compile_commands_path,
+            "w",
+            encoding="utf-8",
+        ) as target_file:
+            json.dump(rewritten_payload, target_file, indent=2)
+    except (OSError, TypeError, json.JSONDecodeError):
+        shutil.copy(compile_commands_path, worktree_compile_commands_path)
 
 
 def _cleanup_temp_worktree(temp_worktree_dir, original_cwd):

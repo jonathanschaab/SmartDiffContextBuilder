@@ -51,6 +51,27 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(entry["arguments"][3], "D:/worktree/include")
         self.assertEqual(entry["output"], "D:/worktree/build/main.o")
 
+    def test_rewrite_compile_commands_payload_does_not_rewrite_path_prefixes(self):
+        from context_builder.cli import _rewrite_compile_commands_payload
+
+        payload = [
+            {
+                "directory": "/repo/build",
+                "file": "/repo/src/main.cpp",
+                "command": "clang++ /repo-utils/generated.cpp /repo/src/main.cpp",
+                "output": "/repo-utils/build/main.o",
+            }
+        ]
+
+        rewritten = _rewrite_compile_commands_payload(payload, "/repo", "/worktree")
+        entry = rewritten[0]
+
+        self.assertEqual(entry["directory"], "/worktree/build")
+        self.assertEqual(entry["file"], "/worktree/src/main.cpp")
+        self.assertIn("/repo-utils/generated.cpp", entry["command"])
+        self.assertIn("/worktree/src/main.cpp", entry["command"])
+        self.assertEqual(entry["output"], "/repo-utils/build/main.o")
+
     def test_setup_temp_worktree_rewrites_compile_commands_json(self):
         from context_builder.cli import _setup_temp_worktree
 
@@ -92,6 +113,27 @@ class TestCLI(unittest.TestCase):
                 f'{temp_worktree_dir.replace("\\", "/")}/src/main.cpp',
                 entry["command"],
             )
+
+    @patch("context_builder.cli.shutil.copy")
+    def test_rewrite_worktree_compile_commands_falls_back_to_copy_on_invalid_json(
+        self, mock_copy
+    ):
+        from context_builder.cli import _rewrite_worktree_compile_commands
+
+        with tempfile.TemporaryDirectory() as original_cwd, tempfile.TemporaryDirectory() as temp_root:
+            compile_commands_path = os.path.join(original_cwd, "compile_commands.json")
+            rewritten_path = os.path.join(temp_root, "compile_commands.json")
+            with open(compile_commands_path, "w", encoding="utf-8") as compile_file:
+                compile_file.write("{ not valid json")
+
+            _rewrite_worktree_compile_commands(
+                compile_commands_path,
+                rewritten_path,
+                original_cwd,
+                temp_root,
+            )
+
+        mock_copy.assert_called_once_with(compile_commands_path, rewritten_path)
 
     @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
     @patch("context_builder.cli.get_git_diff_files")
