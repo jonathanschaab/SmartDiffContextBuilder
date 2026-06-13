@@ -46,6 +46,8 @@ from .sys_utils import (
     get_git_diff_files,
     get_git_tracked_files,
     is_in_repo,
+    run_git_command,
+    run_git_process,
     run_command,
 )
 from .test_miner import get_coverage_data, mine_relevant_unit_tests
@@ -57,15 +59,15 @@ from .graph_tracer import CallGraphTracer, extract_function_name
 
 def resolve_commit_ref(ref):
     """Resolves a git ref (like HEAD~2, my_tag) to a full commit SHA."""
-    out = run_command(["git", "rev-parse", "--verify", ref])
+    out = run_git_command(["git", "rev-parse", "--verify", ref])
     if not out.strip():
-        out = run_command(["git", "rev-parse", ref])
+        out = run_git_command(["git", "rev-parse", ref])
     return out.strip()
 
 def get_default_branch():
     """Queries git for first existing branch from ['main', 'master']."""
     for branch in ["main", "master"]:
-        if run_command(["git", "rev-parse", "--verify", branch]).strip():
+        if run_git_command(["git", "rev-parse", "--verify", branch]).strip():
             return branch
     return "main"
 
@@ -99,13 +101,13 @@ def parse_and_resolve_range(range_str):
             end_ref = start_ref
         else:
             # Get chronological list of commits from start_sha to HEAD
-            commits_out = run_command([
+            commits_out = run_git_command([
                 "git", "log", "--reverse", "--format=%H", f"{start_sha}..HEAD"
             ])
             commits = [c.strip() for c in commits_out.splitlines() if c.strip()]
             if len(commits) < count:
                 default_branch = get_default_branch()
-                commits_out = run_command([
+                commits_out = run_git_command([
                     "git", "log", "--reverse", "--format=%H",
                     f"{start_sha}..{default_branch}"
                 ])
@@ -142,11 +144,11 @@ def parse_and_resolve_range(range_str):
 def _extract_line_numbers_from_diff(file_path, start_ref, end_ref):
     """Retrieve modified line numbers for a file from git diff."""
     if start_ref and end_ref:
-        diff_lines = run_command([
+        diff_lines = run_git_command([
             "git", "diff", "-U0", start_ref, end_ref, "--", file_path
         ]).splitlines()
     else:
-        diff_lines = run_command(["git", "diff", "-U0", "HEAD", file_path]).splitlines()
+        diff_lines = run_git_command(["git", "diff", "-U0", "HEAD", file_path]).splitlines()
 
     line_numbers = []
     for line in diff_lines:
@@ -397,6 +399,7 @@ def _merge_cli_mappings(args, active_overrides):
         "lsp_init_timeout": "lsp_init_timeout",
         "lsp_timeout": "lsp_timeout",
         "ripgrep_timeout": "ripgrep_timeout",
+        "git_timeout": "git_timeout",
         "git_probe_timeout": "git_probe_timeout",
         "no_language_server": "no_language_server",
         "skip_ffi": "skip_ffi",
@@ -483,17 +486,17 @@ def _create_config_if_requested(args_create_config, active_overrides):
 
 def _setup_temp_worktree(temp_worktree_dir, end_sha, original_cwd):
     """Set up git worktree and copy configuration files."""
-    add_res = subprocess.run(
+    add_res = run_git_process(
         ["git", "worktree", "add", "--detach", temp_worktree_dir, end_sha],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
         check=False,
     )
-    if add_res.returncode != 0:
+    if not add_res or add_res.returncode != 0:
         print(
             f"\n[SmartDiffContextBuilder Error] Failed to create git worktree: "
-            f"{add_res.stderr.strip()}"
+            f"{(add_res.stderr.strip() if add_res and add_res.stderr else 'git worktree add failed')}"
         )
         try:
             shutil.rmtree(temp_worktree_dir, ignore_errors=True)
@@ -625,7 +628,7 @@ def _cleanup_temp_worktree(temp_worktree_dir, original_cwd):
     except Exception:  # pylint: disable=broad-exception-caught
         pass
     try:
-        subprocess.run(
+        run_git_process(
             ["git", "worktree", "remove", "--force", temp_worktree_dir],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -634,7 +637,7 @@ def _cleanup_temp_worktree(temp_worktree_dir, original_cwd):
     except Exception:  # pylint: disable=broad-exception-caught
         pass
     try:
-        subprocess.run(
+        run_git_process(
             ["git", "worktree", "prune"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -659,13 +662,7 @@ def _run_commit_range_worktree(args, commit_range):
     original_cwd = os.getcwd()
 
     try:
-        current_head = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=True
-        ).stdout.strip()
+        current_head = run_git_command(["git", "rev-parse", "HEAD"]).strip() or None
     except Exception:  # pylint: disable=broad-exception-caught
         current_head = None
 
@@ -740,6 +737,7 @@ def main():
     parser.add_argument("--lsp-init-timeout", type=float, default=None)
     parser.add_argument("--lsp-timeout", type=float, default=None)
     parser.add_argument("--ripgrep-timeout", type=float, default=None)
+    parser.add_argument("--git-timeout", type=float, default=None)
     parser.add_argument("--git-probe-timeout", type=float, default=None)
     parser.add_argument("--no-language-server", action="store_true", default=None)
     parser.add_argument("--skip-ffi", action="store_true", default=None)

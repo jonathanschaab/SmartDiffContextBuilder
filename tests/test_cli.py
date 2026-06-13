@@ -141,7 +141,7 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(rewritten[0]["file"], r"D:\worktree\src\main.cpp")
         self.assertEqual(rewritten[1]["file"], r"D:\worktree\include\lib.hpp")
 
-    @patch("context_builder.path_utils.subprocess.run")
+    @patch("context_builder.sys_utils.run_git_process")
     def test_rewrite_compile_commands_payload_handles_full_windows_path_case_mismatch(
         self, mock_run
     ):
@@ -167,7 +167,7 @@ class TestCLI(unittest.TestCase):
             r'clang++ "D:/worktree/Src/main.cpp" -I D:/worktree/include',
         )
 
-    @patch("context_builder.path_utils.subprocess.run")
+    @patch("context_builder.sys_utils.run_git_process")
     def test_rewrite_compile_commands_payload_respects_case_sensitive_override(
         self, mock_run
     ):
@@ -701,7 +701,7 @@ class TestCLI(unittest.TestCase):
     @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
     @patch("context_builder.cli.parse_and_resolve_range")
     @patch("context_builder.cli.run_scan")
-    @patch("subprocess.run")
+    @patch("context_builder.cli.run_git_process")
     @patch("shutil.rmtree")
     def test_cli_robust_worktree_cleanup(
         self, mock_rmtree, mock_sub_run, mock_run_scan, mock_resolve_range, mock_parse_args
@@ -739,7 +739,7 @@ class TestCLI(unittest.TestCase):
     @patch("context_builder.cli.parse_and_resolve_range")
     @patch("context_builder.cli.run_scan")
     @patch("context_builder.cli.cleanup_zombie_lsps")
-    @patch("subprocess.run")
+    @patch("context_builder.cli.run_git_process")
     @patch("shutil.rmtree")
     def test_cli_worktree_cleanup_calls_lsp_cleanup_before_remove(
         self, mock_rmtree, mock_sub_run, mock_cleanup_lsps, mock_run_scan, mock_resolve_range, mock_parse_args
@@ -817,7 +817,7 @@ class TestCLI(unittest.TestCase):
         res = extract_function_name("MyClass::~MyClass() {", 50, 55)
         self.assertEqual(res, "~MyClass")
 
-    @patch("context_builder.cli.run_command")
+    @patch("context_builder.cli.run_git_command")
     def test_get_default_branch(self, mock_run):
         from context_builder.cli import get_default_branch
 
@@ -841,7 +841,7 @@ class TestCLI(unittest.TestCase):
         mock_run.side_effect = lambda cmd, **kwargs: ""
         self.assertEqual(get_default_branch(), "main")
 
-    @patch("context_builder.cli.run_command")
+    @patch("context_builder.cli.run_git_command")
     def test_resolve_commit_ref_retries_without_verify(self, mock_run):
         from context_builder.cli import resolve_commit_ref
 
@@ -879,7 +879,7 @@ class TestCLI(unittest.TestCase):
         )
 
     @patch("context_builder.cli.get_default_branch", return_value="main")
-    @patch("context_builder.cli.run_command")
+    @patch("context_builder.cli.run_git_command")
     @patch("context_builder.cli.resolve_commit_ref", return_value="start-sha")
     def test_parse_start_plus_count_falls_back_to_default_branch(
         self, _mock_resolve, mock_run, _mock_default
@@ -895,7 +895,7 @@ class TestCLI(unittest.TestCase):
         self.assertIn("start-sha..main", mock_run.call_args_list[1].args[0])
 
     @patch("context_builder.cli.get_default_branch", return_value="main")
-    @patch("context_builder.cli.run_command", return_value="")
+    @patch("context_builder.cli.run_git_command", return_value="")
     @patch("context_builder.cli.resolve_commit_ref", return_value="start-sha")
     def test_parse_start_plus_count_rejects_insufficient_history(
         self, _mock_resolve, _mock_run, _mock_default
@@ -918,7 +918,7 @@ class TestCLI(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Could not resolve end commit"):
             parse_and_resolve_range("base..missing")
 
-    @patch("context_builder.cli.run_command")
+    @patch("context_builder.cli.run_git_command")
     def test_extract_line_numbers_from_diff_parses_hunks(self, mock_run):
         from context_builder.cli import _extract_line_numbers_from_diff
 
@@ -1013,7 +1013,7 @@ class TestCLI(unittest.TestCase):
     @patch("context_builder.cli.parse_and_resolve_range")
     @patch("context_builder.cli.run_scan")
     @patch("context_builder.cli.cleanup_zombie_lsps")
-    @patch("subprocess.run")
+    @patch("context_builder.cli.run_git_process")
     @patch("shutil.rmtree")
     @patch("shutil.copy")
     @patch("os.path.exists")
@@ -1065,7 +1065,7 @@ class TestCLI(unittest.TestCase):
     @patch("context_builder.cli.parse_and_resolve_range")
     @patch("context_builder.cli.run_scan")
     @patch("context_builder.cli.cleanup_zombie_lsps")
-    @patch("subprocess.run")
+    @patch("context_builder.cli.run_git_process")
     @patch("shutil.rmtree")
     @patch("context_builder.cli._rewrite_worktree_compile_commands")
     @patch("shutil.copy")
@@ -1103,9 +1103,10 @@ class TestCLI(unittest.TestCase):
     @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
     @patch("context_builder.cli.parse_and_resolve_range")
     @patch("context_builder.cli.run_scan")
-    @patch("subprocess.run")
+    @patch("context_builder.cli.run_git_command")
+    @patch("context_builder.cli.run_git_process")
     def test_worktree_bypassed_if_head_matches_end_sha(
-        self, mock_sub_run, mock_run_scan, mock_resolve_range, mock_parse_args
+        self, mock_git_process, mock_git_command, mock_run_scan, mock_resolve_range, mock_parse_args
     ):
         """Verify that temporary worktree creation is bypassed if HEAD matches end_sha."""
         mock_args = CliNamespace()
@@ -1115,15 +1116,12 @@ class TestCLI(unittest.TestCase):
         # Resolve range returns "sha_end" as the end SHA
         mock_resolve_range.return_value = ("sha_start", "sha_end")
 
-        # Mock git rev-parse HEAD subprocess call to return "sha_end"
-        mock_res = MagicMock(returncode=0)
-        mock_res.stdout = "sha_end\n"
-        mock_sub_run.return_value = mock_res
+        mock_git_command.return_value = "sha_end\n"
 
         main()
 
         # Verify that git worktree add was NOT called
-        for call in mock_sub_run.call_args_list:
+        for call in mock_git_process.call_args_list:
             cmd = call[0][0]
             self.assertFalse("worktree" in cmd and "add" in cmd)
 
@@ -1134,7 +1132,7 @@ class TestCLI(unittest.TestCase):
     @patch("context_builder.cli._setup_temp_worktree")
     @patch("context_builder.cli.run_scan")
     @patch("context_builder.cli.parse_and_resolve_range")
-    @patch("context_builder.cli.subprocess.run")
+    @patch("context_builder.cli.run_git_command")
     def test_worktree_warns_when_lsp_is_enabled(
         self,
         mock_sub_run,
@@ -1148,7 +1146,7 @@ class TestCLI(unittest.TestCase):
 
         args = CliNamespace(no_language_server=False)
         mock_resolve_range.return_value = ("start_sha", "end_sha")
-        mock_sub_run.return_value = MagicMock(stdout="other_sha\n")
+        mock_sub_run.return_value = "other_sha\n"
 
         with patch("context_builder.cli.os.chdir"), patch(
             "builtins.print"
@@ -1170,7 +1168,7 @@ class TestCLI(unittest.TestCase):
     @patch("context_builder.cli._setup_temp_worktree")
     @patch("context_builder.cli.run_scan")
     @patch("context_builder.cli.parse_and_resolve_range")
-    @patch("context_builder.cli.subprocess.run")
+    @patch("context_builder.cli.run_git_command")
     def test_worktree_preserves_larger_lsp_timeouts(
         self,
         mock_sub_run,
@@ -1187,7 +1185,7 @@ class TestCLI(unittest.TestCase):
             lsp_timeout=420,
         )
         mock_resolve_range.return_value = ("start_sha", "end_sha")
-        mock_sub_run.return_value = MagicMock(stdout="other_sha\n")
+        mock_sub_run.return_value = "other_sha\n"
 
         with patch("context_builder.cli.os.chdir"):
             _run_commit_range_worktree(args, "start..end")
@@ -1200,7 +1198,7 @@ class TestCLI(unittest.TestCase):
     @patch("context_builder.cli._setup_temp_worktree")
     @patch("context_builder.cli.run_scan")
     @patch("context_builder.cli.parse_and_resolve_range")
-    @patch("context_builder.cli.subprocess.run")
+    @patch("context_builder.cli.run_git_command")
     def test_worktree_omits_lsp_warning_when_disabled(
         self,
         mock_sub_run,
@@ -1214,7 +1212,7 @@ class TestCLI(unittest.TestCase):
 
         args = CliNamespace(no_language_server=True)
         mock_resolve_range.return_value = ("start_sha", "end_sha")
-        mock_sub_run.return_value = MagicMock(stdout="other_sha\n")
+        mock_sub_run.return_value = "other_sha\n"
 
         with patch("context_builder.cli.os.chdir"), patch(
             "builtins.print"
@@ -1535,6 +1533,28 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(args_passed.git_probe_timeout, 12.5)
 
         mock_args.git_probe_timeout = "not_a_float"
+        with self.assertRaises(SystemExit) as cm:
+            main()
+        self.assertEqual(cm.exception.code, 1)
+
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    @patch("context_builder.cli.run_scan")
+    def test_cli_git_timeout_mapping(self, mock_run_scan, mock_parse_args):
+        """Verify that CLI parameter --git-timeout updates CONFIG."""
+        from context_builder.config import CONFIG, reset_config
+        reset_config()
+
+        mock_args = CliNamespace()
+        mock_args.git_timeout = 40.5
+        mock_parse_args.return_value = mock_args
+
+        main()
+
+        self.assertEqual(CONFIG["git_timeout"], 40.5)
+        args_passed = mock_run_scan.call_args[0][0]
+        self.assertEqual(args_passed.git_timeout, 40.5)
+
+        mock_args.git_timeout = "not_a_float"
         with self.assertRaises(SystemExit) as cm:
             main()
         self.assertEqual(cm.exception.code, 1)
