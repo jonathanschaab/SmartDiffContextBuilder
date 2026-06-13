@@ -511,6 +511,8 @@ def _setup_temp_worktree(temp_worktree_dir, end_sha, original_cwd):
 
 def _build_worktree_root_replacements(original_root, worktree_root):
     """Build boundary-aware root replacements for both slash styles."""
+    if not isinstance(original_root, str) or not isinstance(worktree_root, str):
+        return []
     variants = [
         (original_root, worktree_root),
         (original_root.replace("\\", "/"), worktree_root.replace("\\", "/")),
