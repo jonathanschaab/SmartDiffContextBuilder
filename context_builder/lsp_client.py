@@ -663,12 +663,75 @@ def cleanup_zombie_lsps():
 atexit.register(cleanup_zombie_lsps)
 
 
-def _find_lsp_func_start_character(lines, line_num, func_name):
-    """Scan line and decorators to find func name starting character index."""
-    decorator_lookahead = 10
-    actual_line = line_num
-    char_idx = -1
+def _find_lsp_func_start_character_ast(
+    lines, line_num, func_name, ext, file_path, file_cache, decorator_lookahead
+):
+    """Attempt to locate function identifier starting character index using AST parsing."""
+    # pylint: disable=import-outside-toplevel
+    from .ast_engine import AST_ENGINE, HAS_TREESITTER
 
+    if not (HAS_TREESITTER and AST_ENGINE.is_supported(ext)):
+        return -1, line_num
+
+    try:
+        source_bytes = file_cache.get_bytes(file_path)
+        tree = AST_ENGINE.parsers[ext].parse(source_bytes)
+        q_str = None
+        if ext in (".cpp", ".cc", ".cxx", ".hpp", ".hxx", ".h", ".c"):
+            q_str = """
+            (function_declarator
+              declarator: [
+                (identifier) @func_name
+                (field_identifier) @func_name
+                (destructor_name) @func_name
+                (qualified_identifier
+                  name: [
+                    (identifier) @func_name
+                    (field_identifier) @func_name
+                    (destructor_name) @func_name
+                  ]
+                )
+              ]
+            )
+            """
+        elif ext == ".rs":
+            q_str = """
+            (function_item
+              name: (identifier) @func_name
+            )
+            (function_signature_item
+              name: (identifier) @func_name
+            )
+            """
+        if not q_str:
+            return -1, line_num
+
+        query = AST_ENGINE.languages[ext].query(q_str)
+        captures = query.captures(tree.root_node)
+        for capture_node, _ in captures:
+            node_text = source_bytes[
+                capture_node.start_byte:capture_node.end_byte
+            ].decode("utf-8", errors="ignore")
+            if node_text != func_name:
+                continue
+            node_row = capture_node.start_point[0]
+            if node_row < (line_num - 1) or node_row >= (line_num - 1 + decorator_lookahead):
+                continue
+            line_str = lines[node_row]
+            prefix_bytes = line_str.encode("utf-8")[:capture_node.start_point[1]]
+            prefix_str = prefix_bytes.decode("utf-8", errors="ignore")
+            char_idx = len(prefix_str.encode("utf-16-le")) // 2
+            actual_line = node_row + 1
+            return char_idx, actual_line
+    except Exception:  # pylint: disable=broad-exception-caught
+        pass
+    return -1, line_num
+
+
+def _find_lsp_func_start_character_regex(
+    lines, line_num, func_name, decorator_lookahead
+):
+    """Attempt to locate function identifier starting character index using regex search."""
     lead_b = r"\b" if func_name and (func_name[0].isalnum() or func_name[0] == "_") else ""
     trail_b = r"\b" if func_name and (func_name[-1].isalnum() or func_name[-1] == "_") else ""
     func_name_pattern = re.compile(lead_b + re.escape(func_name) + trail_b)
@@ -679,12 +742,34 @@ def _find_lsp_func_start_character(lines, line_num, func_name):
         m = func_name_pattern.search(lines[candidate_idx])
         if m:
             actual_line = line_num + offset
-            char_idx = m.start()
-            break
-    if char_idx == -1:
-        actual_line = line_num
-        char_idx = 0
-    return actual_line, char_idx
+            prefix_str = lines[candidate_idx][:m.start()]
+            char_idx = len(prefix_str.encode("utf-16-le")) // 2
+            return char_idx, actual_line
+    return -1, line_num
+
+
+def _find_lsp_func_start_character(
+    lines, line_num, func_name, ext=None, file_path=None, file_cache=None
+):
+    """Scan line and decorators to find func name starting character index."""
+    decorator_lookahead = 10
+
+    # Try AST-based matching for C++ and Rust if tree-sitter is available and supported
+    if ext and file_path and file_cache:
+        char_idx, actual_line = _find_lsp_func_start_character_ast(
+            lines, line_num, func_name, ext, file_path, file_cache, decorator_lookahead
+        )
+        if char_idx != -1:
+            return actual_line, char_idx
+
+    # Regex-based fallback
+    char_idx, actual_line = _find_lsp_func_start_character_regex(
+        lines, line_num, func_name, decorator_lookahead
+    )
+    if char_idx != -1:
+        return actual_line, char_idx
+
+    return line_num, 0
 
 
 def _parse_single_lsp_reference(ref, file_cache):
@@ -778,7 +863,14 @@ def get_lsp_references(
     if line_num > len(lines):
         return {}
 
-    actual_line, char_idx = _find_lsp_func_start_character(lines, line_num, func_name)
+    actual_line, char_idx = _find_lsp_func_start_character(
+        lines,
+        line_num,
+        func_name,
+        ext=ext,
+        file_path=file_path,
+        file_cache=file_cache,
+    )
 
     print(f" [LSP] Querying {command[0]} for {func_name}() references...")
     refs = client.get_references(file_path, actual_line, char_idx, timeout=timeout)

@@ -18,6 +18,7 @@ from context_builder.lsp_client import (
     LSP_INSTANCES,
     LSPProgressReporter,
     MinimalLSPClient,
+    _find_lsp_func_start_character,
     _get_lsp_process,
     _register_lsp_progress_handlers,
     _register_notebook_filter_compatibility,
@@ -1240,3 +1241,207 @@ class TestLspClient(unittest.TestCase):
                 success = client.start()
                 self.assertFalse(success)
                 mock_cleanup.assert_called_once_with(force_kill=False)
+
+    @patch("context_builder.ast_engine.HAS_TREESITTER", True)
+    def test_find_lsp_func_start_character_ast_matching_cpp(self):
+        from context_builder.ast_engine import AST_ENGINE
+
+        orig_init = AST_ENGINE._initialized
+        orig_parsers = AST_ENGINE.parsers.copy()
+        orig_languages = AST_ENGINE.languages.copy()
+        try:
+            AST_ENGINE._initialized = True
+            mock_parser = MagicMock()
+            mock_lang = MagicMock()
+            AST_ENGINE.parsers = {".cpp": mock_parser}
+            AST_ENGINE.languages = {".cpp": mock_lang}
+
+            mock_tree = MagicMock()
+            mock_parser.parse.return_value = mock_tree
+
+            mock_query = MagicMock()
+            mock_lang.query.return_value = mock_query
+
+            # Widget* WidgetFactory::Widget()
+            mock_node = MagicMock()
+            mock_node.start_byte = 23
+            mock_node.end_byte = 29
+            mock_node.start_point = (0, 23)
+
+            mock_query.captures.return_value = [(mock_node, "func_name")]
+
+            lines = ["Widget* WidgetFactory::Widget()"]
+            file_cache = MagicMock()
+            file_cache.get_bytes.return_value = b"Widget* WidgetFactory::Widget()"
+
+            actual_line, char_idx = _find_lsp_func_start_character(
+                lines,
+                line_num=1,
+                func_name="Widget",
+                ext=".cpp",
+                file_path="dummy.cpp",
+                file_cache=file_cache,
+            )
+
+            self.assertEqual(actual_line, 1)
+            self.assertEqual(char_idx, 23)
+        finally:
+            AST_ENGINE._initialized = orig_init
+            AST_ENGINE.parsers = orig_parsers
+            AST_ENGINE.languages = orig_languages
+
+    @patch("context_builder.ast_engine.HAS_TREESITTER", True)
+    def test_find_lsp_func_start_character_ast_matching_cpp_out_of_line_destructor(self):
+        from context_builder.ast_engine import AST_ENGINE
+
+        orig_init = AST_ENGINE._initialized
+        orig_parsers = AST_ENGINE.parsers.copy()
+        orig_languages = AST_ENGINE.languages.copy()
+        try:
+            AST_ENGINE._initialized = True
+            mock_parser = MagicMock()
+            mock_lang = MagicMock()
+            AST_ENGINE.parsers = {".cpp": mock_parser}
+            AST_ENGINE.languages = {".cpp": mock_lang}
+
+            mock_tree = MagicMock()
+            mock_parser.parse.return_value = mock_tree
+
+            mock_query = MagicMock()
+            mock_lang.query.return_value = mock_query
+
+            # MyClass::~MyClass()
+            mock_node = MagicMock()
+            mock_node.start_byte = 9
+            mock_node.end_byte = 17
+            mock_node.start_point = (0, 9)
+
+            mock_query.captures.return_value = [(mock_node, "func_name")]
+
+            lines = ["MyClass::~MyClass()"]
+            file_cache = MagicMock()
+            file_cache.get_bytes.return_value = b"MyClass::~MyClass()"
+
+            actual_line, char_idx = _find_lsp_func_start_character(
+                lines,
+                line_num=1,
+                func_name="~MyClass",
+                ext=".cpp",
+                file_path="dummy.cpp",
+                file_cache=file_cache,
+            )
+
+            self.assertEqual(actual_line, 1)
+            self.assertEqual(char_idx, 9)
+        finally:
+            AST_ENGINE._initialized = orig_init
+            AST_ENGINE.parsers = orig_parsers
+            AST_ENGINE.languages = orig_languages
+
+    @patch("context_builder.ast_engine.HAS_TREESITTER", True)
+    def test_find_lsp_func_start_character_ast_matching_rust(self):
+        from context_builder.ast_engine import AST_ENGINE
+
+        orig_init = AST_ENGINE._initialized
+        orig_parsers = AST_ENGINE.parsers.copy()
+        orig_languages = AST_ENGINE.languages.copy()
+        try:
+            AST_ENGINE._initialized = True
+            mock_parser = MagicMock()
+            mock_lang = MagicMock()
+            AST_ENGINE.parsers = {".rs": mock_parser}
+            AST_ENGINE.languages = {".rs": mock_lang}
+
+            mock_tree = MagicMock()
+            mock_parser.parse.return_value = mock_tree
+
+            mock_query = MagicMock()
+            mock_lang.query.return_value = mock_query
+
+            mock_node = MagicMock()
+            mock_node.start_byte = 3
+            mock_node.end_byte = 7
+            mock_node.start_point = (0, 3)
+
+            mock_query.captures.return_value = [(mock_node, "func_name")]
+
+            lines = ["fn test() {}"]
+            file_cache = MagicMock()
+            file_cache.get_bytes.return_value = b"fn test() {}"
+
+            actual_line, char_idx = _find_lsp_func_start_character(
+                lines,
+                line_num=1,
+                func_name="test",
+                ext=".rs",
+                file_path="dummy.rs",
+                file_cache=file_cache,
+            )
+
+            self.assertEqual(actual_line, 1)
+            self.assertEqual(char_idx, 3)
+        finally:
+            AST_ENGINE._initialized = orig_init
+            AST_ENGINE.parsers = orig_parsers
+            AST_ENGINE.languages = orig_languages
+
+    def test_find_lsp_func_start_character_utf16_surrogate_pairs_regex(self):
+        # 🦊 is 4 bytes in UTF-8, and occupies 2 code units in UTF-16.
+        # "🦊foo" has 🦊 at index 0 (len 1 in Python, but 2 code units in UTF-16).
+        # So "foo" starts at Python index 1, but UTF-16 offset 2.
+        lines = ["🦊foo()"]
+        actual_line, char_idx = _find_lsp_func_start_character(
+            lines,
+            line_num=1,
+            func_name="foo",
+            ext=".cpp",
+        )
+        self.assertEqual(actual_line, 1)
+        self.assertEqual(char_idx, 2)
+
+    @patch("context_builder.ast_engine.HAS_TREESITTER", True)
+    def test_find_lsp_func_start_character_utf16_surrogate_pairs_ast(self):
+        from context_builder.ast_engine import AST_ENGINE
+
+        orig_init = AST_ENGINE._initialized
+        orig_parsers = AST_ENGINE.parsers.copy()
+        orig_languages = AST_ENGINE.languages.copy()
+        try:
+            AST_ENGINE._initialized = True
+            mock_parser = MagicMock()
+            mock_lang = MagicMock()
+            AST_ENGINE.parsers = {".cpp": mock_parser}
+            AST_ENGINE.languages = {".cpp": mock_lang}
+
+            mock_tree = MagicMock()
+            mock_parser.parse.return_value = mock_tree
+
+            mock_query = MagicMock()
+            mock_lang.query.return_value = mock_query
+
+            mock_node = MagicMock()
+            mock_node.start_byte = 5
+            mock_node.end_byte = 8
+            mock_node.start_point = (0, 5)
+
+            mock_query.captures.return_value = [(mock_node, "func_name")]
+
+            lines = ["🦊_foo()"]
+            file_cache = MagicMock()
+            file_cache.get_bytes.return_value = "🦊_foo()".encode("utf-8")
+
+            actual_line, char_idx = _find_lsp_func_start_character(
+                lines,
+                line_num=1,
+                func_name="foo",
+                ext=".cpp",
+                file_path="dummy.cpp",
+                file_cache=file_cache,
+            )
+
+            self.assertEqual(actual_line, 1)
+            self.assertEqual(char_idx, 3)
+        finally:
+            AST_ENGINE._initialized = orig_init
+            AST_ENGINE.parsers = orig_parsers
+            AST_ENGINE.languages = orig_languages
