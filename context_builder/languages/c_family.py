@@ -22,7 +22,10 @@ class CFamilyProfile(LanguageProfile):
         lead_b, trail_b = self._get_boundaries(func_name)
         escaped = re.escape(func_name)
         return [
-            re.compile(r'\b(?:class|struct)\s+' + lead_b + escaped + trail_b)
+            re.compile(
+                r'\b(?:class|struct|union|enum|namespace)\s+'
+                + lead_b + escaped + trail_b
+            )
         ]
 
 

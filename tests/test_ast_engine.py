@@ -1491,3 +1491,38 @@ class TestAstEngine(unittest.TestCase):
         self.assertEqual(len(occurrences), 1)
         self.assertEqual(occurrences[0]["line"], 14)
         self.assertEqual(occurrences[0]["code"], "myFunc(); // This is the actual call")
+
+    def test_trace_lexical_dependencies_regex_cpp_definition_keywords(self):
+        """Verify that class, struct, union, enum, and namespace are treated as definitions in C++."""
+        cpp_file = os.path.join(self.temp_dir.name, "defs.cpp")
+        content = (
+            "namespace myFunc {\n"
+            "  union myFunc {\n"
+            "    int val;\n"
+            "  };\n"
+            "  enum myFunc {\n"
+            "    A, B\n"
+            "  };\n"
+            "  struct myFunc {\n"
+            "    int a;\n"
+            "  };\n"
+            "  class myFunc {\n"
+            "  };\n"
+            "}\n"
+            "void test() {\n"
+            "  myFunc(); // Actual call\n"
+            "}\n"
+        )
+        with open(cpp_file, "w", encoding="utf-8") as f:
+            f.write(content)
+        self.cache.get_content(cpp_file)
+
+        callers = trace_lexical_dependencies_regex(
+            "myFunc", [cpp_file], file_cache=self.cache
+        )
+        self.assertIn(cpp_file, callers)
+        occurrences = callers[cpp_file]
+        # Only the actual call on line 15 should be matched
+        self.assertEqual(len(occurrences), 1)
+        self.assertEqual(occurrences[0]["line"], 15)
+        self.assertEqual(occurrences[0]["code"], "myFunc(); // Actual call")
