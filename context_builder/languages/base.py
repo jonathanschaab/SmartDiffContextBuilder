@@ -106,11 +106,15 @@ class LanguageProfile:
             escaped_end = re.escape(self.block_comment_end)
             # Match comments (group 'comment') or string literals (group 'string')
             # Group 3 is the quote character, Group 4 is the backslash check.
-            pattern = re.compile(
-                rf'(?P<comment>{escaped_start}.*?{escaped_end})|'
-                rf'(?P<string>(["\'`])(?:(?=(\\?))\4.)*?\3)',
-                re.DOTALL
-            )
+            parts = [
+                rf'(?P<comment>{escaped_start}.*?{escaped_end})',
+                r'(?P<string>(["\'`])(?:(?=(\\?))\4.)*?\3)'
+            ]
+            if self.line_comment:
+                escaped_line_comment = re.escape(self.line_comment)
+                parts.append(rf'(?P<line_comment>{escaped_line_comment}[^\n]*)')
+
+            pattern = re.compile('|'.join(parts), re.DOTALL)
             self._cached_block_comment_pattern = pattern
 
         def replacer(match):
