@@ -318,12 +318,17 @@ class TestLspClient(unittest.TestCase):
         ]
 
         mock_cache = MagicMock()
-        mock_cache.get_lines.return_value = ["def bar():\n"] * 10
+        mock_cache.get_lines.return_value = (
+            ["def bar():\n"] * 4 + ["def foo():\n"] + ["def bar():\n"] * 5
+        )
 
         with patch("os.path.exists", return_value=True), \
              patch("os.path.splitext", return_value=(".py", ".py")):
 
-            res = get_lsp_references("main.py", 5, "foo", timeout=5, max_depth=10, disable_pruning=False, file_cache=mock_cache)
+            res = get_lsp_references(
+                "main.py", 5, "foo", timeout=5, max_depth=10,
+                disable_pruning=False, file_cache=mock_cache
+            )
 
             self.assertIsNotNone(res)
             self.assertIn("foo.py", res)
@@ -522,11 +527,17 @@ class TestLspClient(unittest.TestCase):
         ]
 
         mock_file_cache = MagicMock()
-        mock_file_cache.get_lines.return_value = ["line 0", "line 1", "line 2"]
+        mock_file_cache.get_lines.return_value = ["void my_func() {}", "line 1", "line 2"]
 
         with patch("os.path.exists", return_value=True):
-            res = get_lsp_references("empty.cpp", 1, "my_func", 5.0, 100, False, file_cache=mock_file_cache)
-            path = os.path.relpath(url2pathname(urllib.parse.urlparse("file:///path/to/file.cpp").path), os.getcwd())
+            res = get_lsp_references(
+                "empty.cpp", 1, "my_func", 5.0, 100, False,
+                file_cache=mock_file_cache
+            )
+            parsed_path = url2pathname(
+                urllib.parse.urlparse("file:///path/to/file.cpp").path
+            )
+            path = os.path.relpath(parsed_path, os.getcwd())
             self.assertIn(path, res)
             self.assertEqual(len(res[path]), 2)
             self.assertEqual(res[path][0]["line"], 11)
@@ -545,8 +556,12 @@ class TestLspClient(unittest.TestCase):
         ]
 
         mock_file_cache = MagicMock()
+        mock_file_cache.get_lines.return_value = ["void my_func() {}"]
 
-        res = get_lsp_references("empty.cpp", 1, "my_func", 5.0, 100, False, file_cache=mock_file_cache)
+        res = get_lsp_references(
+            "empty.cpp", 1, "my_func", 5.0, 100, False,
+            file_cache=mock_file_cache
+        )
         self.assertEqual(res, {})
 
     @patch("context_builder.lsp_client.USE_LSP", True)
@@ -748,8 +763,12 @@ class TestLspClient(unittest.TestCase):
         ]
 
         mock_file_cache = MagicMock()
+        mock_file_cache.get_lines.return_value = ["void my_func() {}"]
 
-        res = get_lsp_references("empty.cpp", 1, "my_func", 5.0, 100, False, file_cache=mock_file_cache)
+        res = get_lsp_references(
+            "empty.cpp", 1, "my_func", 5.0, 100, False,
+            file_cache=mock_file_cache
+        )
         self.assertEqual(res, {})
 
     @patch("context_builder.lsp_client.LanguageClient")
@@ -1445,3 +1464,47 @@ class TestLspClient(unittest.TestCase):
             AST_ENGINE._initialized = orig_init
             AST_ENGINE.parsers = orig_parsers
             AST_ENGINE.languages = orig_languages
+
+    def test_find_lsp_func_start_character_fails_returns_minus_one(self):
+        lines = ["void bar() {}"]
+        actual_line, char_idx = _find_lsp_func_start_character(
+            lines,
+            line_num=1,
+            func_name="foo",
+            ext=".cpp",
+        )
+        self.assertEqual(actual_line, 1)
+        self.assertEqual(char_idx, -1)
+
+    @patch("context_builder.lsp_client.USE_LSP", True)
+    @patch("context_builder.lsp_client.get_language_profile")
+    @patch("context_builder.lsp_client._get_or_create_lsp_client")
+    @patch("context_builder.lsp_client.warn_once")
+    def test_get_lsp_references_aborts_when_char_idx_minus_one(
+        self, mock_warn, mock_get_client, mock_get_profile
+    ):
+        mock_profile = MagicMock()
+        mock_profile.lsp_command = ["clangd"]
+        mock_get_profile.return_value = mock_profile
+
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        file_cache = MagicMock()
+        file_cache.get_lines.return_value = ["void bar() {}"]
+
+        # Call get_lsp_references for "foo" which is not on the line
+        res = get_lsp_references(
+            file_path="dummy.cpp",
+            line_num=1,
+            func_name="foo",
+            timeout=5.0,
+            max_depth=10,
+            disable_pruning=False,
+            file_cache=file_cache,
+        )
+
+        self.assertIsNone(res)
+        mock_warn.assert_called_once()
+        # Ensure it didn't call the client to get references
+        mock_client.get_references.assert_not_called()

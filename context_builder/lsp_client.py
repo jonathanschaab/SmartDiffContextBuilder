@@ -751,7 +751,13 @@ def _find_lsp_func_start_character_regex(
 def _find_lsp_func_start_character(
     lines, line_num, func_name, ext=None, file_path=None, file_cache=None
 ):
-    """Scan line and decorators to find func name starting character index."""
+    """Scan line and decorators to find func name starting character index.
+
+    Returns:
+        tuple: (actual_line, char_idx) where char_idx is the UTF-16 character
+               offset of the function name, or -1 if the function name could not
+               be confidently located (signaling the caller to abort the LSP query).
+    """
     decorator_lookahead = 10
 
     # Try AST-based matching for C++ and Rust if tree-sitter is available and supported
@@ -769,7 +775,7 @@ def _find_lsp_func_start_character(
     if char_idx != -1:
         return actual_line, char_idx
 
-    return line_num, 0
+    return line_num, -1
 
 
 def _parse_single_lsp_reference(ref, file_cache):
@@ -871,6 +877,20 @@ def get_lsp_references(
         file_path=file_path,
         file_cache=file_cache,
     )
+
+    # If the character offset cannot be confidently located, we abort the LSP
+    # query. Querying the LSP at index 0 (which usually points to whitespace,
+    # indentation, access modifiers, or return types) causes slow queries
+    # and returns massive, incorrect references (contaminating context).
+    # Aborting here allows graph_tracer to safely fall back to lexical tracing.
+    if char_idx == -1:
+        warn_once(
+            f"lsp_abort_{func_name}_{file_path}",
+            f"Could not locate character offset for '{func_name}' in {file_path} "
+            f"on line {actual_line}. Aborting LSP query to prevent incorrect references; "
+            f"falling back to lexical analysis.",
+        )
+        return None
 
     print(f" [LSP] Querying {command[0]} for {func_name}() references...")
     refs = client.get_references(file_path, actual_line, char_idx, timeout=timeout)
