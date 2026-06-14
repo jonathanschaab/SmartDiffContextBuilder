@@ -35,7 +35,8 @@ class JavaScriptProfile(LanguageProfile):
             re.compile(
                 r'^\s*(?:async\s+|\*\s*|get\s+|set\s+|public\s+|private\s+|'
                 r'protected\s+|static\s+|readonly\s+)*' +
-                lead_b + escaped + trail_b + r'\s*(?:<[^>]+>)?\s*\([^)]*\)\s*(?::\s*[^{]+)?\{'
+                lead_b + escaped + trail_b +
+                r'\s*(?:<[^>]+>)?\s*\([^)]*\)\s*(?::\s*(?:[^{;]+|\{[^}]*\})*)?\{'
             ),
             re.compile(
                 r'^\s*(?:async\s+|\*\s*|get\s+|set\s+|public\s+|private\s+|'

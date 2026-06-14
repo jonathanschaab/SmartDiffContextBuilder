@@ -243,6 +243,29 @@ class TestAstEngine(unittest.TestCase):
         self.assertIn(file_path, callers)
         self.assertEqual([match["line"] for match in callers[file_path]], [3])
 
+    def test_trace_lexical_dependencies_regex_js_inline_object_returns(self):
+        code = (
+            "class MyClass {\n"
+            "  my_func(): { foo: string } {\n"
+            "    return { foo: 'bar' };\n"
+            "  }\n"
+            "  other_func(): Promise<{ foo: string }> {\n"
+            "    my_func();\n"
+            "    return Promise.resolve({ foo: 'baz' });\n"
+            "  }\n"
+            "}\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "inline_objects.ts")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        cache = LRUFileCache(capacity=5)
+        cache.get_content(file_path)
+
+        callers = trace_lexical_dependencies_regex("my_func", [file_path], file_cache=cache)
+        self.assertIn(file_path, callers)
+        self.assertEqual([match["line"] for match in callers[file_path]], [6])
+
     def test_extract_function_bounds_defensive(self):
         start, end = extract_function_bounds("some_file.py", 0, file_cache=self.cache)
         self.assertIsNone(start)
