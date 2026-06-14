@@ -688,6 +688,7 @@ def _find_lsp_func_start_character_ast(
                   name: [
                     (identifier) @func_name
                     (field_identifier) @func_name
+                    (destructor_name) @func_name
                   ]
                 )
               ]

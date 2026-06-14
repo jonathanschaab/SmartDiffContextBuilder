@@ -1291,6 +1291,54 @@ class TestLspClient(unittest.TestCase):
             AST_ENGINE.languages = orig_languages
 
     @patch("context_builder.ast_engine.HAS_TREESITTER", True)
+    def test_find_lsp_func_start_character_ast_matching_cpp_out_of_line_destructor(self):
+        from context_builder.ast_engine import AST_ENGINE
+
+        orig_init = AST_ENGINE._initialized
+        orig_parsers = AST_ENGINE.parsers.copy()
+        orig_languages = AST_ENGINE.languages.copy()
+        try:
+            AST_ENGINE._initialized = True
+            mock_parser = MagicMock()
+            mock_lang = MagicMock()
+            AST_ENGINE.parsers = {".cpp": mock_parser}
+            AST_ENGINE.languages = {".cpp": mock_lang}
+
+            mock_tree = MagicMock()
+            mock_parser.parse.return_value = mock_tree
+
+            mock_query = MagicMock()
+            mock_lang.query.return_value = mock_query
+
+            # MyClass::~MyClass()
+            mock_node = MagicMock()
+            mock_node.start_byte = 9
+            mock_node.end_byte = 17
+            mock_node.start_point = (0, 9)
+
+            mock_query.captures.return_value = [(mock_node, "func_name")]
+
+            lines = ["MyClass::~MyClass()"]
+            file_cache = MagicMock()
+            file_cache.get_bytes.return_value = b"MyClass::~MyClass()"
+
+            actual_line, char_idx = _find_lsp_func_start_character(
+                lines,
+                line_num=1,
+                func_name="~MyClass",
+                ext=".cpp",
+                file_path="dummy.cpp",
+                file_cache=file_cache,
+            )
+
+            self.assertEqual(actual_line, 1)
+            self.assertEqual(char_idx, 9)
+        finally:
+            AST_ENGINE._initialized = orig_init
+            AST_ENGINE.parsers = orig_parsers
+            AST_ENGINE.languages = orig_languages
+
+    @patch("context_builder.ast_engine.HAS_TREESITTER", True)
     def test_find_lsp_func_start_character_ast_matching_rust(self):
         from context_builder.ast_engine import AST_ENGINE
 
