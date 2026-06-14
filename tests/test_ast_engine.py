@@ -1552,3 +1552,32 @@ class TestAstEngine(unittest.TestCase):
         self.assertEqual(len(occurrences), 1)
         self.assertEqual(occurrences[0]["line"], 6)
         self.assertEqual(occurrences[0]["code"], "myFunc(); // Actual call")
+
+    def test_trace_lexical_dependencies_regex_rust_definition_keywords(self):
+        """Verify that Rust definition keywords are ignored during caller tracing."""
+        rs_file = os.path.join(self.temp_dir.name, "defs.rs")
+        content = (
+            "mod myFunc {\n"
+            "  struct myFunc {}\n"
+            "  enum myFunc {}\n"
+            "  union myFunc {}\n"
+            "  type myFunc = i32;\n"
+            "  trait myFunc {}\n"
+            "}\n"
+            "fn test() {\n"
+            "  myFunc(); // Actual call\n"
+            "}\n"
+        )
+        with open(rs_file, "w", encoding="utf-8") as f:
+            f.write(content)
+        self.cache.get_content(rs_file)
+
+        callers = trace_lexical_dependencies_regex(
+            "myFunc", [rs_file], file_cache=self.cache
+        )
+        self.assertIn(rs_file, callers)
+        occurrences = callers[rs_file]
+        # Only the actual call on line 9 should be matched
+        self.assertEqual(len(occurrences), 1)
+        self.assertEqual(occurrences[0]["line"], 9)
+        self.assertEqual(occurrences[0]["code"], "myFunc(); // Actual call")
