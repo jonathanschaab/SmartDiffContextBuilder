@@ -329,10 +329,8 @@ def trace_lexical_dependencies_regex(func_name, repo_files, file_cache=None):
     )
 
     lead_b = r'\b' if func_name[0].isalnum() or func_name[0] == '_' else ''
-    trail_b = r'\b' if func_name[-1].isalnum() or func_name[-1] == '_' else ''
     escaped_name = re.escape(func_name)
 
-    call_pattern = re.compile(lead_b + escaped_name + trail_b)
     profile_patterns_cache = {}
     def_cpp_pattern = re.compile(
         r'^\s*(?:[A-Za-z0-9_<>:]+(?:\s+\*?\s*)*)?' + lead_b + escaped_name + r'\s*\('
@@ -346,8 +344,11 @@ def trace_lexical_dependencies_regex(func_name, repo_files, file_cache=None):
         if profile is UNKNOWN_LANGUAGE or file_path.endswith('.md'):
             continue
         if profile.name not in profile_patterns_cache:
-            profile_patterns_cache[profile.name] = profile.get_definition_patterns(func_name)
-        def_patterns = profile_patterns_cache[profile.name]
+            profile_patterns_cache[profile.name] = (
+                profile.get_call_pattern(func_name),
+                profile.get_definition_patterns(func_name)
+            )
+        call_pattern, def_patterns = profile_patterns_cache[profile.name]
 
         content = file_cache.get_content(file_path)
         _process_regex_file(

@@ -88,3 +88,10 @@ class LanguageProfile:
             r'\b(?:fn|def|function|sub|func|class|macro)\s+' + lead_b + escaped + trail_b
         )
         return [pattern]
+
+    def get_call_pattern(self, func_name):
+        """Return a compiled regex pattern to identify a call to func_name."""
+        lead_b = r'\b' if func_name[0].isalnum() or func_name[0] == '_' else ''
+        trail_b = r'\b' if func_name[-1].isalnum() or func_name[-1] == '_' else ''
+        escaped = re.escape(func_name)
+        return re.compile(lead_b + escaped + trail_b)

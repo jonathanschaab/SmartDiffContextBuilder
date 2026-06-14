@@ -1413,3 +1413,35 @@ class TestAstEngine(unittest.TestCase):
         self.assertIn(cpp_file, callers)
         self.assertEqual(len(callers[cpp_file]), 1)
         self.assertEqual(callers[cpp_file][0]["line"], 2)
+
+    def test_trace_lexical_dependencies_regex_js_dollar_identifiers(self):
+        """Verify that JS/TS identifiers with $ are matched correctly without false positive substring matches."""
+        js_file = os.path.join(self.temp_dir.name, "dollar.js")
+        content = (
+            "const $init = () => {\n"
+            "  console.log('init');\n"
+            "};\n"
+            "class MyClass {\n"
+            "  $init() {\n"
+            "    console.log('class init');\n"
+            "  }\n"
+            "}\n"
+            "function test() {\n"
+            "  $init(); // Actual call\n"
+            "  legacy_$init(); // Substring, should NOT match\n"
+            "  $init_legacy(); // Substring, should NOT match\n"
+            "}\n"
+        )
+        with open(js_file, "w", encoding="utf-8") as f:
+            f.write(content)
+        self.cache.get_content(js_file)
+
+        callers = trace_lexical_dependencies_regex(
+            "$init", [js_file], file_cache=self.cache
+        )
+        self.assertIn(js_file, callers)
+        occurrences = callers[js_file]
+        # Only the actual call on line 10 should be matched
+        self.assertEqual(len(occurrences), 1)
+        self.assertEqual(occurrences[0]["line"], 10)
+        self.assertEqual(occurrences[0]["code"], "$init(); // Actual call")
