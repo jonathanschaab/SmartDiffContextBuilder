@@ -23,8 +23,15 @@ class CFamilyProfile(LanguageProfile):
         escaped = re.escape(func_name)
         return [
             re.compile(
-                r'\b(?:class|struct|union|enum|namespace|using)\s+'
+                r'\b(?:class|struct|union|enum)\s+'
                 + lead_b + escaped + trail_b
+            ),
+            re.compile(
+                r'\b(?<!\busing\s)(?<!\busing\s\s)(?<!\busing\s\s\s)namespace\s+'
+                + lead_b + escaped + trail_b
+            ),
+            re.compile(
+                r'\busing\s+' + lead_b + escaped + trail_b + r'\s*='
             ),
             re.compile(
                 r'\btypedef\b[^;]+' + lead_b + escaped + trail_b

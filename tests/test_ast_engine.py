@@ -352,6 +352,30 @@ class TestAstEngine(unittest.TestCase):
         # Only line 5 is the actual caller. The reference on line 3 is inside the comment.
         self.assertEqual([match["line"] for match in callers[file_path]], [5])
 
+    def test_trace_lexical_dependencies_regex_block_comments_in_strings(self):
+        code = (
+            "const commentStart = \"/*\";\n"
+            "my_func(); // 2: Should be matched, not stripped!\n"
+            "const commentEnd = \"*/\";\n"
+            "/*\n"
+            "  const myStr = \"hello\";\n"
+            "  my_func(); // 6: Inside comment, should be ignored\n"
+            "*/\n"
+            "my_func(); // 8: Should be matched\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "comments_in_strings.js")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        cache = LRUFileCache(capacity=5)
+        cache.get_content(file_path)
+
+        callers = trace_lexical_dependencies_regex("my_func", [file_path], file_cache=cache)
+        self.assertIn(file_path, callers)
+        # Lines 2 and 8 are actual callers.
+        # Line 6 is inside a block comment and should be ignored.
+        self.assertEqual([match["line"] for match in callers[file_path]], [2, 8])
+
     def test_extract_function_bounds_defensive(self):
         start, end = extract_function_bounds("some_file.py", 0, file_cache=self.cache)
         self.assertIsNone(start)
@@ -1647,7 +1671,7 @@ class TestAstEngine(unittest.TestCase):
         self.assertEqual(occurrences[0]["code"], "myFunc(); // This is the actual call")
 
     def test_trace_lexical_dependencies_regex_cpp_definition_keywords(self):
-        """Verify that class, struct, union, enum, and namespace are treated as definitions in C++."""
+        """Verify that class, struct, union, enum, namespace, and using are treated as definitions in C++."""
         cpp_file = os.path.join(self.temp_dir.name, "defs.cpp")
         content = (
             "namespace myFunc {\n"
@@ -1662,8 +1686,10 @@ class TestAstEngine(unittest.TestCase):
             "  };\n"
             "  class myFunc {\n"
             "  };\n"
+            "  using myFunc = int;\n"
             "}\n"
             "void test() {\n"
+            "  using namespace myFunc; // This is a reference, should be matched!\n"
             "  myFunc(); // Actual call\n"
             "}\n"
         )
@@ -1676,10 +1702,12 @@ class TestAstEngine(unittest.TestCase):
         )
         self.assertIn(cpp_file, callers)
         occurrences = callers[cpp_file]
-        # Only the actual call on line 15 should be matched
-        self.assertEqual(len(occurrences), 1)
-        self.assertEqual(occurrences[0]["line"], 15)
-        self.assertEqual(occurrences[0]["code"], "myFunc(); // Actual call")
+        # Lines 16 (using namespace myFunc;) and 17 (myFunc();) should be matched
+        self.assertEqual(len(occurrences), 2)
+        self.assertEqual(occurrences[0]["line"], 16)
+        self.assertEqual(occurrences[0]["code"], "using namespace myFunc; // This is a reference, should be matched!")
+        self.assertEqual(occurrences[1]["line"], 17)
+        self.assertEqual(occurrences[1]["code"], "myFunc(); // Actual call")
 
     def test_trace_lexical_dependencies_regex_go_type_definitions(self):
         """Verify that Go type definitions (structs, interfaces) are ignored during caller tracing."""

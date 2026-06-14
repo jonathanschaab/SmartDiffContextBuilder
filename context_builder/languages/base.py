@@ -104,10 +104,21 @@ class LanguageProfile:
         if pattern is None:
             escaped_start = re.escape(self.block_comment_start)
             escaped_end = re.escape(self.block_comment_end)
-            pattern = re.compile(escaped_start + r'.*?' + escaped_end, re.DOTALL)
+            # Match comments (group 'comment') or string literals (group 'string')
+            # Group 3 is the quote character, Group 4 is the backslash check.
+            pattern = re.compile(
+                rf'(?P<comment>{escaped_start}.*?{escaped_end})|'
+                rf'(?P<string>(["\'`])(?:(?=(\\?))\4.)*?\3)',
+                re.DOTALL
+            )
             self._cached_block_comment_pattern = pattern
 
-        return pattern.sub(lambda m: '\n' * m.group(0).count('\n'), content)
+        def replacer(match):
+            if match.group("comment") is not None:
+                return "\n" * match.group("comment").count("\n")
+            return match.group(0)
+
+        return pattern.sub(replacer, content)
 
     def get_definition_patterns(self, func_name):
         """Return a list of compiled regex patterns to identify a definition of func_name."""
