@@ -769,7 +769,7 @@ def _find_lsp_func_start_character(
     if char_idx != -1:
         return actual_line, char_idx
 
-    return line_num, 0
+    return line_num, -1
 
 
 def _parse_single_lsp_reference(ref, file_cache):
@@ -871,6 +871,15 @@ def get_lsp_references(
         file_path=file_path,
         file_cache=file_cache,
     )
+
+    if char_idx == -1:
+        warn_once(
+            f"lsp_abort_{func_name}_{file_path}",
+            f"Could not locate character offset for '{func_name}' in {file_path} "
+            f"on line {actual_line}. Aborting LSP query to prevent incorrect references; "
+            f"falling back to lexical analysis.",
+        )
+        return None
 
     print(f" [LSP] Querying {command[0]} for {func_name}() references...")
     refs = client.get_references(file_path, actual_line, char_idx, timeout=timeout)
