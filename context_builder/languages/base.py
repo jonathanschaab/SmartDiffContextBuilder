@@ -34,6 +34,7 @@ class LanguageProfile:
     lsp_command = None
     test_query = None
     tests_can_share_source_file = False
+    _cached_block_comment_pattern = None
 
     @staticmethod
     def strip_string_literals(line):
@@ -97,9 +98,14 @@ class LanguageProfile:
             or not self.block_comment_end
         ):
             return content
-        escaped_start = re.escape(self.block_comment_start)
-        escaped_end = re.escape(self.block_comment_end)
-        pattern = re.compile(escaped_start + r'.*?' + escaped_end, re.DOTALL)
+
+        pattern = getattr(self, "_cached_block_comment_pattern", None)
+        if pattern is None:
+            escaped_start = re.escape(self.block_comment_start)
+            escaped_end = re.escape(self.block_comment_end)
+            pattern = re.compile(escaped_start + r'.*?' + escaped_end, re.DOTALL)
+            self._cached_block_comment_pattern = pattern
+
         return pattern.sub(lambda m: '\n' * m.group(0).count('\n'), content)
 
     def get_definition_patterns(self, func_name):
