@@ -23,7 +23,10 @@ class JavaScriptProfile(LanguageProfile):
         lead_b, trail_b = self._get_boundaries(func_name)
         escaped = re.escape(func_name)
         return [
-            re.compile(r'\b(?:function|class)\s+' + lead_b + escaped + trail_b),
+            re.compile(
+                r'\b(?:function|class|interface|type|const|let|var)\s+'
+                + lead_b + escaped + trail_b
+            ),
             re.compile(
                 lead_b + escaped + trail_b +
                 r'\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z0-9_$]+)\s*=>'
@@ -32,6 +35,11 @@ class JavaScriptProfile(LanguageProfile):
                 r'^\s*(?:async\s+|\*\s*|get\s+|set\s+|public\s+|private\s+|'
                 r'protected\s+|static\s+|readonly\s+)*' +
                 lead_b + escaped + trail_b + r'\s*\([^)]*\)\s*(?::\s*[^{]+)?\{'
+            ),
+            re.compile(
+                r'^\s*(?:async\s+|\*\s*|get\s+|set\s+|public\s+|private\s+|'
+                r'protected\s+|static\s+|readonly\s+)+' +
+                lead_b + escaped + trail_b + r'\s*\('
             ),
         ]
 

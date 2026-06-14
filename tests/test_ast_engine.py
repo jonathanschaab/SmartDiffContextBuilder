@@ -1458,3 +1458,36 @@ class TestAstEngine(unittest.TestCase):
             "", [py_file], file_cache=self.cache
         )
         self.assertEqual(callers, {})
+
+    def test_trace_lexical_dependencies_regex_js_multiline_and_ts_definitions(self):
+        """Verify that multiline signatures, var/const declarations, and TS types/interfaces are not treated as calls."""
+        ts_file = os.path.join(self.temp_dir.name, "app.ts")
+        content = (
+            "interface myFunc {\n"
+            "  name: string;\n"
+            "}\n"
+            "type myFunc = () => void;\n"
+            "const myFunc =\n"
+            "  (x) => x;\n"
+            "class MyClass {\n"
+            "  public static async myFunc(\n"
+            "    a: number,\n"
+            "    b: number\n"
+            "  ): Promise<void> {\n"
+            "  }\n"
+            "}\n"
+            "myFunc(); // This is the actual call\n"
+        )
+        with open(ts_file, "w", encoding="utf-8") as f:
+            f.write(content)
+        self.cache.get_content(ts_file)
+
+        callers = trace_lexical_dependencies_regex(
+            "myFunc", [ts_file], file_cache=self.cache
+        )
+        self.assertIn(ts_file, callers)
+        occurrences = callers[ts_file]
+        # Only the actual call on line 14 should be matched
+        self.assertEqual(len(occurrences), 1)
+        self.assertEqual(occurrences[0]["line"], 14)
+        self.assertEqual(occurrences[0]["code"], "myFunc(); // This is the actual call")
