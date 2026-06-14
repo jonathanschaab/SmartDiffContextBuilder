@@ -86,6 +86,22 @@ class LanguageProfile:
         trail_b = r'\b' if func_name[-1].isalnum() or func_name[-1] == '_' else ''
         return lead_b, trail_b
 
+    def strip_block_comments(self, content):
+        """Remove block comments from content.
+
+        Replaces them with newlines to preserve line count.
+        """
+        if (
+            not self.supports_block_comments
+            or not self.block_comment_start
+            or not self.block_comment_end
+        ):
+            return content
+        escaped_start = re.escape(self.block_comment_start)
+        escaped_end = re.escape(self.block_comment_end)
+        pattern = re.compile(escaped_start + r'.*?' + escaped_end, re.DOTALL)
+        return pattern.sub(lambda m: '\n' * m.group(0).count('\n'), content)
+
     def get_definition_patterns(self, func_name):
         """Return a list of compiled regex patterns to identify a definition of func_name."""
         lead_b, trail_b = self._get_boundaries(func_name)

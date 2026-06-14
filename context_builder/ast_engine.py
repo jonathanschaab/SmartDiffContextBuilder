@@ -296,6 +296,7 @@ def _process_regex_file(
     callers,
 ):
     """Search regex patterns within a single file."""
+    content = profile.strip_block_comments(content)
     if call_pattern.search(content):
         for idx, line in enumerate(content.splitlines()):
             if not call_pattern.search(line):

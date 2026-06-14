@@ -332,6 +332,26 @@ class TestAstEngine(unittest.TestCase):
         # Only line 8 is the actual caller.
         self.assertEqual([match["line"] for match in callers[file_path]], [8])
 
+    def test_trace_lexical_dependencies_regex_multiline_block_comments(self):
+        code = (
+            "/*\n"
+            "  This is a multiline comment block\n"
+            "  my_func(); // Inside comment, should be ignored\n"
+            "*/\n"
+            "my_func(); // This is the actual call\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "comments.js")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        cache = LRUFileCache(capacity=5)
+        cache.get_content(file_path)
+
+        callers = trace_lexical_dependencies_regex("my_func", [file_path], file_cache=cache)
+        self.assertIn(file_path, callers)
+        # Only line 5 is the actual caller. The reference on line 3 is inside the comment.
+        self.assertEqual([match["line"] for match in callers[file_path]], [5])
+
     def test_extract_function_bounds_defensive(self):
         start, end = extract_function_bounds("some_file.py", 0, file_cache=self.cache)
         self.assertIsNone(start)
