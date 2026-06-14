@@ -1445,3 +1445,16 @@ class TestAstEngine(unittest.TestCase):
         self.assertEqual(len(occurrences), 1)
         self.assertEqual(occurrences[0]["line"], 10)
         self.assertEqual(occurrences[0]["code"], "$init(); // Actual call")
+
+    def test_trace_lexical_dependencies_regex_empty_func_name(self):
+        """Verify that trace_lexical_dependencies_regex handles empty function names gracefully without IndexError."""
+        py_file = os.path.join(self.temp_dir.name, "empty_func.py")
+        with open(py_file, "w", encoding="utf-8") as f:
+            f.write("def foo():\n    pass\n")
+        self.cache.get_content(py_file)
+
+        # Call with empty string
+        callers = trace_lexical_dependencies_regex(
+            "", [py_file], file_cache=self.cache
+        )
+        self.assertEqual(callers, {})

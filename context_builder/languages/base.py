@@ -78,10 +78,17 @@ class LanguageProfile:
 
         return f"block_lines_{start}_{end}"
 
-    def get_definition_patterns(self, func_name):
-        """Return a list of compiled regex patterns to identify a definition of func_name."""
+    def _get_boundaries(self, func_name):
+        """Return the regex boundary patterns (lead_b, trail_b) for func_name."""
+        if not func_name:
+            return '', ''
         lead_b = r'\b' if func_name[0].isalnum() or func_name[0] == '_' else ''
         trail_b = r'\b' if func_name[-1].isalnum() or func_name[-1] == '_' else ''
+        return lead_b, trail_b
+
+    def get_definition_patterns(self, func_name):
+        """Return a list of compiled regex patterns to identify a definition of func_name."""
+        lead_b, trail_b = self._get_boundaries(func_name)
         escaped = re.escape(func_name)
         # Default fallback/generic definition keywords
         pattern = re.compile(
@@ -91,7 +98,6 @@ class LanguageProfile:
 
     def get_call_pattern(self, func_name):
         """Return a compiled regex pattern to identify a call to func_name."""
-        lead_b = r'\b' if func_name[0].isalnum() or func_name[0] == '_' else ''
-        trail_b = r'\b' if func_name[-1].isalnum() or func_name[-1] == '_' else ''
+        lead_b, trail_b = self._get_boundaries(func_name)
         escaped = re.escape(func_name)
         return re.compile(lead_b + escaped + trail_b)

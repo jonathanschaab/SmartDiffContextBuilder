@@ -11,19 +11,16 @@ class JavaScriptProfile(LanguageProfile):
     name = "javascript"
     extensions = frozenset({".js"})
 
+    def _get_boundaries(self, func_name):
+        """Return the JS/TS specific regex boundary patterns (lead_b, trail_b) for func_name."""
+        if not func_name:
+            return '', ''
+        lead_b = r'(?<![$_a-zA-Z0-9])' if func_name[0].isalnum() or func_name[0] in '$_' else ''
+        trail_b = r'(?![$_a-zA-Z0-9])' if func_name[-1].isalnum() or func_name[-1] in '$_' else ''
+        return lead_b, trail_b
+
     def get_definition_patterns(self, func_name):
-        # Create a strict custom left boundary using a fixed-width negative lookbehind
-        if func_name[0].isalnum() or func_name[0] in '$_':
-            lead_b = r'(?<![$_a-zA-Z0-9])'
-        else:
-            lead_b = ''
-
-        # Create a strict custom right boundary using a negative lookahead
-        if func_name[-1].isalnum() or func_name[-1] in '$_':
-            trail_b = r'(?![$_a-zA-Z0-9])'
-        else:
-            trail_b = ''
-
+        lead_b, trail_b = self._get_boundaries(func_name)
         escaped = re.escape(func_name)
         return [
             re.compile(r'\b(?:function|class)\s+' + lead_b + escaped + trail_b),
@@ -39,18 +36,7 @@ class JavaScriptProfile(LanguageProfile):
         ]
 
     def get_call_pattern(self, func_name):
-        # Create a strict custom left boundary using a fixed-width negative lookbehind
-        if func_name[0].isalnum() or func_name[0] in '$_':
-            lead_b = r'(?<![$_a-zA-Z0-9])'
-        else:
-            lead_b = ''
-
-        # Create a strict custom right boundary using a negative lookahead
-        if func_name[-1].isalnum() or func_name[-1] in '$_':
-            trail_b = r'(?![$_a-zA-Z0-9])'
-        else:
-            trail_b = ''
-
+        lead_b, trail_b = self._get_boundaries(func_name)
         escaped = re.escape(func_name)
         return re.compile(lead_b + escaped + trail_b)
 

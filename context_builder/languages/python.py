@@ -21,8 +21,7 @@ class PythonProfile(LanguageProfile):
     )
 
     def get_definition_patterns(self, func_name):
-        lead_b = r'\b' if func_name[0].isalnum() or func_name[0] == '_' else ''
-        trail_b = r'\b' if func_name[-1].isalnum() or func_name[-1] == '_' else ''
+        lead_b, trail_b = self._get_boundaries(func_name)
         escaped = re.escape(func_name)
         return [
             re.compile(r'\b(?:def|class)\s+' + lead_b + escaped + trail_b),
