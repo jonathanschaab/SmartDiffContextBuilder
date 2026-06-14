@@ -30,7 +30,8 @@ class JavaScriptProfile(LanguageProfile):
             ),
             re.compile(
                 lead_b + escaped + trail_b +
-                r'\s*[=:]\s*(?:async\s*)?(?:<[^>]+>)?\s*(?:\([^)]*\)|[A-Za-z0-9_$]+)\s*=>'
+                r'\s*[=:]\s*(?:async\s*)?(?:<[^>]+>)?\s*(?:\([^)]*\)|[A-Za-z0-9_$]+)'
+                r'\s*(?::\s*(?:[^{=;]|\{[^}]*\})*)?\s*=>'
             ),
             re.compile(
                 r'^\s*(?:async\s+|\*\s*|get\s+|set\s+|public\s+|private\s+|'

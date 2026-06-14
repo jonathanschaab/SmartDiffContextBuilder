@@ -1513,6 +1513,8 @@ class TestAstEngine(unittest.TestCase):
             "const myFunc = () => {\n"
             "  console.log('arrow');\n"
             "};\n"
+            "const myFunc = (x: number): number => { return x; };\n"
+            "const myFunc = (x: number): Promise<{ a: number }> => { return x; };\n"
             "class Controller {\n"
             "  async myFunc(arg) {\n"
             "    console.log(arg);\n"
@@ -1537,9 +1539,9 @@ class TestAstEngine(unittest.TestCase):
         )
         self.assertIn(js_file, callers)
         occurrences = callers[js_file]
-        # Only the actual call on line 17 should be matched
+        # Only the actual call on line 19 should be matched
         self.assertEqual(len(occurrences), 1)
-        self.assertEqual(occurrences[0]["line"], 17)
+        self.assertEqual(occurrences[0]["line"], 19)
         self.assertEqual(occurrences[0]["code"], "myFunc(); // This is the actual caller")
 
     def test_trace_lexical_dependencies_regex_no_cross_language_keyword_collisions(self):
