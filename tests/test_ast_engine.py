@@ -1526,3 +1526,29 @@ class TestAstEngine(unittest.TestCase):
         self.assertEqual(len(occurrences), 1)
         self.assertEqual(occurrences[0]["line"], 15)
         self.assertEqual(occurrences[0]["code"], "myFunc(); // Actual call")
+
+    def test_trace_lexical_dependencies_regex_go_type_definitions(self):
+        """Verify that Go type definitions (structs, interfaces) are ignored during caller tracing."""
+        go_file = os.path.join(self.temp_dir.name, "types.go")
+        content = (
+            "package main\n"
+            "type myFunc struct {}\n"
+            "type myFunc interface {}\n"
+            "type myFunc int\n"
+            "func test() {\n"
+            "  myFunc(); // Actual call\n"
+            "}\n"
+        )
+        with open(go_file, "w", encoding="utf-8") as f:
+            f.write(content)
+        self.cache.get_content(go_file)
+
+        callers = trace_lexical_dependencies_regex(
+            "myFunc", [go_file], file_cache=self.cache
+        )
+        self.assertIn(go_file, callers)
+        occurrences = callers[go_file]
+        # Only the actual call on line 6 should be matched
+        self.assertEqual(len(occurrences), 1)
+        self.assertEqual(occurrences[0]["line"], 6)
+        self.assertEqual(occurrences[0]["code"], "myFunc(); // Actual call")
