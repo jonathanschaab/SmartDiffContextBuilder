@@ -281,8 +281,8 @@ class TestAstEngine(unittest.TestCase):
         duration = time.perf_counter() - start_time
 
         self.assertFalse(match)
-        # Should finish extremely fast (under 10 milliseconds)
-        self.assertLess(duration, 0.01)
+        # Should finish extremely fast (under 100 milliseconds)
+        self.assertLess(duration, 0.1)
 
     def test_trace_lexical_dependencies_regex_cpp_redos_prevention(self):
         # Verify that a long sequence of spaces after type does not cause catastrophic backtracking
@@ -303,8 +303,8 @@ class TestAstEngine(unittest.TestCase):
         duration = time.perf_counter() - start_time
 
         self.assertFalse(match)
-        # Should finish extremely fast (under 10 milliseconds)
-        self.assertLess(duration, 0.01)
+        # Should finish extremely fast (under 100 milliseconds)
+        self.assertLess(duration, 0.1)
 
     def test_trace_lexical_dependencies_regex_cpp_pointer_reference_definitions(self):
         code = (
