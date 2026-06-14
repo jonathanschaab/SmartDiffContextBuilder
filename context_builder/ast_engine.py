@@ -291,7 +291,7 @@ def _process_regex_file(
     content,
     profile,
     call_pattern,
-    def_keyword_pattern,
+    def_patterns,
     def_cpp_pattern,
     callers,
 ):
@@ -301,7 +301,7 @@ def _process_regex_file(
             clean_line = profile.strip_strings_and_comments(line)
             if call_pattern.search(clean_line):
                 is_def = False
-                if def_keyword_pattern.search(clean_line):
+                if any(p.search(clean_line) for p in def_patterns):
                     is_def = True
                 elif (
                     profile.uses_c_style_definitions
@@ -333,9 +333,7 @@ def trace_lexical_dependencies_regex(func_name, repo_files, file_cache=None):
     escaped_name = re.escape(func_name)
 
     call_pattern = re.compile(lead_b + escaped_name + trail_b)
-    def_keyword_pattern = re.compile(
-        r'\b(?:fn|def|function|sub|func|class|macro)\s+' + lead_b + escaped_name + trail_b
-    )
+    profile_patterns_cache = {}
     def_cpp_pattern = re.compile(
         r'^\s*(?:[A-Za-z0-9_<>:]+(?:\s+\*?\s*)*)?' + lead_b + escaped_name + r'\s*\('
     )
@@ -347,13 +345,17 @@ def trace_lexical_dependencies_regex(func_name, repo_files, file_cache=None):
         profile = get_language_profile(file_path)
         if profile is UNKNOWN_LANGUAGE or file_path.endswith('.md'):
             continue
+        if profile.name not in profile_patterns_cache:
+            profile_patterns_cache[profile.name] = profile.get_definition_patterns(func_name)
+        def_patterns = profile_patterns_cache[profile.name]
+
         content = file_cache.get_content(file_path)
         _process_regex_file(
             file_path,
             content,
             profile,
             call_pattern,
-            def_keyword_pattern,
+            def_patterns,
             def_cpp_pattern,
             callers,
         )

@@ -1358,3 +1358,58 @@ class TestAstEngine(unittest.TestCase):
         lines = text.splitlines()
         self.assertEqual(len(lines), 6)
         self.assertEqual(lines[-1], "        # ... [Data Structure Omitted] ...")
+
+    def test_trace_lexical_dependencies_regex_js_definitions(self):
+        """Verify JS/TS definitions (arrow functions, shorthands) are not treated as callers."""
+        js_file = os.path.join(self.temp_dir.name, "app.js")
+        content = (
+            "const myFunc = () => {\n"
+            "  console.log('arrow');\n"
+            "};\n"
+            "class Controller {\n"
+            "  async myFunc(arg) {\n"
+            "    console.log(arg);\n"
+            "  }\n"
+            "}\n"
+            "function myFunc() {\n"
+            "  return 42;\n"
+            "}\n"
+            "myFunc(); // This is the actual caller\n"
+        )
+        with open(js_file, "w", encoding="utf-8") as f:
+            f.write(content)
+        self.cache.get_content(js_file)
+
+        callers = trace_lexical_dependencies_regex(
+            "myFunc", [js_file], file_cache=self.cache
+        )
+        self.assertIn(js_file, callers)
+        occurrences = callers[js_file]
+        # Only the actual call on line 12 should be matched
+        self.assertEqual(len(occurrences), 1)
+        self.assertEqual(occurrences[0]["line"], 12)
+        self.assertEqual(occurrences[0]["code"], "myFunc(); // This is the actual caller")
+
+    def test_trace_lexical_dependencies_regex_no_cross_language_keyword_collisions(self):
+        """Verify keyword definition checks are scoped to language profiles."""
+        py_file = os.path.join(self.temp_dir.name, "script.py")
+        cpp_file = os.path.join(self.temp_dir.name, "source.cpp")
+
+        # In Python, def is a definition
+        with open(py_file, "w", encoding="utf-8") as f:
+            f.write("def my_func():\n    pass\n")
+        self.cache.get_content(py_file)
+
+        # In C++, def is not a definition, so "def my_func()" is a call
+        with open(cpp_file, "w", encoding="utf-8") as f:
+            f.write("void test() {\n    def my_func();\n}\n")
+        self.cache.get_content(cpp_file)
+
+        # Tracing my_func should find it in cpp_file but NOT in py_file
+        callers = trace_lexical_dependencies_regex(
+            "my_func", [py_file, cpp_file], file_cache=self.cache
+        )
+        self.assertNotIn(py_file, callers)
+        self.assertIn(cpp_file, callers)
+        self.assertEqual(len(callers[cpp_file]), 1)
+        self.assertEqual(callers[cpp_file][0]["line"], 2)

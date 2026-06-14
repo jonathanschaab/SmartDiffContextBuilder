@@ -77,3 +77,14 @@ class LanguageProfile:
                 return name
 
         return f"block_lines_{start}_{end}"
+
+    def get_definition_patterns(self, func_name):
+        """Return a list of compiled regex patterns to identify a definition of func_name."""
+        lead_b = r'\b' if func_name[0].isalnum() or func_name[0] == '_' else ''
+        trail_b = r'\b' if func_name[-1].isalnum() or func_name[-1] == '_' else ''
+        escaped = re.escape(func_name)
+        # Default fallback/generic definition keywords
+        pattern = re.compile(
+            r'\b(?:fn|def|function|sub|func|class|macro)\s+' + lead_b + escaped + trail_b
+        )
+        return [pattern]
