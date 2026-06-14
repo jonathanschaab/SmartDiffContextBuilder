@@ -100,7 +100,7 @@ class LanguageProfile:
         ):
             return content
 
-        pattern = getattr(self, "_cached_block_comment_pattern", None)
+        pattern = self._cached_block_comment_pattern
         if pattern is None:
             escaped_start = re.escape(self.block_comment_start)
             escaped_end = re.escape(self.block_comment_end)
