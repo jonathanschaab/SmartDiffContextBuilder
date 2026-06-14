@@ -1617,3 +1617,71 @@ class TestAstEngine(unittest.TestCase):
             "anotherGeneric", [ts_file], file_cache=self.cache
         )
         self.assertEqual(callers, {})
+
+    def test_trace_lexical_dependencies_regex_advanced_definition_variants(self):
+        """Verify that JS object properties, TS type arrows, Go anonymous function assignments, and C++ using/typedefs are ignored as definitions."""
+        js_file = os.path.join(self.temp_dir.name, "object_prop.js")
+        go_file = os.path.join(self.temp_dir.name, "assign.go")
+        cpp_file = os.path.join(self.temp_dir.name, "types_cpp.cpp")
+
+        # 1. JS/TS Object property & Type arrows
+        js_content = (
+            "const obj = {\n"
+            "  myFunc: (a, b) => {\n"
+            "    console.log(a);\n"
+            "  }\n"
+            "};\n"
+            "type Handler = {\n"
+            "  myFunc: (arg: number) => void;\n"
+            "}\n"
+            "myFunc(); // Actual call\n"
+        )
+        with open(js_file, "w", encoding="utf-8") as f:
+            f.write(js_content)
+        self.cache.get_content(js_file)
+
+        # 2. Go Anonymous function assignment
+        go_content = (
+            "package main\n"
+            "var myFunc = func() {}\n"
+            "func main() {\n"
+            "  myFunc := func(x int) {}\n"
+            "  myFunc() // Actual call\n"
+            "}\n"
+        )
+        with open(go_file, "w", encoding="utf-8") as f:
+            f.write(go_content)
+        self.cache.get_content(go_file)
+
+        # 3. C/C++ typedef and using
+        cpp_content = (
+            "using myFunc = void(*)(int);\n"
+            "typedef void (*myFunc)(int);\n"
+            "typedef struct {\n"
+            "  int x;\n"
+            "} myFunc;\n"
+            "void test() {\n"
+            "  myFunc(); // Actual call\n"
+            "}\n"
+        )
+        with open(cpp_file, "w", encoding="utf-8") as f:
+            f.write(cpp_content)
+        self.cache.get_content(cpp_file)
+
+        # Trace JS
+        js_callers = trace_lexical_dependencies_regex("myFunc", [js_file], file_cache=self.cache)
+        self.assertIn(js_file, js_callers)
+        self.assertEqual(len(js_callers[js_file]), 1)
+        self.assertEqual(js_callers[js_file][0]["line"], 9)
+
+        # Trace Go
+        go_callers = trace_lexical_dependencies_regex("myFunc", [go_file], file_cache=self.cache)
+        self.assertIn(go_file, go_callers)
+        self.assertEqual(len(go_callers[go_file]), 1)
+        self.assertEqual(go_callers[go_file][0]["line"], 5)
+
+        # Trace CPP
+        cpp_callers = trace_lexical_dependencies_regex("myFunc", [cpp_file], file_cache=self.cache)
+        self.assertIn(cpp_file, cpp_callers)
+        self.assertEqual(len(cpp_callers[cpp_file]), 1)
+        self.assertEqual(cpp_callers[cpp_file][0]["line"], 7)
