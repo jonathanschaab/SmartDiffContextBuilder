@@ -360,11 +360,13 @@ class TestAstEngine(unittest.TestCase):
             "// This is a comment /*\n"
             "my_func(); // 5: Should be matched, not stripped by the line comment above!\n"
             "// */\n"
+            "/* block */ my_func(); // 7: Mid-line block comment with trailing line comment, should match!\n"
+            "// This is a \"string\" my_func(); // 8: Apparent string in line comment, should be ignored!\n"
             "/*\n"
             "  const myStr = \"hello\";\n"
-            "  my_func(); // 9: Inside comment, should be ignored\n"
+            "  my_func(); // 11: Inside block comment, should be ignored\n"
             "*/\n"
-            "my_func(); // 11: Should be matched\n"
+            "my_func(); // 13: Should be matched\n"
         )
         file_path = os.path.join(self.temp_dir.name, "comments_in_strings.js")
         with open(file_path, "w", encoding="utf-8") as f:
@@ -375,9 +377,9 @@ class TestAstEngine(unittest.TestCase):
 
         callers = trace_lexical_dependencies_regex("my_func", [file_path], file_cache=cache)
         self.assertIn(file_path, callers)
-        # Lines 2, 5, and 11 are actual callers.
-        # Line 9 is inside a block comment and should be ignored.
-        self.assertEqual([match["line"] for match in callers[file_path]], [2, 5, 11])
+        # Lines 2, 5, 7, and 13 are actual callers.
+        # Lines 8 and 11 are inside comments and should be ignored.
+        self.assertEqual([match["line"] for match in callers[file_path]], [2, 5, 7, 13])
 
     def test_extract_function_bounds_defensive(self):
         start, end = extract_function_bounds("some_file.py", 0, file_cache=self.cache)
