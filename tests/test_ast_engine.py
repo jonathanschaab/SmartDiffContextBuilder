@@ -1581,3 +1581,39 @@ class TestAstEngine(unittest.TestCase):
         self.assertEqual(len(occurrences), 1)
         self.assertEqual(occurrences[0]["line"], 9)
         self.assertEqual(occurrences[0]["code"], "myFunc(); // Actual call")
+
+    def test_trace_lexical_dependencies_regex_ts_generics(self):
+        """Verify that TS definitions with generic type parameters are ignored during caller tracing."""
+        ts_file = os.path.join(self.temp_dir.name, "generics.ts")
+        content = (
+            "const myFunc = <T>(arg: T): T => arg;\n"
+            "class MyClass {\n"
+            "  myFunc<T>(arg: T): T {\n"
+            "    return arg;\n"
+            "  }\n"
+            "  async anotherGeneric<T>(\n"
+            "    x: T\n"
+            "  ) {}\n"
+            "}\n"
+            "myFunc(); // Actual call\n"
+        )
+        with open(ts_file, "w", encoding="utf-8") as f:
+            f.write(content)
+        self.cache.get_content(ts_file)
+
+        # Trace myFunc
+        callers = trace_lexical_dependencies_regex(
+            "myFunc", [ts_file], file_cache=self.cache
+        )
+        self.assertIn(ts_file, callers)
+        occurrences = callers[ts_file]
+        # Only the actual call on line 10 should be matched
+        self.assertEqual(len(occurrences), 1)
+        self.assertEqual(occurrences[0]["line"], 10)
+        self.assertEqual(occurrences[0]["code"], "myFunc(); // Actual call")
+
+        # Trace anotherGeneric (should have 0 callers because line 6 is a definition)
+        callers = trace_lexical_dependencies_regex(
+            "anotherGeneric", [ts_file], file_cache=self.cache
+        )
+        self.assertEqual(callers, {})
