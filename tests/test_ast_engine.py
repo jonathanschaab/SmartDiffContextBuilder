@@ -266,6 +266,24 @@ class TestAstEngine(unittest.TestCase):
         self.assertIn(file_path, callers)
         self.assertEqual([match["line"] for match in callers[file_path]], [6])
 
+    def test_trace_lexical_dependencies_regex_js_redos_prevention(self):
+        # Verify that a long string without a trailing '{' does not cause catastrophic backtracking
+        from context_builder.languages.javascript import JAVASCRIPT
+        import time
+
+        patterns = JAVASCRIPT.get_definition_patterns("my_func")
+        pattern = patterns[2]
+
+        malicious_input = "my_func(): " + "A" * 500
+
+        start_time = time.perf_counter()
+        match = pattern.search(malicious_input)
+        duration = time.perf_counter() - start_time
+
+        self.assertFalse(match)
+        # Should finish extremely fast (under 10 milliseconds)
+        self.assertLess(duration, 0.01)
+
     def test_extract_function_bounds_defensive(self):
         start, end = extract_function_bounds("some_file.py", 0, file_cache=self.cache)
         self.assertIsNone(start)
