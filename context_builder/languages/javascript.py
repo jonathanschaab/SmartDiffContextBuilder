@@ -24,7 +24,8 @@ class JavaScriptProfile(LanguageProfile):
         escaped = re.escape(func_name)
         return [
             re.compile(
-                r'\b(?:function|class|interface|type|const|let|var)\s+'
+                r'\b(?:function(?:\s*\*\s*|\s+)|class\s+|interface\s+|type\s+|'
+                r'const\s+|let\s+|var\s+)'
                 + lead_b + escaped + trail_b
             ),
             re.compile(
@@ -42,11 +43,6 @@ class JavaScriptProfile(LanguageProfile):
                 lead_b + escaped + trail_b + r'\s*(?:<[^>]+>)?\s*\('
             ),
         ]
-
-    def get_call_pattern(self, func_name):
-        lead_b, trail_b = self._get_boundaries(func_name)
-        escaped = re.escape(func_name)
-        return re.compile(lead_b + escaped + trail_b)
 
 
 class TypeScriptProfile(JavaScriptProfile):

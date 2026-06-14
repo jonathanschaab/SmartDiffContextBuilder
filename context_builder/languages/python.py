@@ -25,7 +25,7 @@ class PythonProfile(LanguageProfile):
         escaped = re.escape(func_name)
         return [
             re.compile(r'\b(?:def|class)\s+' + lead_b + escaped + trail_b),
-            re.compile(r'\b' + lead_b + escaped + trail_b + r'\s*=\s*lambda\b')
+            re.compile(lead_b + escaped + trail_b + r'\s*=\s*lambda\b')
         ]
 
 
