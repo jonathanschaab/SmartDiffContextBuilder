@@ -1521,6 +1521,11 @@ class TestAstEngine(unittest.TestCase):
             "function myFunc() {\n"
             "  return 42;\n"
             "}\n"
+            "namespace myFunc {\n"
+            "  export enum myFunc {\n"
+            "    A, B\n"
+            "  }\n"
+            "}\n"
             "myFunc(); // This is the actual caller\n"
         )
         with open(js_file, "w", encoding="utf-8") as f:
@@ -1532,9 +1537,9 @@ class TestAstEngine(unittest.TestCase):
         )
         self.assertIn(js_file, callers)
         occurrences = callers[js_file]
-        # Only the actual call on line 12 should be matched
+        # Only the actual call on line 17 should be matched
         self.assertEqual(len(occurrences), 1)
-        self.assertEqual(occurrences[0]["line"], 12)
+        self.assertEqual(occurrences[0]["line"], 17)
         self.assertEqual(occurrences[0]["code"], "myFunc(); // This is the actual caller")
 
     def test_trace_lexical_dependencies_regex_no_cross_language_keyword_collisions(self):
@@ -1710,6 +1715,8 @@ class TestAstEngine(unittest.TestCase):
             "  union myFunc {}\n"
             "  type myFunc = i32;\n"
             "  trait myFunc {}\n"
+            "  const myFunc: i32 = 42;\n"
+            "  static myFunc: i32 = 42;\n"
             "}\n"
             "fn test() {\n"
             "  myFunc(); // Actual call\n"
@@ -1724,9 +1731,9 @@ class TestAstEngine(unittest.TestCase):
         )
         self.assertIn(rs_file, callers)
         occurrences = callers[rs_file]
-        # Only the actual call on line 9 should be matched
+        # Only the actual call on line 11 should be matched
         self.assertEqual(len(occurrences), 1)
-        self.assertEqual(occurrences[0]["line"], 9)
+        self.assertEqual(occurrences[0]["line"], 11)
         self.assertEqual(occurrences[0]["code"], "myFunc(); // Actual call")
 
     def test_trace_lexical_dependencies_regex_ts_generics(self):

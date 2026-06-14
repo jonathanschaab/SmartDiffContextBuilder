@@ -25,7 +25,7 @@ class JavaScriptProfile(LanguageProfile):
         return [
             re.compile(
                 r'\b(?:function(?:\s*\*\s*|\s+)|class\s+|interface\s+|type\s+|'
-                r'const\s+|let\s+|var\s+)'
+                r'enum\s+|namespace\s+|const\s+|let\s+|var\s+)'
                 + lead_b + escaped + trail_b
             ),
             re.compile(

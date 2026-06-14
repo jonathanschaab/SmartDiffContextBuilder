@@ -21,7 +21,7 @@ class RustProfile(LanguageProfile):
         escaped = re.escape(func_name)
         return [
             re.compile(
-                r'\b(?:fn|macro_rules!|struct|enum|union|type|trait|mod)\s+'
+                r'\b(?:fn|macro_rules!|struct|enum|union|type|trait|mod|const|static)\s+'
                 + lead_b + escaped + trail_b
             )
         ]

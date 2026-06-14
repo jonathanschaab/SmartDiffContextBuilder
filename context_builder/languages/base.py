@@ -96,6 +96,7 @@ class LanguageProfile:
             not self.supports_block_comments
             or not self.block_comment_start
             or not self.block_comment_end
+            or self.block_comment_start not in content
         ):
             return content
 
