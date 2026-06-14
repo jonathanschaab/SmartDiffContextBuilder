@@ -298,6 +298,8 @@ def _process_regex_file(
     """Search regex patterns within a single file."""
     if call_pattern.search(content):
         for idx, line in enumerate(content.splitlines()):
+            if not call_pattern.search(line):
+                continue
             clean_line = profile.strip_strings_and_comments(line)
             if call_pattern.search(clean_line):
                 is_def = False
