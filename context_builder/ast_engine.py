@@ -333,7 +333,7 @@ def trace_lexical_dependencies_regex(func_name, repo_files, file_cache=None):
 
     profile_patterns_cache = {}
     def_cpp_pattern = re.compile(
-        r'^\s*(?:[A-Za-z0-9_<>:]+(?:\s+\*?\s*)*)?' + lead_b + escaped_name + r'\s*\('
+        r'^\s*(?:[A-Za-z0-9_<>:]+(?:\s+|[*&]+)[\s*&]*)?' + lead_b + escaped_name + r'\s*\('
     )
     for file_path in iter_scan_progress(
         fast_files,

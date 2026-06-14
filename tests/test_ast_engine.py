@@ -284,6 +284,54 @@ class TestAstEngine(unittest.TestCase):
         # Should finish extremely fast (under 10 milliseconds)
         self.assertLess(duration, 0.01)
 
+    def test_trace_lexical_dependencies_regex_cpp_redos_prevention(self):
+        # Verify that a long sequence of spaces after type does not cause catastrophic backtracking
+        import re
+        import time
+
+        func_name = "my_func"
+        lead_b = r'\b'
+        escaped_name = re.escape(func_name)
+        pattern = re.compile(
+            r'^\s*(?:[A-Za-z0-9_<>:]+(?:\s+|[*&]+)[\s*&]*)?' + lead_b + escaped_name + r'\s*\('
+        )
+
+        malicious_input = "void " + " " * 500
+
+        start_time = time.perf_counter()
+        match = pattern.search(malicious_input)
+        duration = time.perf_counter() - start_time
+
+        self.assertFalse(match)
+        # Should finish extremely fast (under 10 milliseconds)
+        self.assertLess(duration, 0.01)
+
+    def test_trace_lexical_dependencies_regex_cpp_pointer_reference_definitions(self):
+        code = (
+            "void* my_func() {\n"
+            "}\n"
+            "void * my_func() {\n"
+            "}\n"
+            "void *& my_func() {\n"
+            "}\n"
+            "void caller() {\n"
+            "    my_func();\n"
+            "}\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "ptrs.cpp")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        cache = LRUFileCache(capacity=5)
+        cache.get_content(file_path)
+
+        callers = trace_lexical_dependencies_regex("my_func", [file_path], file_cache=cache)
+        self.assertIn(file_path, callers)
+        # Lines 1, 3, 5 are C++ method definitions (pointer/reference qualifiers)
+        # and should be ignored.
+        # Only line 8 is the actual caller.
+        self.assertEqual([match["line"] for match in callers[file_path]], [8])
+
     def test_extract_function_bounds_defensive(self):
         start, end = extract_function_bounds("some_file.py", 0, file_cache=self.cache)
         self.assertIsNone(start)
