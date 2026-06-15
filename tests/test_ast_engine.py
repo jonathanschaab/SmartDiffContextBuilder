@@ -205,6 +205,235 @@ class TestAstEngine(unittest.TestCase):
         self.assertIn(file_path, callers)
         self.assertEqual([match["line"] for match in callers[file_path]], [3])
 
+    def test_trace_lexical_dependencies_regex_js_generators(self):
+        code = (
+            "function* my_func() {}\n"
+            "function * another_func() {\n"
+            "  my_func();\n"
+            "}\n"
+            "function*my_func() {}\n"
+            "function *my_func() {}\n"
+            "function * my_func() {}\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "generators.js")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        cache = LRUFileCache(capacity=5)
+        cache.get_content(file_path)
+
+        callers = trace_lexical_dependencies_regex("my_func", [file_path], file_cache=cache)
+        self.assertIn(file_path, callers)
+        self.assertEqual([match["line"] for match in callers[file_path]], [3])
+
+    def test_trace_lexical_dependencies_regex_python_lambdas(self):
+        code = (
+            "my_lambda = lambda: 42\n"
+            "def other_func():\n"
+            "    my_lambda()\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "lambdas.py")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        cache = LRUFileCache(capacity=5)
+        cache.get_content(file_path)
+
+        callers = trace_lexical_dependencies_regex("my_lambda", [file_path], file_cache=cache)
+        self.assertIn(file_path, callers)
+        self.assertEqual([match["line"] for match in callers[file_path]], [3])
+
+    def test_trace_lexical_dependencies_regex_python_multiline_strings(self):
+        code = (
+            "# Triple quotes commented out by #\n"
+            "# \"\"\"\n"
+            "# inside comment\n"
+            "# \"\"\"\n"
+            "my_func() # 5: Should match!\n"
+            "\"\"\"\n"
+            "This is a multiline docstring\n"
+            "my_func() # 8: Inside docstring, should be ignored!\n"
+            "# inside docstring\n"
+            "\"\"\"\n"
+            "my_func() # 11: Should match!\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "docstrings.py")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        cache = LRUFileCache(capacity=5)
+        cache.get_content(file_path)
+
+        callers = trace_lexical_dependencies_regex("my_func", [file_path], file_cache=cache)
+        self.assertIn(file_path, callers)
+        # Only lines 5 and 11 are actual callers.
+        # Line 8 is inside a docstring and should be ignored.
+        self.assertEqual([match["line"] for match in callers[file_path]], [5, 11])
+
+    def test_trace_lexical_dependencies_regex_js_inline_object_returns(self):
+        code = (
+            "class MyClass {\n"
+            "  my_func(): { foo: string } {\n"
+            "    return { foo: 'bar' };\n"
+            "  }\n"
+            "  other_func(): Promise<{ foo: string }> {\n"
+            "    my_func();\n"
+            "    return Promise.resolve({ foo: 'baz' });\n"
+            "  }\n"
+            "}\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "inline_objects.ts")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        cache = LRUFileCache(capacity=5)
+        cache.get_content(file_path)
+
+        callers = trace_lexical_dependencies_regex("my_func", [file_path], file_cache=cache)
+        self.assertIn(file_path, callers)
+        self.assertEqual([match["line"] for match in callers[file_path]], [6])
+
+    def test_trace_lexical_dependencies_regex_js_redos_prevention(self):
+        # Verify that a long string without a trailing '{' does not cause catastrophic backtracking
+        from context_builder.languages.javascript import JAVASCRIPT
+        import time
+
+        patterns = JAVASCRIPT.get_definition_patterns("my_func")
+        pattern = patterns[2]
+
+        malicious_input = "my_func(): " + "A" * 500
+
+        start_time = time.perf_counter()
+        match = pattern.search(malicious_input)
+        duration = time.perf_counter() - start_time
+
+        self.assertFalse(match)
+        # Should finish extremely fast (under 100 milliseconds)
+        self.assertLess(duration, 0.1)
+
+    def test_trace_lexical_dependencies_regex_cpp_redos_prevention(self):
+        # Verify that a long sequence of spaces after type does not cause catastrophic backtracking
+        import re
+        import time
+
+        func_name = "my_func"
+        lead_b = r'\b'
+        escaped_name = re.escape(func_name)
+        pattern = re.compile(
+            r'^\s*(?:[A-Za-z0-9_<>:]+(?:\s+|[*&]+)[\s*&]*)?' + lead_b + escaped_name + r'\s*\('
+        )
+
+        malicious_input = "void " + " " * 500
+
+        start_time = time.perf_counter()
+        match = pattern.search(malicious_input)
+        duration = time.perf_counter() - start_time
+
+        self.assertFalse(match)
+        # Should finish extremely fast (under 100 milliseconds)
+        self.assertLess(duration, 0.1)
+
+    def test_trace_lexical_dependencies_regex_cpp_pointer_reference_definitions(self):
+        code = (
+            "void* my_func() {\n"
+            "}\n"
+            "void * my_func() {\n"
+            "}\n"
+            "void *& my_func() {\n"
+            "}\n"
+            "void caller() {\n"
+            "    my_func();\n"
+            "}\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "ptrs.cpp")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        cache = LRUFileCache(capacity=5)
+        cache.get_content(file_path)
+
+        callers = trace_lexical_dependencies_regex("my_func", [file_path], file_cache=cache)
+        self.assertIn(file_path, callers)
+        # Lines 1, 3, 5 are C++ method definitions (pointer/reference qualifiers)
+        # and should be ignored.
+        # Only line 8 is the actual caller.
+        self.assertEqual([match["line"] for match in callers[file_path]], [8])
+
+    def test_trace_lexical_dependencies_regex_multiline_block_comments(self):
+        code = (
+            "/*\n"
+            "  This is a multiline comment block\n"
+            "  my_func(); // Inside comment, should be ignored\n"
+            "*/\n"
+            "my_func(); // This is the actual call\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "comments.js")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        cache = LRUFileCache(capacity=5)
+        cache.get_content(file_path)
+
+        callers = trace_lexical_dependencies_regex("my_func", [file_path], file_cache=cache)
+        self.assertIn(file_path, callers)
+        # Only line 5 is the actual caller. The reference on line 3 is inside the comment.
+        self.assertEqual([match["line"] for match in callers[file_path]], [5])
+
+    def test_trace_lexical_dependencies_regex_block_comments_in_strings(self):
+        code = (
+            "const commentStart = \"/*\";\n"
+            "my_func(); // 2: Should be matched, not stripped!\n"
+            "const commentEnd = \"*/\";\n"
+            "// This is a comment /*\n"
+            "my_func(); // 5: Should be matched, not stripped by the line comment above!\n"
+            "// */\n"
+            "/* block */ my_func(); // 7: Mid-line block comment with trailing line comment, should match!\n"
+            "// This is a \"string\" my_func(); // 8: Apparent string in line comment, should be ignored!\n"
+            "/* block // line */ my_func(); // 9: Line comment prefix inside block comment, should match!\n"
+            "/*\n"
+            "  const myStr = \"hello\";\n"
+            "  my_func(); // 12: Inside block comment, should be ignored\n"
+            "*/\n"
+            "my_func(); // 14: Should be matched\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "comments_in_strings.js")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        cache = LRUFileCache(capacity=5)
+        cache.get_content(file_path)
+
+        callers = trace_lexical_dependencies_regex("my_func", [file_path], file_cache=cache)
+        self.assertIn(file_path, callers)
+        # Lines 2, 5, 7, 9, and 14 are actual callers.
+        # Lines 8 and 12 are inside comments and should be ignored.
+        self.assertEqual([match["line"] for match in callers[file_path]], [2, 5, 7, 9, 14])
+
+    def test_trace_lexical_dependencies_regex_string_escapes(self):
+        code = (
+            "const s1 = \"escaped backslash \\\\\";\n"
+            "my_func(); // 2: Should match!\n"
+            "const s2 = \"\\\\\\\"\"; // 3: Escaped backslash and escaped quote (ends with \\\")\n"
+            "/*\n"
+            "  my_func(); // 5: Inside block comment, should be ignored\n"
+            "*/\n"
+            "my_func(); // 7: Should match!\n"
+            "const s3 = \"\\\"\"; // 8: Escaped quote (\"\\\")\n"
+            "my_func(); // 9: Should match!\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "escapes.js")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        cache = LRUFileCache(capacity=5)
+        cache.get_content(file_path)
+
+        callers = trace_lexical_dependencies_regex("my_func", [file_path], file_cache=cache)
+        self.assertIn(file_path, callers)
+        # Lines 2, 7, and 9 are actual callers.
+        # Line 5 is inside block comment.
+        self.assertEqual([match["line"] for match in callers[file_path]], [2, 7, 9])
+
     def test_extract_function_bounds_defensive(self):
         start, end = extract_function_bounds("some_file.py", 0, file_cache=self.cache)
         self.assertIsNone(start)
@@ -1358,3 +1587,343 @@ class TestAstEngine(unittest.TestCase):
         lines = text.splitlines()
         self.assertEqual(len(lines), 6)
         self.assertEqual(lines[-1], "        # ... [Data Structure Omitted] ...")
+
+    def test_trace_lexical_dependencies_regex_js_definitions(self):
+        """Verify JS/TS definitions (arrow functions, shorthands) are not treated as callers."""
+        js_file = os.path.join(self.temp_dir.name, "app.js")
+        content = (
+            "const myFunc = () => {\n"
+            "  console.log('arrow');\n"
+            "};\n"
+            "const myFunc = (x: number): number => { return x; };\n"
+            "const myFunc = (x: number): Promise<{ a: number }> => { return x; };\n"
+            "class Controller {\n"
+            "  async myFunc(arg) {\n"
+            "    console.log(arg);\n"
+            "  }\n"
+            "}\n"
+            "function myFunc() {\n"
+            "  return 42;\n"
+            "}\n"
+            "namespace myFunc {\n"
+            "  export enum myFunc {\n"
+            "    A, B\n"
+            "  }\n"
+            "}\n"
+            "myFunc(); // This is the actual caller\n"
+        )
+        with open(js_file, "w", encoding="utf-8") as f:
+            f.write(content)
+        self.cache.get_content(js_file)
+
+        callers = trace_lexical_dependencies_regex(
+            "myFunc", [js_file], file_cache=self.cache
+        )
+        self.assertIn(js_file, callers)
+        occurrences = callers[js_file]
+        # Only the actual call on line 19 should be matched
+        self.assertEqual(len(occurrences), 1)
+        self.assertEqual(occurrences[0]["line"], 19)
+        self.assertEqual(occurrences[0]["code"], "myFunc(); // This is the actual caller")
+
+    def test_trace_lexical_dependencies_regex_no_cross_language_keyword_collisions(self):
+        """Verify keyword definition checks are scoped to language profiles."""
+        py_file = os.path.join(self.temp_dir.name, "script.py")
+        cpp_file = os.path.join(self.temp_dir.name, "source.cpp")
+
+        # In Python, def is a definition
+        with open(py_file, "w", encoding="utf-8") as f:
+            f.write("def my_func():\n    pass\n")
+        self.cache.get_content(py_file)
+
+        # In C++, def is not a definition, so "def my_func()" is a call
+        with open(cpp_file, "w", encoding="utf-8") as f:
+            f.write("void test() {\n    def my_func();\n}\n")
+        self.cache.get_content(cpp_file)
+
+        # Tracing my_func should find it in cpp_file but NOT in py_file
+        callers = trace_lexical_dependencies_regex(
+            "my_func", [py_file, cpp_file], file_cache=self.cache
+        )
+        self.assertNotIn(py_file, callers)
+        self.assertIn(cpp_file, callers)
+        self.assertEqual(len(callers[cpp_file]), 1)
+        self.assertEqual(callers[cpp_file][0]["line"], 2)
+
+    def test_trace_lexical_dependencies_regex_js_dollar_identifiers(self):
+        """Verify that JS/TS identifiers with $ are matched correctly without false positive substring matches."""
+        js_file = os.path.join(self.temp_dir.name, "dollar.js")
+        content = (
+            "const $init = () => {\n"
+            "  console.log('init');\n"
+            "};\n"
+            "class MyClass {\n"
+            "  $init() {\n"
+            "    console.log('class init');\n"
+            "  }\n"
+            "}\n"
+            "function test() {\n"
+            "  $init(); // Actual call\n"
+            "  legacy_$init(); // Substring, should NOT match\n"
+            "  $init_legacy(); // Substring, should NOT match\n"
+            "}\n"
+        )
+        with open(js_file, "w", encoding="utf-8") as f:
+            f.write(content)
+        self.cache.get_content(js_file)
+
+        callers = trace_lexical_dependencies_regex(
+            "$init", [js_file], file_cache=self.cache
+        )
+        self.assertIn(js_file, callers)
+        occurrences = callers[js_file]
+        # Only the actual call on line 10 should be matched
+        self.assertEqual(len(occurrences), 1)
+        self.assertEqual(occurrences[0]["line"], 10)
+        self.assertEqual(occurrences[0]["code"], "$init(); // Actual call")
+
+    def test_trace_lexical_dependencies_regex_empty_func_name(self):
+        """Verify that trace_lexical_dependencies_regex handles empty function names gracefully without IndexError."""
+        py_file = os.path.join(self.temp_dir.name, "empty_func.py")
+        with open(py_file, "w", encoding="utf-8") as f:
+            f.write("def foo():\n    pass\n")
+        self.cache.get_content(py_file)
+
+        # Call with empty string
+        callers = trace_lexical_dependencies_regex(
+            "", [py_file], file_cache=self.cache
+        )
+        self.assertEqual(callers, {})
+
+    def test_trace_lexical_dependencies_regex_js_multiline_and_ts_definitions(self):
+        """Verify that multiline signatures, var/const declarations, and TS types/interfaces are not treated as calls."""
+        ts_file = os.path.join(self.temp_dir.name, "app.ts")
+        content = (
+            "interface myFunc {\n"
+            "  name: string;\n"
+            "}\n"
+            "type myFunc = () => void;\n"
+            "const myFunc =\n"
+            "  (x) => x;\n"
+            "class MyClass {\n"
+            "  public static async myFunc(\n"
+            "    a: number,\n"
+            "    b: number\n"
+            "  ): Promise<void> {\n"
+            "  }\n"
+            "}\n"
+            "myFunc(); // This is the actual call\n"
+        )
+        with open(ts_file, "w", encoding="utf-8") as f:
+            f.write(content)
+        self.cache.get_content(ts_file)
+
+        callers = trace_lexical_dependencies_regex(
+            "myFunc", [ts_file], file_cache=self.cache
+        )
+        self.assertIn(ts_file, callers)
+        occurrences = callers[ts_file]
+        # Only the actual call on line 14 should be matched
+        self.assertEqual(len(occurrences), 1)
+        self.assertEqual(occurrences[0]["line"], 14)
+        self.assertEqual(occurrences[0]["code"], "myFunc(); // This is the actual call")
+
+    def test_trace_lexical_dependencies_regex_cpp_definition_keywords(self):
+        """Verify that class, struct, union, enum, namespace, and using are treated as definitions in C++."""
+        cpp_file = os.path.join(self.temp_dir.name, "defs.cpp")
+        content = (
+            "namespace myFunc {\n"
+            "  union myFunc {\n"
+            "    int val;\n"
+            "  };\n"
+            "  enum myFunc {\n"
+            "    A, B\n"
+            "  };\n"
+            "  struct myFunc {\n"
+            "    int a;\n"
+            "  };\n"
+            "  class myFunc {\n"
+            "  };\n"
+            "  using myFunc = int;\n"
+            "}\n"
+            "void test() {\n"
+            "  using namespace myFunc; // This is a reference, should be matched!\n"
+            "  myFunc(); // Actual call\n"
+            "}\n"
+        )
+        with open(cpp_file, "w", encoding="utf-8") as f:
+            f.write(content)
+        self.cache.get_content(cpp_file)
+
+        callers = trace_lexical_dependencies_regex(
+            "myFunc", [cpp_file], file_cache=self.cache
+        )
+        self.assertIn(cpp_file, callers)
+        occurrences = callers[cpp_file]
+        # Lines 16 (using namespace myFunc;) and 17 (myFunc();) should be matched
+        self.assertEqual(len(occurrences), 2)
+        self.assertEqual(occurrences[0]["line"], 16)
+        self.assertEqual(occurrences[0]["code"], "using namespace myFunc; // This is a reference, should be matched!")
+        self.assertEqual(occurrences[1]["line"], 17)
+        self.assertEqual(occurrences[1]["code"], "myFunc(); // Actual call")
+
+    def test_trace_lexical_dependencies_regex_go_type_definitions(self):
+        """Verify that Go type definitions (structs, interfaces) are ignored during caller tracing."""
+        go_file = os.path.join(self.temp_dir.name, "types.go")
+        content = (
+            "package main\n"
+            "type myFunc struct {}\n"
+            "type myFunc interface {}\n"
+            "type myFunc int\n"
+            "func test() {\n"
+            "  myFunc(); // Actual call\n"
+            "}\n"
+        )
+        with open(go_file, "w", encoding="utf-8") as f:
+            f.write(content)
+        self.cache.get_content(go_file)
+
+        callers = trace_lexical_dependencies_regex(
+            "myFunc", [go_file], file_cache=self.cache
+        )
+        self.assertIn(go_file, callers)
+        occurrences = callers[go_file]
+        # Only the actual call on line 6 should be matched
+        self.assertEqual(len(occurrences), 1)
+        self.assertEqual(occurrences[0]["line"], 6)
+        self.assertEqual(occurrences[0]["code"], "myFunc(); // Actual call")
+
+    def test_trace_lexical_dependencies_regex_rust_definition_keywords(self):
+        """Verify that Rust definition keywords are ignored during caller tracing."""
+        rs_file = os.path.join(self.temp_dir.name, "defs.rs")
+        content = (
+            "mod myFunc {\n"
+            "  struct myFunc {}\n"
+            "  enum myFunc {}\n"
+            "  union myFunc {}\n"
+            "  type myFunc = i32;\n"
+            "  trait myFunc {}\n"
+            "  const myFunc: i32 = 42;\n"
+            "  static myFunc: i32 = 42;\n"
+            "}\n"
+            "fn test() {\n"
+            "  myFunc(); // Actual call\n"
+            "}\n"
+        )
+        with open(rs_file, "w", encoding="utf-8") as f:
+            f.write(content)
+        self.cache.get_content(rs_file)
+
+        callers = trace_lexical_dependencies_regex(
+            "myFunc", [rs_file], file_cache=self.cache
+        )
+        self.assertIn(rs_file, callers)
+        occurrences = callers[rs_file]
+        # Only the actual call on line 11 should be matched
+        self.assertEqual(len(occurrences), 1)
+        self.assertEqual(occurrences[0]["line"], 11)
+        self.assertEqual(occurrences[0]["code"], "myFunc(); // Actual call")
+
+    def test_trace_lexical_dependencies_regex_ts_generics(self):
+        """Verify that TS definitions with generic type parameters are ignored during caller tracing."""
+        ts_file = os.path.join(self.temp_dir.name, "generics.ts")
+        content = (
+            "const myFunc = <T>(arg: T): T => arg;\n"
+            "class MyClass {\n"
+            "  myFunc<T>(arg: T): T {\n"
+            "    return arg;\n"
+            "  }\n"
+            "  async anotherGeneric<T>(\n"
+            "    x: T\n"
+            "  ) {}\n"
+            "}\n"
+            "myFunc(); // Actual call\n"
+        )
+        with open(ts_file, "w", encoding="utf-8") as f:
+            f.write(content)
+        self.cache.get_content(ts_file)
+
+        # Trace myFunc
+        callers = trace_lexical_dependencies_regex(
+            "myFunc", [ts_file], file_cache=self.cache
+        )
+        self.assertIn(ts_file, callers)
+        occurrences = callers[ts_file]
+        # Only the actual call on line 10 should be matched
+        self.assertEqual(len(occurrences), 1)
+        self.assertEqual(occurrences[0]["line"], 10)
+        self.assertEqual(occurrences[0]["code"], "myFunc(); // Actual call")
+
+        # Trace anotherGeneric (should have 0 callers because line 6 is a definition)
+        callers = trace_lexical_dependencies_regex(
+            "anotherGeneric", [ts_file], file_cache=self.cache
+        )
+        self.assertEqual(callers, {})
+
+    def test_trace_lexical_dependencies_regex_advanced_definition_variants(self):
+        """Verify that JS object properties, TS type arrows, Go anonymous function assignments, and C++ using/typedefs are ignored as definitions."""
+        js_file = os.path.join(self.temp_dir.name, "object_prop.js")
+        go_file = os.path.join(self.temp_dir.name, "assign.go")
+        cpp_file = os.path.join(self.temp_dir.name, "types_cpp.cpp")
+
+        # 1. JS/TS Object property & Type arrows
+        js_content = (
+            "const obj = {\n"
+            "  myFunc: (a, b) => {\n"
+            "    console.log(a);\n"
+            "  }\n"
+            "};\n"
+            "type Handler = {\n"
+            "  myFunc: (arg: number) => void;\n"
+            "}\n"
+            "myFunc(); // Actual call\n"
+        )
+        with open(js_file, "w", encoding="utf-8") as f:
+            f.write(js_content)
+        self.cache.get_content(js_file)
+
+        # 2. Go Anonymous function assignment
+        go_content = (
+            "package main\n"
+            "var myFunc = func() {}\n"
+            "func main() {\n"
+            "  myFunc := func(x int) {}\n"
+            "  myFunc() // Actual call\n"
+            "}\n"
+        )
+        with open(go_file, "w", encoding="utf-8") as f:
+            f.write(go_content)
+        self.cache.get_content(go_file)
+
+        # 3. C/C++ typedef and using
+        cpp_content = (
+            "using myFunc = void(*)(int);\n"
+            "typedef void (*myFunc)(int);\n"
+            "typedef struct {\n"
+            "  int x;\n"
+            "} myFunc;\n"
+            "void test() {\n"
+            "  myFunc(); // Actual call\n"
+            "}\n"
+        )
+        with open(cpp_file, "w", encoding="utf-8") as f:
+            f.write(cpp_content)
+        self.cache.get_content(cpp_file)
+
+        # Trace JS
+        js_callers = trace_lexical_dependencies_regex("myFunc", [js_file], file_cache=self.cache)
+        self.assertIn(js_file, js_callers)
+        self.assertEqual(len(js_callers[js_file]), 1)
+        self.assertEqual(js_callers[js_file][0]["line"], 9)
+
+        # Trace Go
+        go_callers = trace_lexical_dependencies_regex("myFunc", [go_file], file_cache=self.cache)
+        self.assertIn(go_file, go_callers)
+        self.assertEqual(len(go_callers[go_file]), 1)
+        self.assertEqual(go_callers[go_file][0]["line"], 5)
+
+        # Trace CPP
+        cpp_callers = trace_lexical_dependencies_regex("myFunc", [cpp_file], file_cache=self.cache)
+        self.assertIn(cpp_file, cpp_callers)
+        self.assertEqual(len(cpp_callers[cpp_file]), 1)
+        self.assertEqual(cpp_callers[cpp_file][0]["line"], 7)

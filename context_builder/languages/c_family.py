@@ -1,5 +1,7 @@
 """C and C++ language profile."""
 
+import re
+
 from .base import LanguageProfile
 
 
@@ -15,6 +17,29 @@ class CFamilyProfile(LanguageProfile):
     supports_compile_commands = True
     uses_c_style_definitions = True
     lsp_command = ("clangd", "--background-index")
+
+    def get_definition_patterns(self, func_name):
+        lead_b, trail_b = self._get_boundaries(func_name)
+        escaped = re.escape(func_name)
+        return [
+            re.compile(
+                r'\b(?:class|struct|union|enum)\s+'
+                + lead_b + escaped + trail_b
+            ),
+            re.compile(
+                r'\b(?<!\busing\s)(?<!\busing\s\s)(?<!\busing\s\s\s)namespace\s+'
+                + lead_b + escaped + trail_b
+            ),
+            re.compile(
+                r'\busing\s+' + lead_b + escaped + trail_b + r'\s*='
+            ),
+            re.compile(
+                r'\btypedef\b[^;]+' + lead_b + escaped + trail_b
+            ),
+            re.compile(
+                r'^\s*\}\s*' + lead_b + escaped + trail_b + r'\s*;'
+            )
+        ]
 
 
 C_FAMILY = CFamilyProfile()

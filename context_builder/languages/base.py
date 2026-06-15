@@ -34,6 +34,8 @@ class LanguageProfile:
     lsp_command = None
     test_query = None
     tests_can_share_source_file = False
+    multiline_string_delimiters = ()
+    _cached_block_comment_pattern = None
 
     @staticmethod
     def strip_string_literals(line):
@@ -77,3 +79,93 @@ class LanguageProfile:
                 return name
 
         return f"block_lines_{start}_{end}"
+
+    def _get_boundaries(self, func_name):
+        """Return the regex boundary patterns (lead_b, trail_b) for func_name."""
+        if not func_name:
+            return '', ''
+        lead_b = r'\b' if func_name[0].isalnum() or func_name[0] == '_' else ''
+        trail_b = r'\b' if func_name[-1].isalnum() or func_name[-1] == '_' else ''
+        return lead_b, trail_b
+
+    def strip_block_comments(self, content):
+        """Remove block comments and multiline string literals from content.
+
+        Replaces them with newlines to preserve line count.
+        """
+        if (
+            (
+                not self.supports_block_comments
+                or not self.block_comment_start
+                or not self.block_comment_end
+            )
+            and not self.multiline_string_delimiters
+        ):
+            return content
+
+        # Early return check if none of the multiline starts are present
+        starts = []
+        if self.supports_block_comments and self.block_comment_start:
+            starts.append(self.block_comment_start)
+        starts.extend(self.multiline_string_delimiters)
+        if not any(start in content for start in starts):
+            return content
+
+        pattern = self._cached_block_comment_pattern
+        if pattern is None:
+            parts = []
+            if (
+                self.supports_block_comments
+                and self.block_comment_start
+                and self.block_comment_end
+            ):
+                escaped_start = re.escape(self.block_comment_start)
+                escaped_end = re.escape(self.block_comment_end)
+                parts.append(rf'(?P<comment>{escaped_start}.*?{escaped_end})')
+
+            for i, delim in enumerate(self.multiline_string_delimiters):
+                escaped_delim = re.escape(delim)
+                parts.append(
+                    rf'(?P<multiline_{i}>'
+                    rf'{escaped_delim}(?:\\.|(?!{escaped_delim}).)*?{escaped_delim})'
+                )
+
+            # Named backreferences to avoid quote capturing group offset issues
+            parts.append(
+                r'(?P<string>(?P<quote>["\'])'
+                r'(?:(?=(?P<backslash>\\?))(?P=backslash).)*?(?P=quote))'
+            )
+
+            if self.line_comment:
+                escaped_line_comment = re.escape(self.line_comment)
+                parts.append(rf'(?P<line_comment>{escaped_line_comment}[^\n]*)')
+
+            pattern = re.compile('|'.join(parts), re.DOTALL)
+            self._cached_block_comment_pattern = pattern
+
+        def replacer(match):
+            group_dict = match.groupdict()
+            if group_dict.get("comment") is not None:
+                return "\n" * match.group("comment").count("\n")
+            for key, val in group_dict.items():
+                if key.startswith("multiline_") and val is not None:
+                    return "\n" * val.count("\n")
+            return match.group(0)
+
+        return pattern.sub(replacer, content)
+
+    def get_definition_patterns(self, func_name):
+        """Return a list of compiled regex patterns to identify a definition of func_name."""
+        lead_b, trail_b = self._get_boundaries(func_name)
+        escaped = re.escape(func_name)
+        # Default fallback/generic definition keywords
+        pattern = re.compile(
+            r'\b(?:fn|def|function|sub|func|class|macro)\s+' + lead_b + escaped + trail_b
+        )
+        return [pattern]
+
+    def get_call_pattern(self, func_name):
+        """Return a compiled regex pattern to identify a call to func_name."""
+        lead_b, trail_b = self._get_boundaries(func_name)
+        escaped = re.escape(func_name)
+        return re.compile(lead_b + escaped + trail_b)
