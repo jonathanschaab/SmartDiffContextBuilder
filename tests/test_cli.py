@@ -1042,7 +1042,7 @@ class TestCLI(unittest.TestCase):
     @patch("context_builder.cli.run_git_process")
     @patch("shutil.rmtree")
     @patch("shutil.copy")
-    @patch("os.path.isfile")
+    @patch("context_builder.path_utils.os.path.isfile")
     def test_cli_worktree_cleanup_on_copy_exception(
         self, mock_isfile, mock_copy, mock_rmtree, mock_sub_run, mock_cleanup_lsps, mock_run_scan, mock_resolve_range, mock_parse_args
     ):
@@ -1095,7 +1095,7 @@ class TestCLI(unittest.TestCase):
     @patch("shutil.rmtree")
     @patch("context_builder.cli._rewrite_worktree_compile_commands")
     @patch("shutil.copy")
-    @patch("os.path.isfile")
+    @patch("context_builder.path_utils.os.path.isfile")
     def test_cli_worktree_copies_coverage_xml(
         self, mock_isfile, mock_copy, mock_rewrite_compile_commands, mock_rmtree, mock_sub_run, mock_cleanup_lsps, mock_run_scan, mock_resolve_range, mock_parse_args
     ):
@@ -1134,7 +1134,7 @@ class TestCLI(unittest.TestCase):
     @patch("shutil.rmtree")
     @patch("context_builder.cli._rewrite_worktree_compile_commands")
     @patch("shutil.copy")
-    @patch("os.path.isfile")
+    @patch("context_builder.path_utils.os.path.isfile")
     @patch("os.makedirs", wraps=os.makedirs)
     def test_cli_worktree_copies_build_artifacts(
         self,
