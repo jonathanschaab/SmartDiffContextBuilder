@@ -204,15 +204,16 @@ class TestPathUtils(unittest.TestCase):
         self.assertIn("C:/Repo", candidates)
 
     def test_find_artifact_path_defensive(self):
-        # 1. Non-list / Non-iterable build_directories
-        CONFIG["build_directories"] = 123
-        # Should not raise TypeError and return None (since compile_commands.json doesn't exist)
-        self.assertIsNone(find_artifact_path("compile_commands.json"))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # 1. Non-list / Non-iterable build_directories
+            CONFIG["build_directories"] = 123
+            # Should not raise TypeError and return None
+            self.assertIsNone(find_artifact_path("compile_commands.json", base_dir=tmpdir))
 
-        # 2. List containing non-string elements (e.g. integers, dicts)
-        CONFIG["build_directories"] = ["build", 123, None, {"a": 1}]
-        # Should gracefully skip non-string elements and not crash
-        self.assertIsNone(find_artifact_path("compile_commands.json"))
+            # 2. List containing non-string elements (e.g. integers, dicts)
+            CONFIG["build_directories"] = ["build", 123, None, {"a": 1}]
+            # Should gracefully skip non-string elements and not crash
+            self.assertIsNone(find_artifact_path("compile_commands.json", base_dir=tmpdir))
 
     def test_find_artifact_path_skips_directories(self):
         with tempfile.TemporaryDirectory() as tmpdir:

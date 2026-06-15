@@ -501,7 +501,7 @@ def _copy_worktree_artifact(filename, original_cwd, temp_worktree_dir, copy_fn):
             target_path = os.path.abspath(os.path.join(temp_worktree_dir, rel_path))
             if not path_is_within_root(target_path, temp_worktree_dir):
                 use_fallback = True
-    except (ValueError, TypeError, AttributeError):
+    except (ValueError, TypeError, AttributeError, OSError):
         use_fallback = True
 
     if use_fallback:

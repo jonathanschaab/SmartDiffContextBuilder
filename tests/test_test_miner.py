@@ -8,12 +8,14 @@ import tempfile
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+from context_builder.config import reset_config
 from context_builder.cache import LRUFileCache
 from context_builder import test_miner
 from context_builder.test_miner import get_coverage_data, mine_relevant_unit_tests
 
 class TestTestMiner(unittest.TestCase):
     def setUp(self):
+        reset_config()
         self.temp_dir = tempfile.TemporaryDirectory()
         self.old_cwd = os.getcwd()
         os.chdir(self.temp_dir.name)
@@ -21,6 +23,7 @@ class TestTestMiner(unittest.TestCase):
     def tearDown(self):
         os.chdir(self.old_cwd)
         self.temp_dir.cleanup()
+        reset_config()
 
     def test_get_coverage_data(self):
         # Create dummy coverage.xml

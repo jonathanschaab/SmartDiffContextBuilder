@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch, MagicMock, ANY
 import json
 from context_builder.cache import LRUFileCache
-from context_builder.config import CONFIG
+from context_builder.config import CONFIG, reset_config
 import context_builder.preprocessor as _preprocessor_mod
 from context_builder.sys_utils import FileScanCandidates
 from context_builder.preprocessor import (
@@ -22,6 +22,7 @@ from context_builder.preprocessor import (
 
 class TestPreprocessor(unittest.TestCase):
     def setUp(self):
+        reset_config()
         self.temp_dir = tempfile.TemporaryDirectory()
         self.old_cwd = os.getcwd()
         os.chdir(self.temp_dir.name)
@@ -36,6 +37,7 @@ class TestPreprocessor(unittest.TestCase):
     def tearDown(self):
         os.chdir(self.old_cwd)
         self.temp_dir.cleanup()
+        reset_config()
 
     def test_analyze_compile_commands(self):
         # Create compile_commands.json
