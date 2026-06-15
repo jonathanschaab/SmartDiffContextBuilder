@@ -35,6 +35,7 @@ from .path_utils import (
     build_root_replacement_variants,
     clear_path_case_caches,
     detect_root_case_sensitivity,
+    find_artifact_path,
 )
 from .preprocessor import (
     analyze_compile_commands,
@@ -439,6 +440,7 @@ def _merge_json_mappings(args, active_overrides):
         "callee_query_strings": "callee_query_strings",
         "callee_ignored_keywords": "callee_ignored_keywords",
         "ffi_patterns": "ffi_patterns",
+        "build_directories": "build_directories",
     }
 
     for arg_name, cfg_key in json_mappings.items():
@@ -509,20 +511,26 @@ def _setup_temp_worktree(temp_worktree_dir, end_sha, original_cwd):
             pass
         sys.exit(1)
 
-    compile_commands_path = os.path.join(original_cwd, "compile_commands.json")
-    if os.path.exists(compile_commands_path):
+    compile_commands_path = find_artifact_path("compile_commands.json", original_cwd)
+    if compile_commands_path:
+        rel_path = os.path.relpath(compile_commands_path, original_cwd)
+        target_path = os.path.join(temp_worktree_dir, rel_path)
+        os.makedirs(os.path.dirname(target_path), exist_ok=True)
         _rewrite_worktree_compile_commands(
             compile_commands_path,
-            os.path.join(temp_worktree_dir, "compile_commands.json"),
+            target_path,
             original_cwd,
             temp_worktree_dir,
         )
 
-    coverage_xml_path = os.path.join(original_cwd, "coverage.xml")
-    if os.path.exists(coverage_xml_path):
+    coverage_xml_path = find_artifact_path("coverage.xml", original_cwd)
+    if coverage_xml_path:
+        rel_path = os.path.relpath(coverage_xml_path, original_cwd)
+        target_path = os.path.join(temp_worktree_dir, rel_path)
+        os.makedirs(os.path.dirname(target_path), exist_ok=True)
         shutil.copy(
             coverage_xml_path,
-            os.path.join(temp_worktree_dir, "coverage.xml")
+            target_path,
         )
 
 def _build_worktree_root_replacements(original_root, worktree_root):
@@ -808,6 +816,12 @@ def main():
         type=str,
         default=None,
         help="Ripgrep prefilter that must match every file eligible for --ffi-patterns",
+    )
+    parser.add_argument(
+        "--build-directories",
+        type=str,
+        default=None,
+        help="JSON list of build directories to scan",
     )
 
     args = parser.parse_args()

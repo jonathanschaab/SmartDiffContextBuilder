@@ -11,6 +11,7 @@ from .config import CONFIG
 from .languages import get_language_profile
 from .path_utils import (
     detect_root_case_sensitivity,
+    find_artifact_path,
     path_is_within_root,
     to_forward_slashes,
 )
@@ -446,18 +447,19 @@ def analyze_compile_commands(target_file, file_cache=None, repo_root=None):
     target_base = os.path.basename(target_file)
     if not target_base:
         return callers
-    if not os.path.exists("compile_commands.json"):
+    db_path = find_artifact_path("compile_commands.json")
+    if not db_path:
         return callers
     try:
         # Cache the parsed database to avoid repeatedly reading/parsing it in a loop.
-        abs_db_path = os.path.abspath("compile_commands.json")
-        mtime = os.path.getmtime("compile_commands.json")
+        abs_db_path = os.path.abspath(db_path)
+        mtime = os.path.getmtime(db_path)
         if (
             _COMPILE_COMMANDS_STATE["cache"] is None
             or _COMPILE_COMMANDS_STATE["path"] != abs_db_path
             or _COMPILE_COMMANDS_STATE["mtime"] != mtime
         ):
-            with open("compile_commands.json", "r", encoding="utf-8") as f:
+            with open(db_path, "r", encoding="utf-8") as f:
                 _COMPILE_COMMANDS_STATE["cache"] = json.load(f)
             _COMPILE_COMMANDS_STATE["mtime"] = mtime
             _COMPILE_COMMANDS_STATE["path"] = abs_db_path

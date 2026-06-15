@@ -72,6 +72,72 @@ class TestPreprocessor(unittest.TestCase):
             "// [Compilation Link via compile_commands.json]"
         )
 
+    def test_analyze_compile_commands_in_build_directory(self):
+        # Create a build directory
+        os.makedirs("build", exist_ok=True)
+        # Create compile_commands.json in the build directory
+        db = [
+            {
+                "directory": ".",
+                "command": "clang++ -c main.cpp",
+                "file": "main.cpp"
+            }
+        ]
+        with open(os.path.join("build", "compile_commands.json"), "w") as f:
+            json.dump(db, f)
+
+        # Create main.cpp that includes main.h
+        with open("main.cpp", "w") as f:
+            f.write('#include "main.h"\n')
+
+        # Target file is main.h.
+        callers = analyze_compile_commands("main.h")
+        self.assertIn("main.cpp", callers)
+
+    def test_analyze_compile_commands_in_build_directory_newest_mtime(self):
+        # Create a build directory and an out directory
+        os.makedirs("build", exist_ok=True)
+        os.makedirs("out", exist_ok=True)
+        # Create compile_commands.json in build
+        db_build = [
+            {
+                "directory": ".",
+                "command": "clang++ -c main.cpp",
+                "file": "main.cpp"
+            }
+        ]
+        build_path = os.path.join("build", "compile_commands.json")
+        with open(build_path, "w") as f:
+            json.dump(db_build, f)
+        
+        # Create compile_commands.json in out
+        db_out = [
+            {
+                "directory": ".",
+                "command": "clang++ -c other.cpp",
+                "file": "other.cpp"
+            }
+        ]
+        out_path = os.path.join("out", "compile_commands.json")
+        with open(out_path, "w") as f:
+            json.dump(db_out, f)
+
+        # Make out/compile_commands.json newer than build/compile_commands.json
+        # Set build file's mtime to 1000 seconds ago, and out file's mtime to now
+        os.utime(build_path, (1000.0, 1000.0))
+        os.utime(out_path, (2000.0, 2000.0))
+
+        # Create main.cpp and other.cpp that include main.h
+        with open("main.cpp", "w") as f:
+            f.write('#include "main.h"\n')
+        with open("other.cpp", "w") as f:
+            f.write('#include "main.h"\n')
+
+        # Should find compile_commands.json in out/ (newer mtime) and link to other.cpp
+        callers = analyze_compile_commands("main.h")
+        self.assertIn("other.cpp", callers)
+        self.assertNotIn("main.cpp", callers)
+
     def test_analyze_compile_commands_precise_include(self):
         # Create compile_commands.json
         db = [

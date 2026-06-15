@@ -48,6 +48,88 @@ class TestTestMiner(unittest.TestCase):
         self.assertIn("src/a.py", cov)
         self.assertEqual(cov["src/a.py"], [5])
 
+    def test_get_coverage_data_in_build_directory(self):
+        # Create a build directory
+        os.makedirs("build", exist_ok=True)
+        # Create dummy coverage.xml in build directory
+        xml_content = (
+            '<?xml version="1.0" ?>\n'
+            '<coverage line-rate="0.5">\n'
+            '  <packages>\n'
+            '    <package name="src">\n'
+            '      <classes>\n'
+            '        <class name="a.py" filename="src/a.py">\n'
+            '          <lines>\n'
+            '            <line number="5" hits="1"/>\n'
+            '            <line number="10" hits="0"/>\n'
+            '          </lines>\n'
+            '        </class>\n'
+            '      </classes>\n'
+            '    </package>\n'
+            '  </packages>\n'
+            '</coverage>\n'
+        )
+        with open(os.path.join("build", "coverage.xml"), "w", encoding="utf-8") as f:
+            f.write(xml_content)
+
+        cov = get_coverage_data()
+        self.assertIn("src/a.py", cov)
+        self.assertEqual(cov["src/a.py"], [5])
+
+    def test_get_coverage_data_in_build_directory_newest_mtime(self):
+        # Create build and out directories
+        os.makedirs("build", exist_ok=True)
+        os.makedirs("out", exist_ok=True)
+
+        xml_build = (
+            '<?xml version="1.0" ?>\n'
+            '<coverage line-rate="0.5">\n'
+            '  <packages>\n'
+            '    <package name="src">\n'
+            '      <classes>\n'
+            '        <class name="a.py" filename="src/a.py">\n'
+            '          <lines>\n'
+            '            <line number="5" hits="1"/>\n'
+            '          </lines>\n'
+            '        </class>\n'
+            '      </classes>\n'
+            '    </package>\n'
+            '  </packages>\n'
+            '</coverage>\n'
+        )
+        xml_out = (
+            '<?xml version="1.0" ?>\n'
+            '<coverage line-rate="0.5">\n'
+            '  <packages>\n'
+            '    <package name="src">\n'
+            '      <classes>\n'
+            '        <class name="a.py" filename="src/a.py">\n'
+            '          <lines>\n'
+            '            <line number="15" hits="1"/>\n'
+            '          </lines>\n'
+            '        </class>\n'
+            '      </classes>\n'
+            '    </package>\n'
+            '  </packages>\n'
+            '</coverage>\n'
+        )
+        build_path = os.path.join("build", "coverage.xml")
+        out_path = os.path.join("out", "coverage.xml")
+
+        with open(build_path, "w", encoding="utf-8") as f:
+            f.write(xml_build)
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write(xml_out)
+
+        # Make out/coverage.xml newer than build/coverage.xml
+        os.utime(build_path, (1000.0, 1000.0))
+        os.utime(out_path, (2000.0, 2000.0))
+
+        # Should parse coverage.xml from out/ (newer mtime)
+        cov = get_coverage_data()
+        self.assertIn("src/a.py", cov)
+        self.assertEqual(cov["src/a.py"], [15])
+
     def test_mine_relevant_unit_tests_regex(self):
         # Test regex-based unit test mining
         test_code = (
