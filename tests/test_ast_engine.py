@@ -409,6 +409,31 @@ class TestAstEngine(unittest.TestCase):
         # Lines 8 and 12 are inside comments and should be ignored.
         self.assertEqual([match["line"] for match in callers[file_path]], [2, 5, 7, 9, 14])
 
+    def test_trace_lexical_dependencies_regex_string_escapes(self):
+        code = (
+            "const s1 = \"escaped backslash \\\\\";\n"
+            "my_func(); // 2: Should match!\n"
+            "const s2 = \"\\\\\\\"\"; // 3: Escaped backslash and escaped quote (ends with \\\")\n"
+            "/*\n"
+            "  my_func(); // 5: Inside block comment, should be ignored\n"
+            "*/\n"
+            "my_func(); // 7: Should match!\n"
+            "const s3 = \"\\\"\"; // 8: Escaped quote (\"\\\")\n"
+            "my_func(); // 9: Should match!\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "escapes.js")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        cache = LRUFileCache(capacity=5)
+        cache.get_content(file_path)
+
+        callers = trace_lexical_dependencies_regex("my_func", [file_path], file_cache=cache)
+        self.assertIn(file_path, callers)
+        # Lines 2, 7, and 9 are actual callers.
+        # Line 5 is inside block comment.
+        self.assertEqual([match["line"] for match in callers[file_path]], [2, 7, 9])
+
     def test_extract_function_bounds_defensive(self):
         start, end = extract_function_bounds("some_file.py", 0, file_cache=self.cache)
         self.assertIsNone(start)
