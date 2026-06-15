@@ -307,7 +307,10 @@ def build_root_replacement_variants(original_root, target_root):
 
 
 def find_artifact_path(filename, base_dir=None):
-    """Find the most recently modified instance of filename in base_dir or its build subdirectories."""
+    """Find the most recently modified instance of filename.
+
+    Checks in base_dir and its configured build subdirectories.
+    """
     if base_dir is None:
         base_dir = os.getcwd()
 
@@ -335,7 +338,8 @@ def find_artifact_path(filename, base_dir=None):
     if not candidates:
         return None
 
-    # Return the one with the newest mtime, fallback to 0.0 if getmtime raises OSError (e.g. in mocked tests)
+    # Return the one with the newest mtime, fallback to 0.0 if getmtime
+    # raises OSError (e.g. in mocked tests).
     def safe_getmtime(path):
         try:
             return os.path.getmtime(path)
@@ -343,5 +347,3 @@ def find_artifact_path(filename, base_dir=None):
             return 0.0
 
     return max(candidates, key=safe_getmtime)
-
-

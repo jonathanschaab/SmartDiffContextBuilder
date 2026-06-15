@@ -487,6 +487,30 @@ def _create_config_if_requested(args_create_config, active_overrides):
             sys.exit(1)
 
 
+def _copy_worktree_artifact(filename, original_cwd, temp_worktree_dir, copy_fn):
+    """Find and safely copy/rewrite a build artifact to the temporary worktree."""
+    artifact_path = find_artifact_path(filename, original_cwd)
+    if not artifact_path:
+        return
+    use_fallback = False
+    try:
+        rel_path = os.path.relpath(artifact_path, original_cwd)
+        if rel_path.startswith("..") or os.path.isabs(rel_path):
+            use_fallback = True
+        else:
+            target_path = os.path.abspath(os.path.join(temp_worktree_dir, rel_path))
+            if not path_is_within_root(target_path, temp_worktree_dir):
+                use_fallback = True
+    except (ValueError, TypeError, AttributeError):
+        use_fallback = True
+
+    if use_fallback:
+        target_path = os.path.join(temp_worktree_dir, filename)
+
+    os.makedirs(os.path.dirname(target_path), exist_ok=True)
+    copy_fn(artifact_path, target_path)
+
+
 def _setup_temp_worktree(temp_worktree_dir, end_sha, original_cwd):
     """Set up git worktree and copy configuration files."""
     add_res = run_git_process(
@@ -512,53 +536,24 @@ def _setup_temp_worktree(temp_worktree_dir, end_sha, original_cwd):
             pass
         sys.exit(1)
 
-    compile_commands_path = find_artifact_path("compile_commands.json", original_cwd)
-    if compile_commands_path:
-        use_fallback = False
-        try:
-            rel_path = os.path.relpath(compile_commands_path, original_cwd)
-            if rel_path.startswith("..") or os.path.isabs(rel_path):
-                use_fallback = True
-            else:
-                target_path = os.path.abspath(os.path.join(temp_worktree_dir, rel_path))
-                if not path_is_within_root(target_path, temp_worktree_dir):
-                    use_fallback = True
-        except (ValueError, TypeError, AttributeError):
-            use_fallback = True
-
-        if use_fallback:
-            target_path = os.path.join(temp_worktree_dir, "compile_commands.json")
-
-        os.makedirs(os.path.dirname(target_path), exist_ok=True)
-        _rewrite_worktree_compile_commands(
-            compile_commands_path,
-            target_path,
+    _copy_worktree_artifact(
+        "compile_commands.json",
+        original_cwd,
+        temp_worktree_dir,
+        lambda src, dest: _rewrite_worktree_compile_commands(
+            src,
+            dest,
             original_cwd,
             temp_worktree_dir,
-        )
+        ),
+    )
 
-    coverage_xml_path = find_artifact_path("coverage.xml", original_cwd)
-    if coverage_xml_path:
-        use_fallback = False
-        try:
-            rel_path = os.path.relpath(coverage_xml_path, original_cwd)
-            if rel_path.startswith("..") or os.path.isabs(rel_path):
-                use_fallback = True
-            else:
-                target_path = os.path.abspath(os.path.join(temp_worktree_dir, rel_path))
-                if not path_is_within_root(target_path, temp_worktree_dir):
-                    use_fallback = True
-        except (ValueError, TypeError, AttributeError):
-            use_fallback = True
-
-        if use_fallback:
-            target_path = os.path.join(temp_worktree_dir, "coverage.xml")
-
-        os.makedirs(os.path.dirname(target_path), exist_ok=True)
-        shutil.copy(
-            coverage_xml_path,
-            target_path,
-        )
+    _copy_worktree_artifact(
+        "coverage.xml",
+        original_cwd,
+        temp_worktree_dir,
+        shutil.copy,
+    )
 
 def _build_worktree_root_replacements(original_root, worktree_root):
     """Build boundary-aware root replacements for both slash styles."""

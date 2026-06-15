@@ -109,7 +109,7 @@ class TestPreprocessor(unittest.TestCase):
         build_path = os.path.join("build", "compile_commands.json")
         with open(build_path, "w") as f:
             json.dump(db_build, f)
-        
+
         # Create compile_commands.json in out
         db_out = [
             {
