@@ -32,6 +32,7 @@ class TestPreprocessor(unittest.TestCase):
         _preprocessor_mod._COMPILE_COMMANDS_STATE["cache"] = None
         _preprocessor_mod._COMPILE_COMMANDS_STATE["mtime"] = None
         _preprocessor_mod._COMPILE_COMMANDS_STATE["path"] = None
+        _preprocessor_mod._COMPILE_COMMANDS_STATE["cwd"] = None
         _preprocessor_mod.clear_preprocessed_cache()
 
     def tearDown(self):
@@ -1146,3 +1147,26 @@ helper.h"
             args = call_args[0]
             if len(args) >= 2:
                 self.assertNotEqual(args[1], "/path/to/repo")
+
+    @patch("context_builder.preprocessor.find_artifact_path")
+    def test_analyze_compile_commands_path_cache_optimization(self, mock_find):
+        # Create compile_commands.json
+        db = [
+            {
+                "directory": ".",
+                "command": "clang++ -c main.cpp",
+                "file": "main.cpp"
+            }
+        ]
+        with open("compile_commands.json", "w") as f:
+            json.dump(db, f)
+
+        mock_find.return_value = os.path.abspath("compile_commands.json")
+
+        # First call should call find_artifact_path
+        analyze_compile_commands("main.h")
+        self.assertEqual(mock_find.call_count, 1)
+
+        # Second call should reuse cached path and not call find_artifact_path again
+        analyze_compile_commands("main.h")
+        self.assertEqual(mock_find.call_count, 1)
