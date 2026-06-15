@@ -12,6 +12,7 @@ class PythonProfile(LanguageProfile):
     extensions = frozenset({".py"})
     comment_prefix = "#"
     line_comment = "#"
+    multiline_string_delimiters = ('"""', "'''")
     supports_block_comments = False
     uses_indentation_blocks = True
     lsp_command = ("pylsp",)

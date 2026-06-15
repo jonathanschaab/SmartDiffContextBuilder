@@ -10,6 +10,7 @@ class JavaScriptProfile(LanguageProfile):
 
     name = "javascript"
     extensions = frozenset({".js"})
+    multiline_string_delimiters = ("`",)
 
     def _get_boundaries(self, func_name):
         """Return the JS/TS specific regex boundary patterns (lead_b, trail_b) for func_name."""

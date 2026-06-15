@@ -243,6 +243,33 @@ class TestAstEngine(unittest.TestCase):
         self.assertIn(file_path, callers)
         self.assertEqual([match["line"] for match in callers[file_path]], [3])
 
+    def test_trace_lexical_dependencies_regex_python_multiline_strings(self):
+        code = (
+            "# Triple quotes commented out by #\n"
+            "# \"\"\"\n"
+            "# inside comment\n"
+            "# \"\"\"\n"
+            "my_func() # 5: Should match!\n"
+            "\"\"\"\n"
+            "This is a multiline docstring\n"
+            "my_func() # 8: Inside docstring, should be ignored!\n"
+            "# inside docstring\n"
+            "\"\"\"\n"
+            "my_func() # 11: Should match!\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "docstrings.py")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        cache = LRUFileCache(capacity=5)
+        cache.get_content(file_path)
+
+        callers = trace_lexical_dependencies_regex("my_func", [file_path], file_cache=cache)
+        self.assertIn(file_path, callers)
+        # Only lines 5 and 11 are actual callers.
+        # Line 8 is inside a docstring and should be ignored.
+        self.assertEqual([match["line"] for match in callers[file_path]], [5, 11])
+
     def test_trace_lexical_dependencies_regex_js_inline_object_returns(self):
         code = (
             "class MyClass {\n"

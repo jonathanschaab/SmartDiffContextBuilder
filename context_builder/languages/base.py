@@ -34,6 +34,7 @@ class LanguageProfile:
     lsp_command = None
     test_query = None
     tests_can_share_source_file = False
+    multiline_string_delimiters = ()
     _cached_block_comment_pattern = None
 
     @staticmethod
@@ -88,28 +89,53 @@ class LanguageProfile:
         return lead_b, trail_b
 
     def strip_block_comments(self, content):
-        """Remove block comments from content.
+        """Remove block comments and multiline string literals from content.
 
         Replaces them with newlines to preserve line count.
         """
         if (
-            not self.supports_block_comments
-            or not self.block_comment_start
-            or not self.block_comment_end
-            or self.block_comment_start not in content
+            (
+                not self.supports_block_comments
+                or not self.block_comment_start
+                or not self.block_comment_end
+            )
+            and not self.multiline_string_delimiters
         ):
+            return content
+
+        # Early return check if none of the multiline starts are present
+        starts = []
+        if self.supports_block_comments and self.block_comment_start:
+            starts.append(self.block_comment_start)
+        starts.extend(self.multiline_string_delimiters)
+        if not any(start in content for start in starts):
             return content
 
         pattern = self._cached_block_comment_pattern
         if pattern is None:
-            escaped_start = re.escape(self.block_comment_start)
-            escaped_end = re.escape(self.block_comment_end)
-            # Match comments (group 'comment') or string literals (group 'string')
-            # Group 3 is the quote character, Group 4 is the backslash check.
-            parts = [
-                rf'(?P<comment>{escaped_start}.*?{escaped_end})',
-                r'(?P<string>(["\'`])(?:(?=(\\?))\4.)*?\3)'
-            ]
+            parts = []
+            if (
+                self.supports_block_comments
+                and self.block_comment_start
+                and self.block_comment_end
+            ):
+                escaped_start = re.escape(self.block_comment_start)
+                escaped_end = re.escape(self.block_comment_end)
+                parts.append(rf'(?P<comment>{escaped_start}.*?{escaped_end})')
+
+            for i, delim in enumerate(self.multiline_string_delimiters):
+                escaped_delim = re.escape(delim)
+                parts.append(
+                    rf'(?P<multiline_{i}>'
+                    rf'{escaped_delim}(?:\\.|(?!{escaped_delim}).)*?{escaped_delim})'
+                )
+
+            # Named backreferences to avoid quote capturing group offset issues
+            parts.append(
+                r'(?P<string>(?P<quote>["\'])'
+                r'(?:(?=(?P<backslash>\\?))(?P=backslash).)*?(?P=quote))'
+            )
+
             if self.line_comment:
                 escaped_line_comment = re.escape(self.line_comment)
                 parts.append(rf'(?P<line_comment>{escaped_line_comment}[^\n]*)')
@@ -118,8 +144,12 @@ class LanguageProfile:
             self._cached_block_comment_pattern = pattern
 
         def replacer(match):
-            if match.group("comment") is not None:
+            group_dict = match.groupdict()
+            if group_dict.get("comment") is not None:
                 return "\n" * match.group("comment").count("\n")
+            for key, val in group_dict.items():
+                if key.startswith("multiline_") and val is not None:
+                    return "\n" * val.count("\n")
             return match.group(0)
 
         return pattern.sub(replacer, content)
