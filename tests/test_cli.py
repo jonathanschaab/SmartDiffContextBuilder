@@ -1200,10 +1200,12 @@ class TestCLI(unittest.TestCase):
     @patch("context_builder.cli._rewrite_worktree_compile_commands")
     @patch("shutil.copy")
     @patch("context_builder.cli.find_artifact_path")
+    @patch("context_builder.cli.os.path.relpath")
     @patch("os.makedirs", wraps=os.makedirs)
     def test_cli_worktree_copies_build_artifacts_traversal_and_drive_fallback(
         self,
         mock_makedirs,
+        mock_relpath,
         mock_find_artifact,
         mock_copy,
         mock_rewrite_compile_commands,
@@ -1230,11 +1232,17 @@ class TestCLI(unittest.TestCase):
             return res
         mock_sub_run.side_effect = sub_run_side_effect
 
-        # Mock outside paths to trigger traversal / drive mismatch fallback
-        mock_find_artifact.side_effect = lambda filename, base_dir=None: (
-            "/tmp/build/compile_commands.json" if "compile_commands" in filename
-            else "D:/build/coverage.xml"
-        )
+        # Mock find_artifact to return filename
+        mock_find_artifact.side_effect = lambda filename, base_dir=None: filename
+
+        # Mock relpath to trigger traversal and drive mismatch fallbacks
+        def relpath_side_effect(path, start):
+            if "compile_commands.json" in path:
+                return "../outside/compile_commands.json"
+            if "coverage.xml" in path:
+                raise ValueError("drive mismatch")
+            return os.path.relpath(path, start)
+        mock_relpath.side_effect = relpath_side_effect
 
         main()
 
