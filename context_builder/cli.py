@@ -35,6 +35,8 @@ from .path_utils import (
     build_root_replacement_variants,
     clear_path_case_caches,
     detect_root_case_sensitivity,
+    find_artifact_path,
+    path_is_within_root,
 )
 from .preprocessor import (
     analyze_compile_commands,
@@ -439,6 +441,7 @@ def _merge_json_mappings(args, active_overrides):
         "callee_query_strings": "callee_query_strings",
         "callee_ignored_keywords": "callee_ignored_keywords",
         "ffi_patterns": "ffi_patterns",
+        "build_directories": "build_directories",
     }
 
     for arg_name, cfg_key in json_mappings.items():
@@ -484,6 +487,30 @@ def _create_config_if_requested(args_create_config, active_overrides):
             sys.exit(1)
 
 
+def _copy_worktree_artifact(filename, original_cwd, temp_worktree_dir, copy_fn):
+    """Find and safely copy/rewrite a build artifact to the temporary worktree."""
+    artifact_path = find_artifact_path(filename, original_cwd)
+    if not artifact_path:
+        return
+    use_fallback = False
+    try:
+        rel_path = os.path.relpath(artifact_path, original_cwd)
+        if rel_path.startswith("..") or os.path.isabs(rel_path):
+            use_fallback = True
+        else:
+            target_path = os.path.abspath(os.path.join(temp_worktree_dir, rel_path))
+            if not path_is_within_root(target_path, temp_worktree_dir):
+                use_fallback = True
+    except (ValueError, TypeError, AttributeError, OSError):
+        use_fallback = True
+
+    if use_fallback:
+        target_path = os.path.join(temp_worktree_dir, filename)
+
+    os.makedirs(os.path.dirname(target_path), exist_ok=True)
+    copy_fn(artifact_path, target_path)
+
+
 def _setup_temp_worktree(temp_worktree_dir, end_sha, original_cwd):
     """Set up git worktree and copy configuration files."""
     add_res = run_git_process(
@@ -509,21 +536,24 @@ def _setup_temp_worktree(temp_worktree_dir, end_sha, original_cwd):
             pass
         sys.exit(1)
 
-    compile_commands_path = os.path.join(original_cwd, "compile_commands.json")
-    if os.path.exists(compile_commands_path):
-        _rewrite_worktree_compile_commands(
-            compile_commands_path,
-            os.path.join(temp_worktree_dir, "compile_commands.json"),
+    _copy_worktree_artifact(
+        "compile_commands.json",
+        original_cwd,
+        temp_worktree_dir,
+        lambda src, dest: _rewrite_worktree_compile_commands(
+            src,
+            dest,
             original_cwd,
             temp_worktree_dir,
-        )
+        ),
+    )
 
-    coverage_xml_path = os.path.join(original_cwd, "coverage.xml")
-    if os.path.exists(coverage_xml_path):
-        shutil.copy(
-            coverage_xml_path,
-            os.path.join(temp_worktree_dir, "coverage.xml")
-        )
+    _copy_worktree_artifact(
+        "coverage.xml",
+        original_cwd,
+        temp_worktree_dir,
+        shutil.copy,
+    )
 
 def _build_worktree_root_replacements(original_root, worktree_root):
     """Build boundary-aware root replacements for both slash styles."""
@@ -808,6 +838,12 @@ def main():
         type=str,
         default=None,
         help="Ripgrep prefilter that must match every file eligible for --ffi-patterns",
+    )
+    parser.add_argument(
+        "--build-directories",
+        type=str,
+        default=None,
+        help="JSON list of build directories to scan",
     )
 
     args = parser.parse_args()

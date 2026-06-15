@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch, MagicMock, ANY
 import json
 from context_builder.cache import LRUFileCache
-from context_builder.config import CONFIG
+from context_builder.config import CONFIG, reset_config
 import context_builder.preprocessor as _preprocessor_mod
 from context_builder.sys_utils import FileScanCandidates
 from context_builder.preprocessor import (
@@ -22,6 +22,7 @@ from context_builder.preprocessor import (
 
 class TestPreprocessor(unittest.TestCase):
     def setUp(self):
+        reset_config()
         self.temp_dir = tempfile.TemporaryDirectory()
         self.old_cwd = os.getcwd()
         os.chdir(self.temp_dir.name)
@@ -31,11 +32,13 @@ class TestPreprocessor(unittest.TestCase):
         _preprocessor_mod._COMPILE_COMMANDS_STATE["cache"] = None
         _preprocessor_mod._COMPILE_COMMANDS_STATE["mtime"] = None
         _preprocessor_mod._COMPILE_COMMANDS_STATE["path"] = None
+        _preprocessor_mod._COMPILE_COMMANDS_STATE["cwd"] = None
         _preprocessor_mod.clear_preprocessed_cache()
 
     def tearDown(self):
         os.chdir(self.old_cwd)
         self.temp_dir.cleanup()
+        reset_config()
 
     def test_analyze_compile_commands(self):
         # Create compile_commands.json
@@ -71,6 +74,72 @@ class TestPreprocessor(unittest.TestCase):
             callers["main.cpp"][0]["code"],
             "// [Compilation Link via compile_commands.json]"
         )
+
+    def test_analyze_compile_commands_in_build_directory(self):
+        # Create a build directory
+        os.makedirs("build", exist_ok=True)
+        # Create compile_commands.json in the build directory
+        db = [
+            {
+                "directory": ".",
+                "command": "clang++ -c main.cpp",
+                "file": "main.cpp"
+            }
+        ]
+        with open(os.path.join("build", "compile_commands.json"), "w") as f:
+            json.dump(db, f)
+
+        # Create main.cpp that includes main.h
+        with open("main.cpp", "w") as f:
+            f.write('#include "main.h"\n')
+
+        # Target file is main.h.
+        callers = analyze_compile_commands("main.h")
+        self.assertIn("main.cpp", callers)
+
+    def test_analyze_compile_commands_in_build_directory_newest_mtime(self):
+        # Create a build directory and an out directory
+        os.makedirs("build", exist_ok=True)
+        os.makedirs("out", exist_ok=True)
+        # Create compile_commands.json in build
+        db_build = [
+            {
+                "directory": ".",
+                "command": "clang++ -c main.cpp",
+                "file": "main.cpp"
+            }
+        ]
+        build_path = os.path.join("build", "compile_commands.json")
+        with open(build_path, "w") as f:
+            json.dump(db_build, f)
+
+        # Create compile_commands.json in out
+        db_out = [
+            {
+                "directory": ".",
+                "command": "clang++ -c other.cpp",
+                "file": "other.cpp"
+            }
+        ]
+        out_path = os.path.join("out", "compile_commands.json")
+        with open(out_path, "w") as f:
+            json.dump(db_out, f)
+
+        # Make out/compile_commands.json newer than build/compile_commands.json
+        # Set build file's mtime to 1000 seconds ago, and out file's mtime to now
+        os.utime(build_path, (1000.0, 1000.0))
+        os.utime(out_path, (2000.0, 2000.0))
+
+        # Create main.cpp and other.cpp that include main.h
+        with open("main.cpp", "w") as f:
+            f.write('#include "main.h"\n')
+        with open("other.cpp", "w") as f:
+            f.write('#include "main.h"\n')
+
+        # Should find compile_commands.json in out/ (newer mtime) and link to other.cpp
+        callers = analyze_compile_commands("main.h")
+        self.assertIn("other.cpp", callers)
+        self.assertNotIn("main.cpp", callers)
 
     def test_analyze_compile_commands_precise_include(self):
         # Create compile_commands.json
@@ -1078,3 +1147,26 @@ helper.h"
             args = call_args[0]
             if len(args) >= 2:
                 self.assertNotEqual(args[1], "/path/to/repo")
+
+    @patch("context_builder.preprocessor.find_artifact_path")
+    def test_analyze_compile_commands_path_cache_optimization(self, mock_find):
+        # Create compile_commands.json
+        db = [
+            {
+                "directory": ".",
+                "command": "clang++ -c main.cpp",
+                "file": "main.cpp"
+            }
+        ]
+        with open("compile_commands.json", "w") as f:
+            json.dump(db, f)
+
+        mock_find.return_value = os.path.abspath("compile_commands.json")
+
+        # First call should call find_artifact_path
+        analyze_compile_commands("main.h")
+        self.assertEqual(mock_find.call_count, 1)
+
+        # Second call should reuse cached path and not call find_artifact_path again
+        analyze_compile_commands("main.h")
+        self.assertEqual(mock_find.call_count, 1)

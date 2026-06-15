@@ -11,6 +11,7 @@ from .config import CONFIG
 from .languages import get_language_profile
 from .path_utils import (
     detect_root_case_sensitivity,
+    find_artifact_path,
     path_is_within_root,
     to_forward_slashes,
 )
@@ -366,7 +367,7 @@ def trace_ffi_callers(func_name, repo_files, source_ext, file_cache=None):
 
 
 # State container to avoid 'global' keyword warning in analyze_compile_commands
-_COMPILE_COMMANDS_STATE = {"cache": None, "mtime": None, "path": None}
+_COMPILE_COMMANDS_STATE = {"cache": None, "mtime": None, "path": None, "cwd": None}
 
 
 def _process_compilation_entry(
@@ -446,21 +447,30 @@ def analyze_compile_commands(target_file, file_cache=None, repo_root=None):
     target_base = os.path.basename(target_file)
     if not target_base:
         return callers
-    if not os.path.exists("compile_commands.json"):
+    current_cwd = os.getcwd()
+    db_path = _COMPILE_COMMANDS_STATE["path"]
+    if (
+        not db_path
+        or _COMPILE_COMMANDS_STATE["cwd"] != current_cwd
+        or not os.path.isfile(db_path)
+    ):
+        db_path = find_artifact_path("compile_commands.json")
+    if not db_path:
         return callers
     try:
         # Cache the parsed database to avoid repeatedly reading/parsing it in a loop.
-        abs_db_path = os.path.abspath("compile_commands.json")
-        mtime = os.path.getmtime("compile_commands.json")
+        abs_db_path = os.path.abspath(db_path)
+        mtime = os.path.getmtime(db_path)
         if (
             _COMPILE_COMMANDS_STATE["cache"] is None
             or _COMPILE_COMMANDS_STATE["path"] != abs_db_path
             or _COMPILE_COMMANDS_STATE["mtime"] != mtime
         ):
-            with open("compile_commands.json", "r", encoding="utf-8") as f:
+            with open(db_path, "r", encoding="utf-8") as f:
                 _COMPILE_COMMANDS_STATE["cache"] = json.load(f)
             _COMPILE_COMMANDS_STATE["mtime"] = mtime
             _COMPILE_COMMANDS_STATE["path"] = abs_db_path
+            _COMPILE_COMMANDS_STATE["cwd"] = current_cwd
         db = _COMPILE_COMMANDS_STATE["cache"] or []
         # Build target pattern to allow line continuations between any characters
         # of the target base name. E.g. 'helper.h' -> 'h(?:\\\r?\n)?e...'

@@ -11,6 +11,7 @@ from .ast_engine import AST_ENGINE, extract_function_bounds_regex
 from .cache import get_global_cache
 from .languages import get_language_profile
 from .sys_utils import iter_scan_progress, ripgrep_filter, warn_once
+from .path_utils import find_artifact_path
 
 
 def get_coverage_data():
@@ -20,9 +21,10 @@ def get_coverage_data():
         dict: Mapping of normalized filename to list of covered lines.
     """
     cov_map = {}
-    if os.path.exists("coverage.xml"):
+    cov_path = find_artifact_path("coverage.xml")
+    if cov_path:
         try:
-            tree = ET.parse("coverage.xml")
+            tree = ET.parse(cov_path)
             root = tree.getroot()
             for cls in root.iter("class"):
                 filename = cls.get("filename")

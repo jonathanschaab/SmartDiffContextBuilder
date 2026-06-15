@@ -1042,9 +1042,9 @@ class TestCLI(unittest.TestCase):
     @patch("context_builder.cli.run_git_process")
     @patch("shutil.rmtree")
     @patch("shutil.copy")
-    @patch("os.path.exists")
+    @patch("context_builder.path_utils.os.path.isfile")
     def test_cli_worktree_cleanup_on_copy_exception(
-        self, mock_exists, mock_copy, mock_rmtree, mock_sub_run, mock_cleanup_lsps, mock_run_scan, mock_resolve_range, mock_parse_args
+        self, mock_isfile, mock_copy, mock_rmtree, mock_sub_run, mock_cleanup_lsps, mock_run_scan, mock_resolve_range, mock_parse_args
     ):
         """If shutil.copy raises an exception, the worktree must still be cleaned up."""
         mock_args = CliNamespace()
@@ -1052,7 +1052,7 @@ class TestCLI(unittest.TestCase):
         mock_parse_args.return_value = mock_args
         mock_resolve_range.return_value = ("sha_start", "sha_end")
 
-        mock_exists.return_value = True
+        mock_isfile.return_value = True
         mock_copy.side_effect = IOError("Disk full or permission denied")
 
         # Record call order to check cleanup is run
@@ -1095,9 +1095,9 @@ class TestCLI(unittest.TestCase):
     @patch("shutil.rmtree")
     @patch("context_builder.cli._rewrite_worktree_compile_commands")
     @patch("shutil.copy")
-    @patch("os.path.exists")
+    @patch("context_builder.path_utils.os.path.isfile")
     def test_cli_worktree_copies_coverage_xml(
-        self, mock_exists, mock_copy, mock_rewrite_compile_commands, mock_rmtree, mock_sub_run, mock_cleanup_lsps, mock_run_scan, mock_resolve_range, mock_parse_args
+        self, mock_isfile, mock_copy, mock_rewrite_compile_commands, mock_rmtree, mock_sub_run, mock_cleanup_lsps, mock_run_scan, mock_resolve_range, mock_parse_args
     ):
         """Verify that coverage.xml is copied to the temporary worktree if it exists in the original repo root."""
         mock_args = CliNamespace()
@@ -1117,7 +1117,7 @@ class TestCLI(unittest.TestCase):
         mock_sub_run.side_effect = sub_run_side_effect
 
         # Mock existence of compile_commands.json and coverage.xml
-        mock_exists.side_effect = lambda path: "compile_commands.json" in path or "coverage.xml" in path
+        mock_isfile.side_effect = lambda path: "compile_commands.json" in path or "coverage.xml" in path
 
         main()
 
@@ -1125,6 +1125,139 @@ class TestCLI(unittest.TestCase):
         mock_rewrite_compile_commands.assert_called_once()
         copy_calls = [call[0][0] for call in mock_copy.call_args_list]
         self.assertTrue(any("coverage.xml" in c for c in copy_calls))
+
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    @patch("context_builder.cli.parse_and_resolve_range")
+    @patch("context_builder.cli.run_scan")
+    @patch("context_builder.cli.cleanup_zombie_lsps")
+    @patch("context_builder.cli.run_git_process")
+    @patch("shutil.rmtree")
+    @patch("context_builder.cli._rewrite_worktree_compile_commands")
+    @patch("shutil.copy")
+    @patch("context_builder.path_utils.os.path.isfile")
+    @patch("os.makedirs", wraps=os.makedirs)
+    def test_cli_worktree_copies_build_artifacts(
+        self,
+        mock_makedirs,
+        mock_isfile,
+        mock_copy,
+        mock_rewrite_compile_commands,
+        mock_rmtree,
+        mock_sub_run,
+        mock_cleanup_lsps,
+        mock_run_scan,
+        mock_resolve_range,
+        mock_parse_args,
+    ):
+        """Verify that compile_commands.json and coverage.xml in build dirs are copied/rewritten to correct relative paths."""
+        mock_args = CliNamespace()
+        mock_args.commit_range = "-1"
+        mock_parse_args.return_value = mock_args
+        mock_resolve_range.return_value = ("sha_start", "sha_end")
+
+        def sub_run_side_effect(*args, **kwargs):
+            cmd = args[0] if args else kwargs.get("args", [])
+            if isinstance(cmd, list) and "worktree" in cmd:
+                if "add" in cmd:
+                    os.makedirs(cmd[4], exist_ok=True)
+            res = MagicMock(returncode=0)
+            res.stdout = "different_head_sha\n"
+            return res
+        mock_sub_run.side_effect = sub_run_side_effect
+
+        def exists_side_effect(path):
+            normalized = path.replace("\\", "/")
+            return "build/compile_commands.json" in normalized or "out/coverage.xml" in normalized
+        mock_isfile.side_effect = exists_side_effect
+
+        main()
+
+        # Check rewrite is called with the build subdirectory path and target subdirectory path
+        mock_rewrite_compile_commands.assert_called_once()
+        src_path = mock_rewrite_compile_commands.call_args[0][0]
+        dest_path = mock_rewrite_compile_commands.call_args[0][1]
+        self.assertTrue(src_path.replace("\\", "/").endswith("build/compile_commands.json"))
+        self.assertTrue(dest_path.replace("\\", "/").endswith("build/compile_commands.json"))
+
+        # Check copy is called for coverage.xml
+        mock_copy.assert_called_once()
+        copy_src = mock_copy.call_args[0][0]
+        copy_dest = mock_copy.call_args[0][1]
+        self.assertTrue(copy_src.replace("\\", "/").endswith("out/coverage.xml"))
+        self.assertTrue(copy_dest.replace("\\", "/").endswith("out/coverage.xml"))
+
+        # Check makedirs is called for both target parent directories
+        makedirs_calls = [c[0][0].replace("\\", "/") for c in mock_makedirs.call_args_list]
+        self.assertTrue(any(c.endswith("/build") for c in makedirs_calls))
+        self.assertTrue(any(c.endswith("/out") for c in makedirs_calls))
+
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    @patch("context_builder.cli.parse_and_resolve_range")
+    @patch("context_builder.cli.run_scan")
+    @patch("context_builder.cli.cleanup_zombie_lsps")
+    @patch("context_builder.cli.run_git_process")
+    @patch("shutil.rmtree")
+    @patch("context_builder.cli._rewrite_worktree_compile_commands")
+    @patch("shutil.copy")
+    @patch("context_builder.cli.find_artifact_path")
+    @patch("context_builder.cli.os.path.relpath")
+    @patch("os.makedirs", wraps=os.makedirs)
+    def test_cli_worktree_copies_build_artifacts_traversal_and_drive_fallback(
+        self,
+        mock_makedirs,
+        mock_relpath,
+        mock_find_artifact,
+        mock_copy,
+        mock_rewrite_compile_commands,
+        mock_rmtree,
+        mock_sub_run,
+        mock_cleanup_lsps,
+        mock_run_scan,
+        mock_resolve_range,
+        mock_parse_args,
+    ):
+        """Verify that outside or different-drive paths fallback to root-level copies in the worktree."""
+        mock_args = CliNamespace()
+        mock_args.commit_range = "-1"
+        mock_parse_args.return_value = mock_args
+        mock_resolve_range.return_value = ("sha_start", "sha_end")
+
+        def sub_run_side_effect(*args, **kwargs):
+            cmd = args[0] if args else kwargs.get("args", [])
+            if isinstance(cmd, list) and "worktree" in cmd:
+                if "add" in cmd:
+                    os.makedirs(cmd[4], exist_ok=True)
+            res = MagicMock(returncode=0)
+            res.stdout = "different_head_sha\n"
+            return res
+        mock_sub_run.side_effect = sub_run_side_effect
+
+        # Mock find_artifact to return filename
+        mock_find_artifact.side_effect = lambda filename, base_dir=None: filename
+
+        # Mock relpath to trigger traversal and drive mismatch fallbacks
+        def relpath_side_effect(path, start):
+            if "compile_commands.json" in path:
+                return "../outside/compile_commands.json"
+            if "coverage.xml" in path:
+                raise ValueError("drive mismatch")
+            return os.path.relpath(path, start)
+        mock_relpath.side_effect = relpath_side_effect
+
+        main()
+
+        # Both should fallback to root of temp_worktree_dir
+        mock_rewrite_compile_commands.assert_called_once()
+        dest_cc = mock_rewrite_compile_commands.call_args[0][1]
+        self.assertTrue(dest_cc.replace("\\", "/").endswith("/compile_commands.json"))
+        # Verify it's directly in the root of the worktree (no "build" or "tmp" directory prefix)
+        self.assertNotIn("build", os.path.basename(os.path.dirname(dest_cc)))
+        self.assertNotIn("tmp", os.path.basename(os.path.dirname(dest_cc)))
+
+        mock_copy.assert_called_once()
+        dest_cov = mock_copy.call_args[0][1]
+        self.assertTrue(dest_cov.replace("\\", "/").endswith("/coverage.xml"))
+        self.assertNotIn("build", os.path.basename(os.path.dirname(dest_cov)))
 
     @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
     @patch("context_builder.cli.parse_and_resolve_range")

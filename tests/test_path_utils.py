@@ -1,6 +1,8 @@
-# pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
+# pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring,too-many-public-methods
 
+import os
 import subprocess
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -10,6 +12,7 @@ from context_builder.path_utils import (
     build_root_replacement_variants,
     clear_path_case_caches,
     detect_root_case_sensitivity,
+    find_artifact_path,
     get_path_case_override,
     is_explicit_posix_style_path,
     is_path_case_sensitive,
@@ -199,6 +202,39 @@ class TestPathUtils(unittest.TestCase):
         # and should return candidates for root_path.
         candidates = list(_iter_case_override_candidates(None, root_path=r"C:\Repo"))
         self.assertIn("C:/Repo", candidates)
+
+    def test_find_artifact_path_defensive(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # 1. Non-list / Non-iterable build_directories
+            CONFIG["build_directories"] = 123
+            # Should not raise TypeError and return None
+            self.assertIsNone(find_artifact_path("compile_commands.json", base_dir=tmpdir))
+
+            # 2. List containing non-string elements (e.g. integers, dicts)
+            CONFIG["build_directories"] = ["build", 123, None, {"a": 1}]
+            # Should gracefully skip non-string elements and not crash
+            self.assertIsNone(find_artifact_path("compile_commands.json", base_dir=tmpdir))
+
+    def test_find_artifact_path_skips_directories(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create a directory with the name "coverage.xml"
+            dir_path = os.path.join(tmpdir, "coverage.xml")
+            os.makedirs(dir_path, exist_ok=True)
+
+            # Should not find it since it is a directory, not a file
+            self.assertIsNone(find_artifact_path("coverage.xml", base_dir=tmpdir))
+
+            # Now create a build directory
+            build_dir = os.path.join(tmpdir, "build")
+            os.makedirs(build_dir, exist_ok=True)
+            # Create a folder named "compile_commands.json" inside build
+            folder_cc = os.path.join(build_dir, "compile_commands.json")
+            os.makedirs(folder_cc, exist_ok=True)
+
+            CONFIG["build_directories"] = ["build"]
+            self.assertIsNone(find_artifact_path("compile_commands.json", base_dir=tmpdir))
+
+
 
 
 if __name__ == "__main__":
