@@ -10,6 +10,7 @@ from context_builder.path_utils import (
     build_root_replacement_variants,
     clear_path_case_caches,
     detect_root_case_sensitivity,
+    find_artifact_path,
     get_path_case_override,
     is_explicit_posix_style_path,
     is_path_case_sensitive,
@@ -199,6 +200,18 @@ class TestPathUtils(unittest.TestCase):
         # and should return candidates for root_path.
         candidates = list(_iter_case_override_candidates(None, root_path=r"C:\Repo"))
         self.assertIn("C:/Repo", candidates)
+
+    def test_find_artifact_path_defensive(self):
+        # 1. Non-list / Non-iterable build_directories
+        CONFIG["build_directories"] = 123
+        # Should not raise TypeError and return None (since compile_commands.json doesn't exist)
+        self.assertIsNone(find_artifact_path("compile_commands.json"))
+
+        # 2. List containing non-string elements (e.g. integers, dicts)
+        CONFIG["build_directories"] = ["build", 123, None, {"a": 1}]
+        # Should gracefully skip non-string elements and not crash
+        self.assertIsNone(find_artifact_path("compile_commands.json"))
+
 
 
 if __name__ == "__main__":

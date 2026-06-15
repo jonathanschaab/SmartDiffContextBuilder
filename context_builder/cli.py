@@ -36,6 +36,7 @@ from .path_utils import (
     clear_path_case_caches,
     detect_root_case_sensitivity,
     find_artifact_path,
+    path_is_within_root,
 )
 from .preprocessor import (
     analyze_compile_commands,
@@ -513,8 +514,21 @@ def _setup_temp_worktree(temp_worktree_dir, end_sha, original_cwd):
 
     compile_commands_path = find_artifact_path("compile_commands.json", original_cwd)
     if compile_commands_path:
-        rel_path = os.path.relpath(compile_commands_path, original_cwd)
-        target_path = os.path.join(temp_worktree_dir, rel_path)
+        use_fallback = False
+        try:
+            rel_path = os.path.relpath(compile_commands_path, original_cwd)
+            if rel_path.startswith("..") or os.path.isabs(rel_path):
+                use_fallback = True
+            else:
+                target_path = os.path.abspath(os.path.join(temp_worktree_dir, rel_path))
+                if not path_is_within_root(target_path, temp_worktree_dir):
+                    use_fallback = True
+        except (ValueError, TypeError, AttributeError):
+            use_fallback = True
+
+        if use_fallback:
+            target_path = os.path.join(temp_worktree_dir, "compile_commands.json")
+
         os.makedirs(os.path.dirname(target_path), exist_ok=True)
         _rewrite_worktree_compile_commands(
             compile_commands_path,
@@ -525,8 +539,21 @@ def _setup_temp_worktree(temp_worktree_dir, end_sha, original_cwd):
 
     coverage_xml_path = find_artifact_path("coverage.xml", original_cwd)
     if coverage_xml_path:
-        rel_path = os.path.relpath(coverage_xml_path, original_cwd)
-        target_path = os.path.join(temp_worktree_dir, rel_path)
+        use_fallback = False
+        try:
+            rel_path = os.path.relpath(coverage_xml_path, original_cwd)
+            if rel_path.startswith("..") or os.path.isabs(rel_path):
+                use_fallback = True
+            else:
+                target_path = os.path.abspath(os.path.join(temp_worktree_dir, rel_path))
+                if not path_is_within_root(target_path, temp_worktree_dir):
+                    use_fallback = True
+        except (ValueError, TypeError, AttributeError):
+            use_fallback = True
+
+        if use_fallback:
+            target_path = os.path.join(temp_worktree_dir, "coverage.xml")
+
         os.makedirs(os.path.dirname(target_path), exist_ok=True)
         shutil.copy(
             coverage_xml_path,

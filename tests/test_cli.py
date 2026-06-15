@@ -1194,6 +1194,66 @@ class TestCLI(unittest.TestCase):
     @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
     @patch("context_builder.cli.parse_and_resolve_range")
     @patch("context_builder.cli.run_scan")
+    @patch("context_builder.cli.cleanup_zombie_lsps")
+    @patch("context_builder.cli.run_git_process")
+    @patch("shutil.rmtree")
+    @patch("context_builder.cli._rewrite_worktree_compile_commands")
+    @patch("shutil.copy")
+    @patch("context_builder.cli.find_artifact_path")
+    @patch("os.makedirs", wraps=os.makedirs)
+    def test_cli_worktree_copies_build_artifacts_traversal_and_drive_fallback(
+        self,
+        mock_makedirs,
+        mock_find_artifact,
+        mock_copy,
+        mock_rewrite_compile_commands,
+        mock_rmtree,
+        mock_sub_run,
+        mock_cleanup_lsps,
+        mock_run_scan,
+        mock_resolve_range,
+        mock_parse_args,
+    ):
+        """Verify that outside or different-drive paths fallback to root-level copies in the worktree."""
+        mock_args = CliNamespace()
+        mock_args.commit_range = "-1"
+        mock_parse_args.return_value = mock_args
+        mock_resolve_range.return_value = ("sha_start", "sha_end")
+
+        def sub_run_side_effect(*args, **kwargs):
+            cmd = args[0] if args else kwargs.get("args", [])
+            if isinstance(cmd, list) and "worktree" in cmd:
+                if "add" in cmd:
+                    os.makedirs(cmd[4], exist_ok=True)
+            res = MagicMock(returncode=0)
+            res.stdout = "different_head_sha\n"
+            return res
+        mock_sub_run.side_effect = sub_run_side_effect
+
+        # Mock outside paths to trigger traversal / drive mismatch fallback
+        mock_find_artifact.side_effect = lambda filename, base_dir=None: (
+            "/tmp/build/compile_commands.json" if "compile_commands" in filename
+            else "D:/build/coverage.xml"
+        )
+
+        main()
+
+        # Both should fallback to root of temp_worktree_dir
+        mock_rewrite_compile_commands.assert_called_once()
+        dest_cc = mock_rewrite_compile_commands.call_args[0][1]
+        self.assertTrue(dest_cc.replace("\\", "/").endswith("/compile_commands.json"))
+        # Verify it's directly in the root of the worktree (no "build" or "tmp" directory prefix)
+        self.assertNotIn("build", os.path.basename(os.path.dirname(dest_cc)))
+        self.assertNotIn("tmp", os.path.basename(os.path.dirname(dest_cc)))
+
+        mock_copy.assert_called_once()
+        dest_cov = mock_copy.call_args[0][1]
+        self.assertTrue(dest_cov.replace("\\", "/").endswith("/coverage.xml"))
+        self.assertNotIn("build", os.path.basename(os.path.dirname(dest_cov)))
+
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    @patch("context_builder.cli.parse_and_resolve_range")
+    @patch("context_builder.cli.run_scan")
     @patch("context_builder.cli.run_git_command")
     @patch("context_builder.cli.run_git_process")
     def test_worktree_bypassed_if_head_matches_end_sha(

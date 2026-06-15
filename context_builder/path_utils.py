@@ -319,13 +319,18 @@ def find_artifact_path(filename, base_dir=None):
 
     # Check configured build directories
     build_dirs = _get_config_value("build_directories", [])
-    for b_dir in build_dirs:
-        if os.path.isabs(b_dir):
-            p = os.path.join(b_dir, filename)
-        else:
-            p = os.path.join(base_dir, b_dir, filename)
-        if os.path.exists(p):
-            candidates.append(p)
+    if isinstance(build_dirs, (list, tuple, set)):
+        for b_dir in build_dirs:
+            if isinstance(b_dir, str) and b_dir:
+                try:
+                    if os.path.isabs(b_dir):
+                        p = os.path.join(b_dir, filename)
+                    else:
+                        p = os.path.join(base_dir, b_dir, filename)
+                    if os.path.exists(p):
+                        candidates.append(p)
+                except (ValueError, TypeError, OSError):
+                    pass
 
     if not candidates:
         return None
