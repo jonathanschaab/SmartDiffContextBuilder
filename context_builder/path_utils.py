@@ -317,7 +317,7 @@ def find_artifact_path(filename, base_dir=None):
     candidates = []
     # Check base_dir
     p = os.path.join(base_dir, filename)
-    if os.path.exists(p):
+    if os.path.isfile(p):
         candidates.append(p)
 
     # Check configured build directories
@@ -330,7 +330,7 @@ def find_artifact_path(filename, base_dir=None):
                         p = os.path.join(b_dir, filename)
                     else:
                         p = os.path.join(base_dir, b_dir, filename)
-                    if os.path.exists(p):
+                    if os.path.isfile(p):
                         candidates.append(p)
                 except (ValueError, TypeError, OSError):
                     pass

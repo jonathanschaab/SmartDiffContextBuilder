@@ -1042,9 +1042,9 @@ class TestCLI(unittest.TestCase):
     @patch("context_builder.cli.run_git_process")
     @patch("shutil.rmtree")
     @patch("shutil.copy")
-    @patch("os.path.exists")
+    @patch("os.path.isfile")
     def test_cli_worktree_cleanup_on_copy_exception(
-        self, mock_exists, mock_copy, mock_rmtree, mock_sub_run, mock_cleanup_lsps, mock_run_scan, mock_resolve_range, mock_parse_args
+        self, mock_isfile, mock_copy, mock_rmtree, mock_sub_run, mock_cleanup_lsps, mock_run_scan, mock_resolve_range, mock_parse_args
     ):
         """If shutil.copy raises an exception, the worktree must still be cleaned up."""
         mock_args = CliNamespace()
@@ -1052,7 +1052,7 @@ class TestCLI(unittest.TestCase):
         mock_parse_args.return_value = mock_args
         mock_resolve_range.return_value = ("sha_start", "sha_end")
 
-        mock_exists.return_value = True
+        mock_isfile.return_value = True
         mock_copy.side_effect = IOError("Disk full or permission denied")
 
         # Record call order to check cleanup is run
@@ -1095,9 +1095,9 @@ class TestCLI(unittest.TestCase):
     @patch("shutil.rmtree")
     @patch("context_builder.cli._rewrite_worktree_compile_commands")
     @patch("shutil.copy")
-    @patch("os.path.exists")
+    @patch("os.path.isfile")
     def test_cli_worktree_copies_coverage_xml(
-        self, mock_exists, mock_copy, mock_rewrite_compile_commands, mock_rmtree, mock_sub_run, mock_cleanup_lsps, mock_run_scan, mock_resolve_range, mock_parse_args
+        self, mock_isfile, mock_copy, mock_rewrite_compile_commands, mock_rmtree, mock_sub_run, mock_cleanup_lsps, mock_run_scan, mock_resolve_range, mock_parse_args
     ):
         """Verify that coverage.xml is copied to the temporary worktree if it exists in the original repo root."""
         mock_args = CliNamespace()
@@ -1117,7 +1117,7 @@ class TestCLI(unittest.TestCase):
         mock_sub_run.side_effect = sub_run_side_effect
 
         # Mock existence of compile_commands.json and coverage.xml
-        mock_exists.side_effect = lambda path: "compile_commands.json" in path or "coverage.xml" in path
+        mock_isfile.side_effect = lambda path: "compile_commands.json" in path or "coverage.xml" in path
 
         main()
 
@@ -1134,12 +1134,12 @@ class TestCLI(unittest.TestCase):
     @patch("shutil.rmtree")
     @patch("context_builder.cli._rewrite_worktree_compile_commands")
     @patch("shutil.copy")
-    @patch("os.path.exists")
+    @patch("os.path.isfile")
     @patch("os.makedirs", wraps=os.makedirs)
     def test_cli_worktree_copies_build_artifacts(
         self,
         mock_makedirs,
-        mock_exists,
+        mock_isfile,
         mock_copy,
         mock_rewrite_compile_commands,
         mock_rmtree,
@@ -1168,7 +1168,7 @@ class TestCLI(unittest.TestCase):
         def exists_side_effect(path):
             normalized = path.replace("\\", "/")
             return "build/compile_commands.json" in normalized or "out/coverage.xml" in normalized
-        mock_exists.side_effect = exists_side_effect
+        mock_isfile.side_effect = exists_side_effect
 
         main()
 
