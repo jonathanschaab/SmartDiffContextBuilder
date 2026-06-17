@@ -367,6 +367,14 @@ class TestAstEngine(unittest.TestCase):
             "}\n"
             "void* MyClass::Nested::my_func() {\n"
             "}\n"
+            "const void MyClass::my_func() {\n"
+            "}\n"
+            "unsigned int MyClass::my_func() {\n"
+            "}\n"
+            "static inline int MyClass::my_func() {\n"
+            "}\n"
+            "const std::vector<int>& MyClass::my_func() {\n"
+            "}\n"
             "void caller() {\n"
             "    my_func();\n"
             "    MyClass::my_func();\n"
@@ -381,10 +389,9 @@ class TestAstEngine(unittest.TestCase):
 
         callers = trace_lexical_dependencies_regex("my_func", [file_path], file_cache=cache)
         self.assertIn(file_path, callers)
-        # Lines 1, 3, 5 are C++ method definitions (out-of-line class methods)
-        # and should be ignored.
-        # Lines 8 and 9 are the actual callers.
-        self.assertEqual([match["line"] for match in callers[file_path]], [8, 9])
+        # Definitions (lines 1, 3, 5, 7, 9, 11, 13) should be ignored.
+        # Lines 16 and 17 are the actual callers.
+        self.assertEqual([match["line"] for match in callers[file_path]], [16, 17])
 
     def test_trace_lexical_dependencies_regex_multiline_block_comments(self):
         code = (
