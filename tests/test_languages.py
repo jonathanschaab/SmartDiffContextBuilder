@@ -226,6 +226,13 @@ class TestLanguageProfiles(unittest.TestCase):
             '',
         )
 
+        # Raw string prefixes that are part of larger identifiers should not
+        # be matched as raw strings
+        self.assertEqual(
+            profile.strip_strings_and_comments('fooR"(bar)"'),
+            'fooR',
+        )
+
         # Multiline raw string in content should be stripped by
         # strip_block_comments preserving newlines
         content = 'R"foo(\nmy_func("hello");\n)foo"'
@@ -257,6 +264,13 @@ class TestLanguageProfiles(unittest.TestCase):
         self.assertEqual(
             profile.strip_strings_and_comments('cr#"foo"#'),
             '',
+        )
+
+        # Raw string prefixes that are part of larger identifiers should not
+        # be matched as raw strings
+        self.assertEqual(
+            profile.strip_strings_and_comments('bar"hello"'),
+            'bar',
         )
 
         # Multiline raw string in content should be stripped by

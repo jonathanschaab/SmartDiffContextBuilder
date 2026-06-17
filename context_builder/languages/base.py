@@ -47,12 +47,12 @@ class LanguageProfile:
             parts = []
             if self.supports_cpp_raw_strings:
                 parts.append(
-                    r'(?:u8|u|U|L)?R"(?P<cpp_raw_delim>[^ ()\\\t\r\n\v\f]{0,16})'
+                    r'\b(?:u8|u|U|L)?R"(?P<cpp_raw_delim>[^ ()\\\t\r\n\v\f]{0,16})'
                     r'\((?:.*?)\)(?P=cpp_raw_delim)"'
                 )
             if self.supports_rust_raw_strings:
                 parts.append(
-                    r'(?:br|cr|r)(?P<rust_raw_hashes>#*)"(?:.*?)"'
+                    r'\b(?:br|cr|r)(?P<rust_raw_hashes>#*)"(?:.*?)"'
                     r'(?P=rust_raw_hashes)'
                 )
             parts.append(r'(?P<quote>["\'])(?:(?=(?P<backslash>\\?))(?P=backslash).)*?(?P=quote)')
@@ -156,14 +156,14 @@ class LanguageProfile:
 
             if self.supports_cpp_raw_strings:
                 parts.append(
-                    r'(?P<multiline_cpp_raw>(?:u8|u|U|L)?R"'
+                    r'(?P<multiline_cpp_raw>\b(?:u8|u|U|L)?R"'
                     r'(?P<cpp_raw_delim>[^ ()\\\t\r\n\v\f]{0,16})'
                     r'\((?:.*?)\)(?P=cpp_raw_delim)")'
                 )
 
             if self.supports_rust_raw_strings:
                 parts.append(
-                    r'(?P<multiline_rust_raw>(?:br|cr|r)'
+                    r'(?P<multiline_rust_raw>\b(?:br|cr|r)'
                     r'(?P<rust_raw_hashes>#*)"(?:.*?)"(?P=rust_raw_hashes))'
                 )
 
