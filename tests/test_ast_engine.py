@@ -312,7 +312,7 @@ class TestAstEngine(unittest.TestCase):
         self.assertLess(duration, 0.1)
 
     def test_trace_lexical_dependencies_regex_cpp_redos_prevention(self):
-        # Verify that a long sequence of spaces after type does not cause catastrophic backtracking
+        # Verify that long sequences of spaces do not cause catastrophic backtracking (ReDoS)
         import re
         import time
 
@@ -320,18 +320,27 @@ class TestAstEngine(unittest.TestCase):
         lead_b = r'\b'
         escaped_name = re.escape(func_name)
         pattern = re.compile(
-            r'^\s*(?:[A-Za-z0-9_<>:]+(?:\s+|[*&]+)[\s*&]*)?' + lead_b + escaped_name + r'\s*\('
+            r'^\s*(?:[A-Za-z0-9_<>:]+(?:\s+|[*&]+))*[\s*&]*'
+            r'(?:[A-Za-z0-9_<>:]+::)?' + lead_b + escaped_name + r'\s*\('
         )
 
-        malicious_input = "void " + " " * 500
-
+        # 1. Test long sequence of trailing spaces
+        malicious_input_1 = "void " + " " * 500
         start_time = time.perf_counter()
-        match = pattern.search(malicious_input)
-        duration = time.perf_counter() - start_time
+        match_1 = pattern.search(malicious_input_1)
+        duration_1 = time.perf_counter() - start_time
 
-        self.assertFalse(match)
-        # Should finish extremely fast (under 100 milliseconds)
-        self.assertLess(duration, 0.1)
+        self.assertFalse(match_1)
+        self.assertLess(duration_1, 0.1)
+
+        # 2. Test repeated spaces with nested quantifiers (overlapping match space)
+        malicious_input_2 = "void  " * 25 + "b"
+        start_time = time.perf_counter()
+        match_2 = pattern.search(malicious_input_2)
+        duration_2 = time.perf_counter() - start_time
+
+        self.assertFalse(match_2)
+        self.assertLess(duration_2, 0.1)
 
     def test_trace_lexical_dependencies_regex_cpp_pointer_reference_definitions(self):
         code = (
