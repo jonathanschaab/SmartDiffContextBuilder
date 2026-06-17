@@ -47,11 +47,14 @@ class LanguageProfile:
             parts = []
             if self.supports_cpp_raw_strings:
                 parts.append(
-                    r'R"(?P<cpp_raw_delim>[^ ()\\\t\r\n\v\f]{0,16})'
+                    r'(?:u8|u|U|L)?R"(?P<cpp_raw_delim>[^ ()\\\t\r\n\v\f]{0,16})'
                     r'\((?:.*?)\)(?P=cpp_raw_delim)"'
                 )
             if self.supports_rust_raw_strings:
-                parts.append(r'b?r(?P<rust_raw_hashes>#*)"(?:.*?)"(?P=rust_raw_hashes)')
+                parts.append(
+                    r'(?:br|cr|r)(?P<rust_raw_hashes>#*)"(?:.*?)"'
+                    r'(?P=rust_raw_hashes)'
+                )
             parts.append(r'(?P<quote>["\'])(?:(?=(?P<backslash>\\?))(?P=backslash).)*?(?P=quote)')
             pattern = re.compile('|'.join(parts), re.DOTALL)
             self._cached_string_literal_pattern = pattern
@@ -133,6 +136,8 @@ class LanguageProfile:
             starts.append('r#')
             starts.append('br"')
             starts.append('br#')
+            starts.append('cr"')
+            starts.append('cr#')
 
         if not any(start in content for start in starts):
             return content
@@ -151,14 +156,14 @@ class LanguageProfile:
 
             if self.supports_cpp_raw_strings:
                 parts.append(
-                    r'(?P<multiline_cpp_raw>R"'
+                    r'(?P<multiline_cpp_raw>(?:u8|u|U|L)?R"'
                     r'(?P<cpp_raw_delim>[^ ()\\\t\r\n\v\f]{0,16})'
                     r'\((?:.*?)\)(?P=cpp_raw_delim)")'
                 )
 
             if self.supports_rust_raw_strings:
                 parts.append(
-                    r'(?P<multiline_rust_raw>b?r'
+                    r'(?P<multiline_rust_raw>(?:br|cr|r)'
                     r'(?P<rust_raw_hashes>#*)"(?:.*?)"(?P=rust_raw_hashes))'
                 )
 

@@ -217,6 +217,14 @@ class TestLanguageProfiles(unittest.TestCase):
             profile.strip_strings_and_comments('R"foo(my_func("hello");)foo"'),
             '',
         )
+        self.assertEqual(
+            profile.strip_strings_and_comments('u8R"foo(bar)foo"'),
+            '',
+        )
+        self.assertEqual(
+            profile.strip_strings_and_comments('LR"--(STUV)--"'),
+            '',
+        )
 
         # Multiline raw string in content should be stripped by
         # strip_block_comments preserving newlines
@@ -240,6 +248,14 @@ class TestLanguageProfiles(unittest.TestCase):
         )
         self.assertEqual(
             profile.strip_strings_and_comments('r##"my_func("hello")"##'),
+            '',
+        )
+        self.assertEqual(
+            profile.strip_strings_and_comments('cr"foo"'),
+            '',
+        )
+        self.assertEqual(
+            profile.strip_strings_and_comments('cr#"foo"#'),
             '',
         )
 
