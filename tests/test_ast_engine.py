@@ -312,7 +312,7 @@ class TestAstEngine(unittest.TestCase):
         self.assertLess(duration, 0.1)
 
     def test_trace_lexical_dependencies_regex_cpp_redos_prevention(self):
-        # Verify that a long sequence of spaces after type does not cause catastrophic backtracking
+        # Verify that long sequences of spaces do not cause catastrophic backtracking (ReDoS)
         import re
         import time
 
@@ -320,18 +320,27 @@ class TestAstEngine(unittest.TestCase):
         lead_b = r'\b'
         escaped_name = re.escape(func_name)
         pattern = re.compile(
-            r'^\s*(?:[A-Za-z0-9_<>:]+(?:\s+|[*&]+)[\s*&]*)?' + lead_b + escaped_name + r'\s*\('
+            r'^\s*(?:[A-Za-z0-9_<>:]+(?:\s+|[*&]+))*[\s*&]*'
+            r'(?:[A-Za-z0-9_<>:]+::)?' + lead_b + escaped_name + r'\s*\('
         )
 
-        malicious_input = "void " + " " * 500
-
+        # 1. Test long sequence of trailing spaces
+        malicious_input_1 = "void " + " " * 500
         start_time = time.perf_counter()
-        match = pattern.search(malicious_input)
-        duration = time.perf_counter() - start_time
+        match_1 = pattern.search(malicious_input_1)
+        duration_1 = time.perf_counter() - start_time
 
-        self.assertFalse(match)
-        # Should finish extremely fast (under 100 milliseconds)
-        self.assertLess(duration, 0.1)
+        self.assertFalse(match_1)
+        self.assertLess(duration_1, 0.1)
+
+        # 2. Test repeated spaces with nested quantifiers (overlapping match space)
+        malicious_input_2 = "void  " * 25 + "b"
+        start_time = time.perf_counter()
+        match_2 = pattern.search(malicious_input_2)
+        duration_2 = time.perf_counter() - start_time
+
+        self.assertFalse(match_2)
+        self.assertLess(duration_2, 0.1)
 
     def test_trace_lexical_dependencies_regex_cpp_pointer_reference_definitions(self):
         code = (
@@ -358,6 +367,40 @@ class TestAstEngine(unittest.TestCase):
         # and should be ignored.
         # Only line 8 is the actual caller.
         self.assertEqual([match["line"] for match in callers[file_path]], [8])
+
+    def test_trace_lexical_dependencies_regex_cpp_outofline_definitions(self):
+        code = (
+            "void MyClass::my_func() {\n"
+            "}\n"
+            "MyClass::my_func() {\n"
+            "}\n"
+            "void* MyClass::Nested::my_func() {\n"
+            "}\n"
+            "const void MyClass::my_func() {\n"
+            "}\n"
+            "unsigned int MyClass::my_func() {\n"
+            "}\n"
+            "static inline int MyClass::my_func() {\n"
+            "}\n"
+            "const std::vector<int>& MyClass::my_func() {\n"
+            "}\n"
+            "void caller() {\n"
+            "    my_func();\n"
+            "    MyClass::my_func();\n"
+            "}\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "outofline.cpp")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        cache = LRUFileCache(capacity=5)
+        cache.get_content(file_path)
+
+        callers = trace_lexical_dependencies_regex("my_func", [file_path], file_cache=cache)
+        self.assertIn(file_path, callers)
+        # Definitions (lines 1, 3, 5, 7, 9, 11, 13) should be ignored.
+        # Lines 16 and 17 are the actual callers.
+        self.assertEqual([match["line"] for match in callers[file_path]], [16, 17])
 
     def test_trace_lexical_dependencies_regex_multiline_block_comments(self):
         code = (
