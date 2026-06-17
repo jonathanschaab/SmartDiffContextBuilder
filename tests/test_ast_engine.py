@@ -359,6 +359,33 @@ class TestAstEngine(unittest.TestCase):
         # Only line 8 is the actual caller.
         self.assertEqual([match["line"] for match in callers[file_path]], [8])
 
+    def test_trace_lexical_dependencies_regex_cpp_outofline_definitions(self):
+        code = (
+            "void MyClass::my_func() {\n"
+            "}\n"
+            "MyClass::my_func() {\n"
+            "}\n"
+            "void* MyClass::Nested::my_func() {\n"
+            "}\n"
+            "void caller() {\n"
+            "    my_func();\n"
+            "    MyClass::my_func();\n"
+            "}\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "outofline.cpp")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        cache = LRUFileCache(capacity=5)
+        cache.get_content(file_path)
+
+        callers = trace_lexical_dependencies_regex("my_func", [file_path], file_cache=cache)
+        self.assertIn(file_path, callers)
+        # Lines 1, 3, 5 are C++ method definitions (out-of-line class methods)
+        # and should be ignored.
+        # Lines 8 and 9 are the actual callers.
+        self.assertEqual([match["line"] for match in callers[file_path]], [8, 9])
+
     def test_trace_lexical_dependencies_regex_multiline_block_comments(self):
         code = (
             "/*\n"
