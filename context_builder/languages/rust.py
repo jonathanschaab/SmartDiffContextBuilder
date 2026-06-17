@@ -15,6 +15,7 @@ class RustProfile(LanguageProfile):
         '(attribute_item (attribute (identifier) @attr (#eq? @attr "test")))'
     )
     tests_can_share_source_file = True
+    supports_rust_raw_strings = True
 
     def get_definition_patterns(self, func_name):
         lead_b, trail_b = self._get_boundaries(func_name)

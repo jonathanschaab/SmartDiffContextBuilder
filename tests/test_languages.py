@@ -202,6 +202,52 @@ class TestLanguageProfiles(unittest.TestCase):
             "javascript",
         )
 
+    def test_cpp_raw_string_stripping(self):
+        """C++ profile correctly strips single-line and multiline raw string literals."""
+        profile = get_language_profile("main.cpp")
+        self.assertEqual(
+            profile.strip_strings_and_comments('R"delimiter(my_func();)delimiter"'),
+            '',
+        )
+        self.assertEqual(
+            profile.strip_strings_and_comments('R"(my_func();)"'),
+            '',
+        )
+        self.assertEqual(
+            profile.strip_strings_and_comments('R"foo(my_func("hello");)foo"'),
+            '',
+        )
+
+        # Multiline raw string in content should be stripped by
+        # strip_block_comments preserving newlines
+        content = 'R"foo(\nmy_func("hello");\n)foo"'
+        self.assertEqual(profile.strip_block_comments(content), '\n\n')
+
+    def test_rust_raw_string_stripping(self):
+        """Rust profile correctly strips single-line and multiline raw string literals."""
+        profile = get_language_profile("lib.rs")
+        self.assertEqual(
+            profile.strip_strings_and_comments('r#"// my_func()"#'),
+            '',
+        )
+        self.assertEqual(
+            profile.strip_strings_and_comments('r"// my_func()"'),
+            '',
+        )
+        self.assertEqual(
+            profile.strip_strings_and_comments('br#"// my_func()"#'),
+            '',
+        )
+        self.assertEqual(
+            profile.strip_strings_and_comments('r##"my_func("hello")"##'),
+            '',
+        )
+
+        # Multiline raw string in content should be stripped by
+        # strip_block_comments preserving newlines
+        content = 'r#"\nline 1\nline 2"#'
+        self.assertEqual(profile.strip_block_comments(content), '\n\n')
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -35,12 +35,27 @@ class LanguageProfile:
     test_query = None
     tests_can_share_source_file = False
     multiline_string_delimiters = ()
+    supports_cpp_raw_strings = False
+    supports_rust_raw_strings = False
     _cached_block_comment_pattern = None
+    _cached_string_literal_pattern = None
 
-    @staticmethod
-    def strip_string_literals(line):
+    def strip_string_literals(self, line):
         """Remove quoted strings before applying language comment rules."""
-        return _STRING_LITERAL_PATTERN.sub("", line)
+        pattern = self._cached_string_literal_pattern
+        if pattern is None:
+            parts = []
+            if self.supports_cpp_raw_strings:
+                parts.append(
+                    r'R"(?P<cpp_raw_delim>[^ ()\\\t\r\n\v\f]{0,16})'
+                    r'\((?:.*?)\)(?P=cpp_raw_delim)"'
+                )
+            if self.supports_rust_raw_strings:
+                parts.append(r'b?r(?P<rust_raw_hashes>#*)"(?:.*?)"(?P=rust_raw_hashes)')
+            parts.append(r'(?P<quote>["\'])(?:(?=(?P<backslash>\\?))(?P=backslash).)*?(?P=quote)')
+            pattern = re.compile('|'.join(parts), re.DOTALL)
+            self._cached_string_literal_pattern = pattern
+        return pattern.sub(lambda m: "\n" * m.group(0).count("\n"), line)
 
     def strip_strings_and_comments(self, line):
         """Remove strings and same-line comments before regex analysis."""
@@ -93,13 +108,16 @@ class LanguageProfile:
 
         Replaces them with newlines to preserve line count.
         """
+        has_block_comments = (
+            self.supports_block_comments
+            and self.block_comment_start
+            and self.block_comment_end
+        )
         if (
-            (
-                not self.supports_block_comments
-                or not self.block_comment_start
-                or not self.block_comment_end
-            )
+            not has_block_comments
             and not self.multiline_string_delimiters
+            and not self.supports_cpp_raw_strings
+            and not self.supports_rust_raw_strings
         ):
             return content
 
@@ -108,6 +126,14 @@ class LanguageProfile:
         if self.supports_block_comments and self.block_comment_start:
             starts.append(self.block_comment_start)
         starts.extend(self.multiline_string_delimiters)
+        if self.supports_cpp_raw_strings:
+            starts.append('R"')
+        if self.supports_rust_raw_strings:
+            starts.append('r"')
+            starts.append('r#')
+            starts.append('br"')
+            starts.append('br#')
+
         if not any(start in content for start in starts):
             return content
 
@@ -122,6 +148,19 @@ class LanguageProfile:
                 escaped_start = re.escape(self.block_comment_start)
                 escaped_end = re.escape(self.block_comment_end)
                 parts.append(rf'(?P<comment>{escaped_start}.*?{escaped_end})')
+
+            if self.supports_cpp_raw_strings:
+                parts.append(
+                    r'(?P<multiline_cpp_raw>R"'
+                    r'(?P<cpp_raw_delim>[^ ()\\\t\r\n\v\f]{0,16})'
+                    r'\((?:.*?)\)(?P=cpp_raw_delim)")'
+                )
+
+            if self.supports_rust_raw_strings:
+                parts.append(
+                    r'(?P<multiline_rust_raw>b?r'
+                    r'(?P<rust_raw_hashes>#*)"(?:.*?)"(?P=rust_raw_hashes))'
+                )
 
             for i, delim in enumerate(self.multiline_string_delimiters):
                 escaped_delim = re.escape(delim)
