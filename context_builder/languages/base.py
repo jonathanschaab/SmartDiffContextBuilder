@@ -99,6 +99,22 @@ class LanguageProfile:
             cleaned = cleaned.split(self.line_comment, 1)[0]
         return cleaned
 
+    def _find_nested_block_comment_end(self, text, start_pos, pattern):
+        """Scan forward to find the matching end of a nested block comment."""
+        depth = 1
+        sp = start_pos
+        while depth > 0:
+            m = pattern.search(text, sp)
+            if not m:
+                return len(text)
+            t = m.group(0)
+            if t == self.block_comment_start:
+                depth += 1
+            elif t == self.block_comment_end:
+                depth -= 1
+            sp = m.end()
+        return sp
+
     def _strip_nested_block_comments_only(self, text):
         """Remove nested block comments from text where strings are already stripped."""
         if not (self.block_comment_start and self.block_comment_end):
@@ -127,21 +143,10 @@ class LanguageProfile:
                 result.append(text[match.start():])
                 last_idx = len(text)
                 break
-            elif token == self.block_comment_start:
+
+            if token == self.block_comment_start:
                 result.append(text[last_idx:match.start()])
-                depth = 1
-                sp = match.end()
-                while depth > 0:
-                    m = pattern.search(text, sp)
-                    if not m:
-                        sp = len(text)
-                        break
-                    t = m.group(0)
-                    if t == self.block_comment_start:
-                        depth += 1
-                    elif t == self.block_comment_end:
-                        depth -= 1
-                    sp = m.end()
+                sp = self._find_nested_block_comment_end(text, match.end(), pattern)
                 last_idx = sp
                 p = sp
             else:
@@ -149,6 +154,46 @@ class LanguageProfile:
 
         if last_idx < len(text):
             result.append(text[last_idx:])
+        return "".join(result)
+
+    def _strip_nested_block_comments(self, content, pattern):
+        """Remove nested block comments from content, preserving line count."""
+        p = 0
+        result = []
+        last_idx = 0
+        escaped_start = re.escape(self.block_comment_start)
+        escaped_end = re.escape(self.block_comment_end)
+        inner_pattern = re.compile(f"{escaped_start}|{escaped_end}")
+
+        while p < len(content):
+            match = pattern.search(content, p)
+            if not match:
+                break
+
+            group_dict = match.groupdict()
+            if group_dict.get("comment_start") is not None:
+                result.append(content[last_idx:match.start()])
+                sp = self._find_nested_block_comment_end(content, match.end(), inner_pattern)
+                comment_text = content[match.start():sp]
+                result.append("\n" * comment_text.count("\n"))
+                last_idx = sp
+                p = sp
+            else:
+                result.append(content[last_idx:match.start()])
+                val_to_replace = None
+                for key, val in group_dict.items():
+                    if key.startswith("multiline_") and val is not None:
+                        val_to_replace = val
+                        break
+                if val_to_replace is not None:
+                    result.append("\n" * val_to_replace.count("\n"))
+                else:
+                    result.append(match.group(0))
+                last_idx = match.end()
+                p = match.end()
+
+        if last_idx < len(content):
+            result.append(content[last_idx:])
         return "".join(result)
 
     def format_omission_comment(self, message):
@@ -269,56 +314,7 @@ class LanguageProfile:
             self._cached_block_comment_pattern = pattern
 
         if self.supports_nested_block_comments:
-            p = 0
-            result = []
-            last_idx = 0
-            escaped_start = re.escape(self.block_comment_start)
-            escaped_end = re.escape(self.block_comment_end)
-            inner_pattern = re.compile(f"{escaped_start}|{escaped_end}")
-
-            while p < len(content):
-                match = pattern.search(content, p)
-                if not match:
-                    break
-
-                group_dict = match.groupdict()
-                if group_dict.get("comment_start") is not None:
-                    result.append(content[last_idx:match.start()])
-                    depth = 1
-                    sp = match.end()
-                    while depth > 0:
-                        m = inner_pattern.search(content, sp)
-                        if not m:
-                            sp = len(content)
-                            break
-                        t = m.group(0)
-                        if t == self.block_comment_start:
-                            depth += 1
-                        elif t == self.block_comment_end:
-                            depth -= 1
-                        sp = m.end()
-
-                    comment_text = content[match.start():sp]
-                    result.append("\n" * comment_text.count("\n"))
-                    last_idx = sp
-                    p = sp
-                else:
-                    result.append(content[last_idx:match.start()])
-                    val_to_replace = None
-                    for key, val in group_dict.items():
-                        if key.startswith("multiline_") and val is not None:
-                            val_to_replace = val
-                            break
-                    if val_to_replace is not None:
-                        result.append("\n" * val_to_replace.count("\n"))
-                    else:
-                        result.append(match.group(0))
-                    last_idx = match.end()
-                    p = match.end()
-
-            if last_idx < len(content):
-                result.append(content[last_idx:])
-            return "".join(result)
+            return self._strip_nested_block_comments(content, pattern)
 
         def replacer(match):
             group_dict = match.groupdict()
