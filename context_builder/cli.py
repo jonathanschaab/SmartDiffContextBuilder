@@ -276,8 +276,8 @@ def _run_comparison_scans(args, start_ref, end_ref, output_dir, repo_root):
         repo_root=repo_root,
     )
 
-    fmt_opt = getattr(args, "format", "md")
-    ext = "json" if str(fmt_opt).lower() == "json" else "md"
+    fmt_opt = getattr(args, "format", "md") or "md"
+    ext = "json" if fmt_opt.lower() == "json" else "md"
     lsp_file = os.path.join(output_dir, f"{args_lsp.base_name}_final.{ext}")
     fallback_file = os.path.join(
         output_dir, f"{args_fallback.base_name}_final.{ext}"
@@ -290,11 +290,10 @@ def _run_comparison_scans(args, start_ref, end_ref, output_dir, repo_root):
 def run_scan(args, start_ref=None, end_ref=None, output_dir=".", repo_root=None):
     """Execute the context scan."""
     if getattr(args, "compare", False) and getattr(args, "no_language_server", False):
-        print(
-            "[SmartDiffContextBuilder Error] Cannot run in comparison mode "
-            "with language server disabled (--no-language-server)."
+        raise ValueError(
+            "Cannot run in comparison mode with language server disabled "
+            "(--no-language-server)."
         )
-        sys.exit(1)
 
     if getattr(args, "compare", False):
         _run_comparison_scans(

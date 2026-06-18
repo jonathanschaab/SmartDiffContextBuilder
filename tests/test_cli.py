@@ -1,4 +1,4 @@
-# pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
+# pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring,useless-return
 # pylint: disable=attribute-defined-outside-init,import-outside-toplevel,unused-argument
 # pylint: disable=protected-access,redefined-outer-name,reimported,consider-using-with
 # pylint: disable=line-too-long,too-many-lines,too-many-public-methods,broad-exception-caught
@@ -18,6 +18,7 @@ class CliNamespace(argparse.Namespace):
     def __getattr__(self, name):
         if name.startswith("__") and name.endswith("__"):
             raise AttributeError(name)
+        return None
 
 class TestCLI(unittest.TestCase):
     def test_rewrite_compile_commands_payload_rewrites_both_slash_styles(self):
@@ -1837,8 +1838,6 @@ class TestCLI(unittest.TestCase):
             compare=True,
             no_language_server=True,
         )
-        with patch("builtins.print") as mock_print:
-            with self.assertRaises(SystemExit):
-                run_scan(args)
-            printed = "".join(c[0][0] for c in mock_print.call_args_list if c[0])
-            self.assertIn("Cannot run in comparison mode", printed)
+        with self.assertRaises(ValueError) as ctx:
+            run_scan(args)
+        self.assertIn("Cannot run in comparison mode", str(ctx.exception))
