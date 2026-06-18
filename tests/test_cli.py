@@ -1837,8 +1837,8 @@ class TestCLI(unittest.TestCase):
             compare=True,
             no_language_server=True,
         )
-        with self.assertRaises(SystemExit):
-            with patch("builtins.print") as mock_print:
+        with patch("builtins.print") as mock_print:
+            with self.assertRaises(SystemExit):
                 run_scan(args)
             printed = "".join(c[0][0] for c in mock_print.call_args_list if c[0])
             self.assertIn("Cannot run in comparison mode", printed)
