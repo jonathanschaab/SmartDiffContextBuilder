@@ -43,8 +43,26 @@ class TestLanguageProfiles(unittest.TestCase):
             "query = ",
         )
         # Triple-quoted string starting line (unclosed fallback)
+        # Strips start and all text following it on that line
+        self.assertEqual(
+            profile.strip_strings_and_comments('query = """SELECT * FROM table'),
+            "query = ",
+        )
         self.assertEqual(
             profile.strip_strings_and_comments('query = """'),
+            "query = ",
+        )
+        # Triple-quoted string with backslash escapes (e.g. \n, \", \\)
+        self.assertEqual(
+            profile.strip_strings_and_comments('query = """SELECT * FROM table\\n"""'),
+            "query = ",
+        )
+        self.assertEqual(
+            profile.strip_strings_and_comments('query = """SELECT * FROM table\\\""""'),
+            "query = ",
+        )
+        self.assertEqual(
+            profile.strip_strings_and_comments('query = """SELECT * FROM table\\\\" """'),
             "query = ",
         )
         # Triple-quoted string containing standard quotes
@@ -69,7 +87,7 @@ class TestLanguageProfiles(unittest.TestCase):
         redos_str = 'query = """' + '\\' * 1000
         self.assertEqual(
             profile.strip_strings_and_comments(redos_str),
-            'query = ' + '\\' * 1000,
+            "query = ",
         )
         self.assertEqual(
             profile.strip_block_comments(redos_str),

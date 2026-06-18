@@ -71,13 +71,13 @@ class LanguageProfile:
                     first_char_escaped = re.escape(delim[0])
                     pattern_str = (
                         rf'{escaped_delim}'
-                        rf'(?:[^\\\\{first_char_escaped}]|\\\\.|'
+                        rf'(?:[^\\{first_char_escaped}]|\\.|'
                         rf'(?!{escaped_delim}){first_char_escaped})*?'
                         rf'{escaped_delim}'
                     )
                     parts.append(pattern_str)
                 for delim in self.multiline_string_delimiters:
-                    parts.append(re.escape(delim))
+                    parts.append(re.escape(delim) + r'[^\r\n]*')
             if self.uses_rust_character_literals:
                 parts.append(self._RUST_CHARACTER_LITERAL_PATTERN)
             else:
@@ -155,7 +155,7 @@ class LanguageProfile:
             pattern_str = (
                 rf'(?P<multiline_{i}>'
                 rf'{escaped_delim}'
-                rf'(?:[^\\\\{first_char_escaped}]|\\\\.|'
+                rf'(?:[^\\{first_char_escaped}]|\\.|'
                 rf'(?!{escaped_delim}){first_char_escaped})*?'
                 rf'{escaped_delim})'
             )
