@@ -133,6 +133,13 @@ class LanguageProfile:
                 pattern = re.compile(f"{escaped_start}|{escaped_end}")
             self._cached_nested_pattern = pattern
 
+        inner_pattern = self._cached_inner_block_comment_pattern
+        if inner_pattern is None:
+            escaped_start = re.escape(self.block_comment_start)
+            escaped_end = re.escape(self.block_comment_end)
+            inner_pattern = re.compile(f"{escaped_start}|{escaped_end}")
+            self._cached_inner_block_comment_pattern = inner_pattern
+
         p = 0
         result = []
         last_idx = 0
@@ -150,7 +157,7 @@ class LanguageProfile:
 
             if token == self.block_comment_start:
                 result.append(text[last_idx:match.start()])
-                sp = self._find_nested_block_comment_end(text, match.end(), pattern)
+                sp = self._find_nested_block_comment_end(text, match.end(), inner_pattern)
                 last_idx = sp
                 p = sp
             else:
