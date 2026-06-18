@@ -5,6 +5,7 @@ for commit range analysis, runs context extraction passes, and outputs context.
 """
 
 import argparse
+import copy
 import json
 import os
 import re
@@ -238,8 +239,73 @@ def _process_diff_files(
             )
 
 
+def _run_comparison_scans(args, start_ref, end_ref, output_dir, repo_root):
+    """Run both LSP and Fallback passes in comparison mode."""
+    print(
+        "\n[SmartDiffContextBuilder] Comparison mode enabled. "
+        "Running LSP and Fallback passes..."
+    )
+    # Pass 1: LSP
+    args_lsp = copy.copy(args)
+    args_lsp.compare = False
+    args_lsp.no_language_server = False
+    original_base_name = getattr(args, "base_name", None) or "SmartDiffContextBuilder"
+    args_lsp.base_name = f"{original_base_name}_lsp"
+
+    print("\n--- Running Pass 1: Language Server (LSP) ---")
+    run_scan(
+        args_lsp,
+        start_ref=start_ref,
+        end_ref=end_ref,
+        output_dir=output_dir,
+        repo_root=repo_root,
+    )
+
+    # Pass 2: Fallback
+    args_fallback = copy.copy(args)
+    args_fallback.compare = False
+    args_fallback.no_language_server = True
+    args_fallback.base_name = f"{original_base_name}_fallback"
+
+    print("\n--- Running Pass 2: Fallback (AST/Regex) ---")
+    run_scan(
+        args_fallback,
+        start_ref=start_ref,
+        end_ref=end_ref,
+        output_dir=output_dir,
+        repo_root=repo_root,
+    )
+
+    fmt_opt = getattr(args, "format", "md") or "md"
+    ext = "json" if fmt_opt.lower() == "json" else "md"
+    lsp_file = os.path.join(output_dir, f"{args_lsp.base_name}_final.{ext}")
+    fallback_file = os.path.join(
+        output_dir, f"{args_fallback.base_name}_final.{ext}"
+    )
+    print("\n[SmartDiffContextBuilder] Comparison files generated:")
+    print(f"  - LSP: {lsp_file}")
+    print(f"  - Fallback: {fallback_file}")
+
+
 def run_scan(args, start_ref=None, end_ref=None, output_dir=".", repo_root=None):
     """Execute the context scan."""
+    if getattr(args, "compare", False) and getattr(args, "no_language_server", False):
+        raise ValueError(
+            "Cannot run in comparison mode with language server disabled "
+            "(--no-language-server)."
+        )
+
+    if getattr(args, "compare", False):
+        _run_comparison_scans(
+            args,
+            start_ref=start_ref,
+            end_ref=end_ref,
+            output_dir=output_dir,
+            repo_root=repo_root,
+        )
+        return
+
+
     file_cache = get_global_cache(args.max_cache_size_mb)
     clear_preprocessed_cache()
     lsp_client.USE_LSP = not args.no_language_server
@@ -404,6 +470,7 @@ def _merge_cli_mappings(args, active_overrides):
         "git_timeout": "git_timeout",
         "git_probe_timeout": "git_probe_timeout",
         "no_language_server": "no_language_server",
+        "compare": "compare",
         "skip_ffi": "skip_ffi",
         "skip_macro_expansion": "skip_macro_expansion",
         "caller_depth": "caller_depth",
@@ -778,7 +845,9 @@ def main():
     parser.add_argument("--ripgrep-timeout", type=float, default=None)
     parser.add_argument("--git-timeout", type=float, default=None)
     parser.add_argument("--git-probe-timeout", type=float, default=None)
-    parser.add_argument("--no-language-server", action="store_true", default=None)
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--no-language-server", action="store_true", default=None)
+    group.add_argument("--compare", action="store_true", default=None)
     parser.add_argument("--skip-ffi", action="store_true", default=None)
     parser.add_argument("--skip-macro-expansion", action="store_true", default=None)
     parser.add_argument("--caller-depth", type=int, default=None)
@@ -860,6 +929,13 @@ def main():
     # Populate the Namespace object with merged CONFIG values
     for k, v in CONFIG.items():
         setattr(args, k, v)
+
+    if getattr(args, "compare", False) and getattr(args, "no_language_server", False):
+        print(
+            "[SmartDiffContextBuilder Error] Cannot run in comparison mode "
+            "with language server disabled (--no-language-server)."
+        )
+        sys.exit(1)
 
     commit_range = getattr(args, "commit_range", None)
     if commit_range:

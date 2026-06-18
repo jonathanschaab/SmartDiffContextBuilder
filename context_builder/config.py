@@ -154,6 +154,7 @@ def reset_config():
         'git_timeout': DEFAULT_GIT_TIMEOUT,
         'git_probe_timeout': DEFAULT_GIT_PROBE_TIMEOUT,
         'no_language_server': False,
+        'compare': False,
         'skip_ffi': False,
         'skip_macro_expansion': False,
         'path_case_rules': DEFAULT_PATH_CASE_RULES.copy(),
@@ -208,7 +209,7 @@ def generate_commented_config(active_options):
             'format', 'max_lines', 'max_mb', 'base_name', 'max_cache_size_mb',
             'max_interface_depth', 'disable_pruning', 'lsp_init_timeout',
             'lsp_timeout', 'ripgrep_timeout', 'git_timeout',
-            'git_probe_timeout', 'no_language_server',
+            'git_probe_timeout', 'no_language_server', 'compare',
             'skip_ffi', 'skip_macro_expansion', 'path_case_rules',
             'caller_depth', 'callee_depth', 'commit_range', 'build_directories'
         ],

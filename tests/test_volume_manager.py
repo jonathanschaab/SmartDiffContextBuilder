@@ -1,6 +1,7 @@
 # pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
 # pylint: disable=attribute-defined-outside-init,consider-using-with,line-too-long
 
+import json
 import os
 import unittest
 import tempfile
@@ -109,3 +110,29 @@ class TestVolumeManager(unittest.TestCase):
         self.assertIn("```cpp\nvoid helper() {}", content)
         self.assertIn("`test_helper.py` (Line 7)", content)
         self.assertIn("```python\ndef test_helper()", content)
+
+    def test_volume_manager_json_format(self):
+        vm = VolumeManager(
+            fmt="json", max_lines=100, max_mb=1.0, base_name="test_payload_json"
+        )
+        vm.set_raw_diff("some_diff")
+        vm.add_modified_object("file.py", "my_func", "def my_func():\n    pass")
+        vm.local_callees.append({
+            "file": "callee.cpp",
+            "function_name": "helper",
+            "distance": 2,
+            "code": "void helper() {}",
+        })
+
+        vm.flush_all_volumes()
+
+        # Check generated file exists with .json extension
+        file_path = "test_payload_json_final.json"
+        self.assertTrue(os.path.exists(file_path))
+        with open(file_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        self.assertEqual(data["raw_diff"], "some_diff")
+        self.assertEqual(len(data["modified_core_logic"]), 1)
+        self.assertEqual(data["modified_core_logic"][0]["file"], "file.py")
+        self.assertEqual(data["downstream_called_functions"][0]["function_name"], "helper")

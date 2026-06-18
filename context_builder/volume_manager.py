@@ -3,6 +3,7 @@
 It structures the payload with sections like Raw Diff, Core Logic, Callees, Tests, Callers, and FFI.
 """
 
+import json
 import os
 
 from .ast_engine import LANG_MAP, split_massive_block_ast
@@ -90,19 +91,33 @@ class VolumeManager:
                     "distance": distance,
                 })
 
-    def flush_all_volumes(self):
-        """Build payloads chronologically and write to a markdown file.
+    def _flush_json_payload(self):
+        """Build JSON payload and return (payload_string, extension)."""
+        data = {
+            "raw_diff": self.raw_diff_text,
+            "modified_core_logic": self.modified_objects,
+            "downstream_called_functions": self.local_callees,
+            "validating_unit_tests": self.unit_tests,
+            "upstream_dependent_callers": self.local_callers,
+            "cross_language_ffi_linkages": self.ffi_linkages,
+        }
+        payload = json.dumps(data, indent=2, ensure_ascii=False)
+        payload_bytes = len(payload.encode("utf-8"))
+        if payload_bytes > self.max_bytes:
+            limit_mb = self.max_bytes / (1024 * 1024)
+            print(
+                f"\n[Warning] Payload exceeded size limit "
+                f"({payload_bytes / (1024 * 1024):.2f} MB). "
+                f"JSON payload was NOT truncated and will exceed the "
+                f"specified budget of {limit_mb:.2f} MB."
+            )
+        return payload, "json"
 
-        The order of sections is: Diff -> Core Logic -> Callees -> Tests -> Callers -> FFI.
-        """
+    def _flush_markdown_payload(self):
+        """Build markdown payload and return (payload_string, extension)."""
         payload = f"# LLM Context Payload\n## 1. Raw Diff\n```diff\n{self.raw_diff_text}\n```\n"
         payload_bytes = len(payload.encode("utf-8"))
         truncated = False
-
-        # Sort callers, callees, and FFI linkages by distance from modified logic
-        self.local_callers.sort(key=lambda x: x.get("distance", 0))
-        self.local_callees.sort(key=lambda x: x.get("distance", 0))
-        self.ffi_linkages.sort(key=lambda x: x.get("distance", 0))
 
         # Helper to safely append to payload while enforcing byte limits
         def try_append(section_header, items, format_fn):
@@ -196,8 +211,21 @@ class VolumeManager:
                 f"\n[Warning] Payload exceeded size limit. Truncated to fit within "
                 f"{limit_mb:.2f} MB."
             )
+        return payload, "md"
 
-        out_path = os.path.join(self.output_dir, f"{self.base_name}_final.md")
+    def flush_all_volumes(self):
+        """Build payloads chronologically and write to a file (markdown or JSON)."""
+        # Sort callers, callees, and FFI linkages by distance from modified logic
+        self.local_callers.sort(key=lambda x: x.get("distance", 0))
+        self.local_callees.sort(key=lambda x: x.get("distance", 0))
+        self.ffi_linkages.sort(key=lambda x: x.get("distance", 0))
+
+        if self.fmt == "json":
+            payload, ext = self._flush_json_payload()
+        else:
+            payload, ext = self._flush_markdown_payload()
+
+        out_path = os.path.join(self.output_dir, f"{self.base_name}_final.{ext}")
         with open(out_path, "w", encoding="utf-8") as f:
             f.write(payload)
         print(f"\n[SmartDiffContextBuilder] Successfully generated {out_path}")

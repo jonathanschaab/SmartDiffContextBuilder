@@ -1,4 +1,4 @@
-# pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
+# pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring,useless-return
 # pylint: disable=attribute-defined-outside-init,import-outside-toplevel,unused-argument
 # pylint: disable=protected-access,redefined-outer-name,reimported,consider-using-with
 # pylint: disable=line-too-long,too-many-lines,too-many-public-methods,broad-exception-caught
@@ -16,6 +16,8 @@ from context_builder.cli import main
 
 class CliNamespace(argparse.Namespace):
     def __getattr__(self, name):
+        if name.startswith("__") and name.endswith("__"):
+            raise AttributeError(name)
         return None
 
 class TestCLI(unittest.TestCase):
@@ -1770,3 +1772,72 @@ class TestCLI(unittest.TestCase):
         finally:
             os.remove(config_path)
             reset_config()
+
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    @patch("context_builder.cli.run_scan")
+    def test_cli_compare_option_parsing(self, mock_run_scan, mock_parse_args):
+        from context_builder.config import CONFIG, reset_config
+        reset_config()
+
+        mock_args = CliNamespace()
+        mock_args.compare = True
+        mock_parse_args.return_value = mock_args
+
+        main()
+
+        self.assertEqual(CONFIG["compare"], True)
+        passed_args = mock_run_scan.call_args[0][0]
+        self.assertEqual(passed_args.compare, True)
+        reset_config()
+
+    def test_run_scan_comparison_recursive_dispatch(self):
+        import context_builder.cli as cli_module
+        original_run_scan = cli_module.run_scan
+
+        mock_run = MagicMock()
+        def side_effect(args, *pargs, **kwargs):
+            if getattr(args, "compare", False):
+                return original_run_scan(args, *pargs, **kwargs)
+            return mock_run(args, *pargs, **kwargs)
+
+        with patch("context_builder.cli.run_scan", side_effect=side_effect):
+            args = CliNamespace(
+                max_cache_size_mb=10,
+                format="md",
+                base_name="CompareTest",
+                compare=True,
+            )
+            cli_module.run_scan(args)
+
+            # mock_run should have been called twice, once for LSP and once for Fallback
+            self.assertEqual(mock_run.call_count, 2)
+
+            # Verify Pass 1: LSP
+            first_call_args = mock_run.call_args_list[0][0][0]
+            self.assertEqual(first_call_args.compare, False)
+            self.assertEqual(first_call_args.no_language_server, False)
+            self.assertEqual(first_call_args.base_name, "CompareTest_lsp")
+
+            # Verify Pass 2: Fallback
+            second_call_args = mock_run.call_args_list[1][0][0]
+            self.assertEqual(second_call_args.compare, False)
+            self.assertEqual(second_call_args.no_language_server, True)
+            self.assertEqual(second_call_args.base_name, "CompareTest_fallback")
+
+    def test_cli_mutually_exclusive_compare_and_no_lsp(self):
+        from context_builder.cli import main
+        # When both are specified on command line, argparse should raise SystemExit
+        with patch("sys.argv", ["smart_diff_context_builder.py", "--compare", "--no-language-server"]):
+            with self.assertRaises(SystemExit):
+                with patch("sys.stderr"):
+                    main()
+
+    def test_run_scan_aborts_on_compare_and_no_lsp_conflict(self):
+        from context_builder.cli import run_scan
+        args = CliNamespace(
+            compare=True,
+            no_language_server=True,
+        )
+        with self.assertRaises(ValueError) as ctx:
+            run_scan(args)
+        self.assertIn("Cannot run in comparison mode", str(ctx.exception))
