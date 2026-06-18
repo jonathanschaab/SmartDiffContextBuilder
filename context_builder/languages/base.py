@@ -162,6 +162,9 @@ class LanguageProfile:
 
     def _strip_nested_block_comments(self, content, pattern):
         """Remove nested block comments from content, preserving line count."""
+        if not (self.block_comment_start and self.block_comment_end):
+            return content
+
         p = 0
         result = []
         last_idx = 0
