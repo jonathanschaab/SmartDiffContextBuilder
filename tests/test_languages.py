@@ -28,6 +28,42 @@ class TestLanguageProfiles(unittest.TestCase):
             "# ... [Body Omitted] ...",
         )
 
+    def test_python_multiline_string_stripping(self):
+        """Python profile correctly strips single-line and multiline triple-quoted strings."""
+        profile = get_language_profile("src/example.py")
+
+        # Single-line triple-quoted string
+        self.assertEqual(
+            profile.strip_strings_and_comments('query = """SELECT * FROM table"""'),
+            "query = ",
+        )
+        # Single-line triple-quoted string with single quotes
+        self.assertEqual(
+            profile.strip_strings_and_comments("query = '''SELECT * FROM table'''"),
+            "query = ",
+        )
+        # Triple-quoted string starting line (unclosed fallback)
+        self.assertEqual(
+            profile.strip_strings_and_comments('query = """'),
+            "query = ",
+        )
+        # Triple-quoted string containing standard quotes
+        self.assertEqual(
+            profile.strip_strings_and_comments('query = """SELECT * FROM "table" """'),
+            "query = ",
+        )
+        # Triple-quoted string with an inline comment
+        self.assertEqual(
+            profile.strip_strings_and_comments('query = """SELECT * FROM table""" # comment'),
+            "query =  ",
+        )
+        # Preserve newlines in multiline comments / strings
+        content = 'query = """\nSELECT *\nFROM "table"\n"""'
+        self.assertEqual(
+            profile.strip_block_comments(content),
+            'query = \n\n\n',
+        )
+
     def test_c_family_profile(self):
         """C-family files expose preprocessing and compile database support."""
         for file_path in (
