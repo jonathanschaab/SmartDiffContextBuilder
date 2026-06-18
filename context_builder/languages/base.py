@@ -41,6 +41,8 @@ class LanguageProfile:
     uses_rust_character_literals = False
     _cached_block_comment_pattern = None
     _cached_string_literal_pattern = None
+    _cached_nested_pattern = None
+    _cached_inner_block_comment_pattern = None
     _CPP_RAW_STRING_PATTERN = (
         r'\b(?:u8|u|U|L)?R"(?P<cpp_raw_delim>[^ ()\\\t\r\n\v\f]{0,16})'
         r'\((?:.*?)\)(?P=cpp_raw_delim)"'
@@ -120,14 +122,16 @@ class LanguageProfile:
         if not (self.block_comment_start and self.block_comment_end):
             return text
 
-        escaped_start = re.escape(self.block_comment_start)
-        escaped_end = re.escape(self.block_comment_end)
-        if self.line_comment:
-            escaped_line = re.escape(self.line_comment)
-            pattern = re.compile(f"{escaped_start}|{escaped_end}|{escaped_line}")
-        else:
-            escaped_line = None
-            pattern = re.compile(f"{escaped_start}|{escaped_end}")
+        pattern = self._cached_nested_pattern
+        if pattern is None:
+            escaped_start = re.escape(self.block_comment_start)
+            escaped_end = re.escape(self.block_comment_end)
+            if self.line_comment:
+                escaped_line = re.escape(self.line_comment)
+                pattern = re.compile(f"{escaped_start}|{escaped_end}|{escaped_line}")
+            else:
+                pattern = re.compile(f"{escaped_start}|{escaped_end}")
+            self._cached_nested_pattern = pattern
 
         p = 0
         result = []
@@ -138,7 +142,7 @@ class LanguageProfile:
                 break
 
             token = match.group(0)
-            if escaped_line and token == self.line_comment:
+            if self.line_comment and token == self.line_comment:
                 result.append(text[last_idx:match.start()])
                 result.append(text[match.start():])
                 last_idx = len(text)
@@ -161,9 +165,12 @@ class LanguageProfile:
         p = 0
         result = []
         last_idx = 0
-        escaped_start = re.escape(self.block_comment_start)
-        escaped_end = re.escape(self.block_comment_end)
-        inner_pattern = re.compile(f"{escaped_start}|{escaped_end}")
+        inner_pattern = self._cached_inner_block_comment_pattern
+        if inner_pattern is None:
+            escaped_start = re.escape(self.block_comment_start)
+            escaped_end = re.escape(self.block_comment_end)
+            inner_pattern = re.compile(f"{escaped_start}|{escaped_end}")
+            self._cached_inner_block_comment_pattern = inner_pattern
 
         while p < len(content):
             match = pattern.search(content, p)
