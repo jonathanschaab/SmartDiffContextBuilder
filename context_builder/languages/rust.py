@@ -17,6 +17,7 @@ class RustProfile(LanguageProfile):
     tests_can_share_source_file = True
     supports_rust_raw_strings = True
     uses_rust_character_literals = True
+    supports_nested_block_comments = True
 
     def get_definition_patterns(self, func_name):
         lead_b, trail_b = self._get_boundaries(func_name)

@@ -366,6 +366,80 @@ class TestLanguageProfiles(unittest.TestCase):
             "fn foo<'a , 'b>()",
         )
 
+    def test_rust_nested_block_comments(self):
+        """Rust profile correctly handles nested block comments."""
+        profile = get_language_profile("lib.rs")
+
+        # Test single-line nested block comments in strip_strings_and_comments
+        self.assertEqual(
+            profile.strip_strings_and_comments("/* Outer /* Inner */ fn false_positive() {} */"),
+            "",
+        )
+        self.assertEqual(
+            profile.strip_strings_and_comments("fn active() {} /* Outer /* Inner */ */"),
+            "fn active() {} ",
+        )
+        self.assertEqual(
+            profile.strip_strings_and_comments("/* Outer /* Inner */ */ fn active() {}"),
+            " fn active() {}",
+        )
+
+        # Test multiline nested block comments in strip_block_comments
+        content = (
+            "fn active_1() {}\n"
+            "/* Outer\n"
+            "  /* Inner\n"
+            "  */\n"
+            "  fn inactive() {}\n"
+            "*/\n"
+            "fn active_2() {}"
+        )
+        # 5 lines are inside the block comment, so they should be replaced by 5 newlines
+        expected = (
+            "fn active_1() {}\n"
+            "\n\n\n\n\n"
+            "fn active_2() {}"
+        )
+        self.assertEqual(
+            profile.strip_block_comments(content),
+            expected,
+        )
+
+        # Test nesting inside a line comment (should not be treated as nested block comments)
+        self.assertEqual(
+            profile.strip_strings_and_comments("// /* nesting start but inside line comment"),
+            "",
+        )
+
+    def test_prefix_delimiter_matching_and_supports_check(self):
+        """Verify sorting delims by length descending and checking supports flags."""
+        class PrefixOverlappingProfile(LanguageProfile):
+            """Profile with overlapping delimiters where one is prefix of another."""
+            block_comment_start = "/*"
+            block_comment_end = "/*/"  # overlapping, block_comment_start is prefix
+            line_comment = "//"
+            supports_block_comments = True
+            supports_nested_block_comments = True
+
+        profile = PrefixOverlappingProfile()
+        self.assertEqual(
+            profile.strip_strings_and_comments("/* Outer /*/"),
+            "",
+        )
+
+        class NestedDisabledProfile(LanguageProfile):
+            """Profile with nested block comments disabled but configured."""
+            block_comment_start = "/*"
+            block_comment_end = "*/"
+            supports_block_comments = False
+            supports_nested_block_comments = True
+
+        profile_disabled = NestedDisabledProfile()
+        self.assertEqual(
+            profile_disabled.strip_block_comments("/* Outer /* Inner */ */"),
+            "/* Outer /* Inner */ */",
+        )
+
     def test_unclosed_string_literals_do_not_span_lines(self):
         """Unclosed standard strings do not match across newlines in strip_block_comments."""
         profile = get_language_profile("main.cpp")

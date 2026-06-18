@@ -27,6 +27,7 @@ class LanguageProfile:
     block_comment_start = "/*"
     block_comment_end = "*/"
     supports_block_comments = True
+    supports_nested_block_comments = False
     uses_indentation_blocks = False
     supports_macro_expansion = False
     supports_compile_commands = False
@@ -40,6 +41,8 @@ class LanguageProfile:
     uses_rust_character_literals = False
     _cached_block_comment_pattern = None
     _cached_string_literal_pattern = None
+    _cached_nested_pattern = None
+    _cached_inner_block_comment_pattern = None
     _CPP_RAW_STRING_PATTERN = (
         r'\b(?:u8|u|U|L)?R"(?P<cpp_raw_delim>[^ ()\\\t\r\n\v\f]{0,16})'
         r'\((?:.*?)\)(?P=cpp_raw_delim)"'
@@ -90,10 +93,127 @@ class LanguageProfile:
         """Remove strings and same-line comments before regex analysis."""
         cleaned = self.strip_string_literals(line)
         if self.supports_block_comments:
-            cleaned = _BLOCK_COMMENT_PATTERN.sub("", cleaned)
+            if self.supports_nested_block_comments:
+                cleaned = self._strip_nested_block_comments_only(cleaned)
+            else:
+                cleaned = _BLOCK_COMMENT_PATTERN.sub("", cleaned)
         if self.line_comment and self.line_comment in cleaned:
             cleaned = cleaned.split(self.line_comment, 1)[0]
         return cleaned
+
+    def _find_nested_block_comment_end(self, text, start_pos, pattern):
+        """Scan forward to find the matching end of a nested block comment."""
+        depth = 1
+        sp = start_pos
+        while depth > 0:
+            m = pattern.search(text, sp)
+            if not m:
+                return len(text)
+            t = m.group(0)
+            if t == self.block_comment_start:
+                depth += 1
+            elif t == self.block_comment_end:
+                depth -= 1
+            sp = m.end()
+        return sp
+
+    def _get_inner_block_comment_pattern(self):
+        """Compile and cache the pattern for matching inner block comment delimiters."""
+        inner_pattern = self._cached_inner_block_comment_pattern
+        if inner_pattern is None:
+            # Sort delimiters by length descending to prevent prefix matching issues
+            delims = sorted(
+                [self.block_comment_start, self.block_comment_end],
+                key=len,
+                reverse=True
+            )
+            inner_pattern = re.compile("|".join(re.escape(d) for d in delims))
+            self._cached_inner_block_comment_pattern = inner_pattern
+        return inner_pattern
+
+    def _strip_nested_block_comments_only(self, text):
+        """Remove nested block comments from text where strings are already stripped."""
+        if not (self.block_comment_start and self.block_comment_end):
+            return text
+
+        pattern = self._cached_nested_pattern
+        if pattern is None:
+            # Sort delimiters by length descending to prevent prefix matching issues
+            delims = [self.block_comment_start]
+            if self.line_comment:
+                delims.append(self.line_comment)
+            delims = sorted(delims, key=len, reverse=True)
+            pattern = re.compile("|".join(re.escape(d) for d in delims))
+            self._cached_nested_pattern = pattern
+
+        inner_pattern = self._get_inner_block_comment_pattern()
+
+        p = 0
+        result = []
+        last_idx = 0
+        while p < len(text):
+            match = pattern.search(text, p)
+            if not match:
+                break
+
+            token = match.group(0)
+            if self.line_comment and token == self.line_comment:
+                result.append(text[last_idx:match.start()])
+                result.append(text[match.start():])
+                last_idx = len(text)
+                break
+
+            if token == self.block_comment_start:
+                result.append(text[last_idx:match.start()])
+                sp = self._find_nested_block_comment_end(text, match.end(), inner_pattern)
+                last_idx = sp
+                p = sp
+            else:
+                p = match.end()
+
+        if last_idx < len(text):
+            result.append(text[last_idx:])
+        return "".join(result)
+
+    def _strip_nested_block_comments(self, content, pattern):
+        """Remove nested block comments from content, preserving line count."""
+        if not (self.block_comment_start and self.block_comment_end):
+            return content
+
+        p = 0
+        result = []
+        last_idx = 0
+        inner_pattern = self._get_inner_block_comment_pattern()
+
+        while p < len(content):
+            match = pattern.search(content, p)
+            if not match:
+                break
+
+            group_dict = match.groupdict()
+            if group_dict.get("comment_start") is not None:
+                result.append(content[last_idx:match.start()])
+                sp = self._find_nested_block_comment_end(content, match.end(), inner_pattern)
+                result.append("\n" * content.count("\n", match.start(), sp))
+                last_idx = sp
+                p = sp
+            else:
+                result.append(content[last_idx:match.start()])
+                val_to_replace = None
+                for key, val in group_dict.items():
+                    if key.startswith("multiline_") and val is not None:
+                        val_to_replace = val
+                        break
+                if val_to_replace is not None:
+                    result.append("\n" * val_to_replace.count("\n"))
+                else:
+                    result.append(match.group(0))
+                last_idx = match.end()
+                p = match.end()
+
+        if last_idx < len(content):
+            result.append(content[last_idx:])
+        return "".join(result)
 
     def format_omission_comment(self, message):
         """Format generated truncation text using valid language comments."""
@@ -141,7 +261,10 @@ class LanguageProfile:
         ):
             escaped_start = re.escape(self.block_comment_start)
             escaped_end = re.escape(self.block_comment_end)
-            parts.append(rf'(?P<comment>{escaped_start}.*?{escaped_end})')
+            if self.supports_nested_block_comments:
+                parts.append(rf'(?P<comment_start>{escaped_start})')
+            else:
+                parts.append(rf'(?P<comment>{escaped_start}.*?{escaped_end})')
 
         if self.supports_cpp_raw_strings:
             parts.append(f'(?P<multiline_cpp_raw>{self._CPP_RAW_STRING_PATTERN})')
@@ -208,6 +331,9 @@ class LanguageProfile:
         if pattern is None:
             pattern = self._compile_block_comment_pattern()
             self._cached_block_comment_pattern = pattern
+
+        if self.supports_block_comments and self.supports_nested_block_comments:
+            return self._strip_nested_block_comments(content, pattern)
 
         def replacer(match):
             group_dict = match.groupdict()
