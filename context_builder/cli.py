@@ -5,6 +5,7 @@ for commit range analysis, runs context extraction passes, and outputs context.
 """
 
 import argparse
+import copy
 import json
 import os
 import re
@@ -245,7 +246,7 @@ def _run_comparison_scans(args, start_ref, end_ref, output_dir, repo_root):
         "Running LSP and Fallback passes..."
     )
     # Pass 1: LSP
-    args_lsp = argparse.Namespace(**vars(args))
+    args_lsp = copy.copy(args)
     args_lsp.compare = False
     args_lsp.no_language_server = False
     original_base_name = args.base_name or "SmartDiffContextBuilder"
@@ -261,7 +262,7 @@ def _run_comparison_scans(args, start_ref, end_ref, output_dir, repo_root):
     )
 
     # Pass 2: Fallback
-    args_fallback = argparse.Namespace(**vars(args))
+    args_fallback = copy.copy(args)
     args_fallback.compare = False
     args_fallback.no_language_server = True
     args_fallback.base_name = f"{original_base_name}_fallback"

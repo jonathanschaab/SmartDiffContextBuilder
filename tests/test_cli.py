@@ -16,7 +16,8 @@ from context_builder.cli import main
 
 class CliNamespace(argparse.Namespace):
     def __getattr__(self, name):
-        return None
+        if name.startswith("__") and name.endswith("__"):
+            raise AttributeError(name)
 
 class TestCLI(unittest.TestCase):
     def test_rewrite_compile_commands_payload_rewrites_both_slash_styles(self):

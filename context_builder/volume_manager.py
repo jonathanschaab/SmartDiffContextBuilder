@@ -102,11 +102,14 @@ class VolumeManager:
             "cross_language_ffi_linkages": self.ffi_linkages,
         }
         payload = json.dumps(data, indent=2)
-        if len(payload.encode("utf-8")) > self.max_bytes:
+        payload_bytes = len(payload.encode("utf-8"))
+        if payload_bytes > self.max_bytes:
             limit_mb = self.max_bytes / (1024 * 1024)
             print(
-                f"\n[Warning] Payload exceeded size limit. JSON file may exceed "
-                f"{limit_mb:.2f} MB limit."
+                f"\n[Warning] Payload exceeded size limit "
+                f"({payload_bytes / (1024 * 1024):.2f} MB). "
+                f"JSON payload was NOT truncated and will exceed the "
+                f"specified budget of {limit_mb:.2f} MB."
             )
         return payload, "json"
 
