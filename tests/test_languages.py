@@ -278,6 +278,16 @@ class TestLanguageProfiles(unittest.TestCase):
         content = 'r#"\nline 1\nline 2"#'
         self.assertEqual(profile.strip_block_comments(content), '\n\n')
 
+    def test_unclosed_string_literals_do_not_span_lines(self):
+        """Unclosed standard strings do not match across newlines in strip_block_comments."""
+        profile = get_language_profile("main.cpp")
+        content = '"unclosed\n/* comment containing my_func(); */\n"closed"'
+        # The block comment should be stripped, but standard string shouldn't cross lines
+        self.assertEqual(
+            profile.strip_block_comments(content),
+            '"unclosed\n\n"closed"'
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

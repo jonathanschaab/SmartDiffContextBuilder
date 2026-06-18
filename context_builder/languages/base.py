@@ -55,7 +55,9 @@ class LanguageProfile:
                     r'\b(?:br|cr|r)(?P<rust_raw_hashes>#*)"(?:.*?)"'
                     r'(?P=rust_raw_hashes)'
                 )
-            parts.append(r'(?P<quote>["\'])(?:(?=(?P<backslash>\\?))(?P=backslash).)*?(?P=quote)')
+            parts.append(
+                r'(?:"(?:[^"\\\r\n]|\\.)*")|(?:\'(?:[^\'\\\r\n]|\\.)*\')'
+            )
             pattern = re.compile('|'.join(parts), re.DOTALL)
             self._cached_string_literal_pattern = pattern
         return pattern.sub(lambda m: "\n" * m.group(0).count("\n"), line)
@@ -176,8 +178,8 @@ class LanguageProfile:
 
             # Named backreferences to avoid quote capturing group offset issues
             parts.append(
-                r'(?P<string>(?P<quote>["\'])'
-                r'(?:(?=(?P<backslash>\\?))(?P=backslash).)*?(?P=quote))'
+                r'(?P<string>'
+                r'(?:"(?:[^"\\\r\n]|\\.)*")|(?:\'(?:[^\'\\\r\n]|\\.)*\'))'
             )
 
             if self.line_comment:
