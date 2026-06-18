@@ -65,6 +65,19 @@ class LanguageProfile:
                 parts.append(self._CPP_RAW_STRING_PATTERN)
             if self.supports_rust_raw_strings:
                 parts.append(self._RUST_RAW_STRING_PATTERN)
+            if self.multiline_string_delimiters:
+                for delim in self.multiline_string_delimiters:
+                    escaped_delim = re.escape(delim)
+                    first_char_escaped = re.escape(delim[0])
+                    pattern_str = (
+                        rf'{escaped_delim}'
+                        rf'(?:[^\\{first_char_escaped}]|\\.|'
+                        rf'(?!{escaped_delim}){first_char_escaped})*?'
+                        rf'{escaped_delim}'
+                    )
+                    parts.append(pattern_str)
+                for delim in self.multiline_string_delimiters:
+                    parts.append(re.escape(delim) + r'[^\r\n]*')
             if self.uses_rust_character_literals:
                 parts.append(self._RUST_CHARACTER_LITERAL_PATTERN)
             else:
@@ -138,10 +151,15 @@ class LanguageProfile:
 
         for i, delim in enumerate(self.multiline_string_delimiters):
             escaped_delim = re.escape(delim)
-            parts.append(
+            first_char_escaped = re.escape(delim[0])
+            pattern_str = (
                 rf'(?P<multiline_{i}>'
-                rf'{escaped_delim}(?:\\.|(?!{escaped_delim}).)*?{escaped_delim})'
+                rf'{escaped_delim}'
+                rf'(?:[^\\{first_char_escaped}]|\\.|'
+                rf'(?!{escaped_delim}){first_char_escaped})*?'
+                rf'{escaped_delim})'
             )
+            parts.append(pattern_str)
 
         # Named backreferences to avoid quote capturing group offset issues
         if self.uses_rust_character_literals:
