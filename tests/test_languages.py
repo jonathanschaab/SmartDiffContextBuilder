@@ -278,6 +278,28 @@ class TestLanguageProfiles(unittest.TestCase):
         content = 'r#"\nline 1\nline 2"#'
         self.assertEqual(profile.strip_block_comments(content), '\n\n')
 
+    def test_rust_lifetimes_and_character_literals(self):
+        """Rust lifetimes are preserved and valid char literals are stripped."""
+        profile = get_language_profile("lib.rs")
+
+        # Test character literals are correctly stripped
+        self.assertEqual(profile.strip_strings_and_comments("'a'"), "")
+        self.assertEqual(profile.strip_strings_and_comments("'\\n'"), "")
+        self.assertEqual(profile.strip_strings_and_comments("'\\u{1f600}'"), "")
+
+        # Test lifetimes are preserved
+        self.assertEqual(
+            profile.strip_strings_and_comments("fn foo<'a, 'b>()"),
+            "fn foo<'a, 'b>()",
+        )
+
+        # Test block comments on the same line as multiple lifetimes are stripped
+        content = "fn foo<'a /* comment */, 'b>()"
+        self.assertEqual(
+            profile.strip_block_comments(content),
+            "fn foo<'a , 'b>()",
+        )
+
     def test_unclosed_string_literals_do_not_span_lines(self):
         """Unclosed standard strings do not match across newlines in strip_block_comments."""
         profile = get_language_profile("main.cpp")
