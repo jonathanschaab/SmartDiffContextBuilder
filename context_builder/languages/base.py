@@ -184,8 +184,7 @@ class LanguageProfile:
             if group_dict.get("comment_start") is not None:
                 result.append(content[last_idx:match.start()])
                 sp = self._find_nested_block_comment_end(content, match.end(), inner_pattern)
-                comment_text = content[match.start():sp]
-                result.append("\n" * comment_text.count("\n"))
+                result.append("\n" * content.count("\n", match.start(), sp))
                 last_idx = sp
                 p = sp
             else:
