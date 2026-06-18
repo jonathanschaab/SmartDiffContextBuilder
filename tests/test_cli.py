@@ -1821,4 +1821,3 @@ class TestCLI(unittest.TestCase):
             self.assertEqual(second_call_args.compare, False)
             self.assertEqual(second_call_args.no_language_server, True)
             self.assertEqual(second_call_args.base_name, "CompareTest_fallback")
-
