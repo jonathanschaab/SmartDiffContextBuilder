@@ -117,6 +117,16 @@ class LanguageProfile:
             sp = m.end()
         return sp
 
+    def _get_inner_block_comment_pattern(self):
+        """Compile and cache the pattern for matching inner block comment delimiters."""
+        inner_pattern = self._cached_inner_block_comment_pattern
+        if inner_pattern is None:
+            escaped_start = re.escape(self.block_comment_start)
+            escaped_end = re.escape(self.block_comment_end)
+            inner_pattern = re.compile(f"{escaped_start}|{escaped_end}")
+            self._cached_inner_block_comment_pattern = inner_pattern
+        return inner_pattern
+
     def _strip_nested_block_comments_only(self, text):
         """Remove nested block comments from text where strings are already stripped."""
         if not (self.block_comment_start and self.block_comment_end):
@@ -125,20 +135,14 @@ class LanguageProfile:
         pattern = self._cached_nested_pattern
         if pattern is None:
             escaped_start = re.escape(self.block_comment_start)
-            escaped_end = re.escape(self.block_comment_end)
             if self.line_comment:
                 escaped_line = re.escape(self.line_comment)
-                pattern = re.compile(f"{escaped_start}|{escaped_end}|{escaped_line}")
+                pattern = re.compile(f"{escaped_start}|{escaped_line}")
             else:
-                pattern = re.compile(f"{escaped_start}|{escaped_end}")
+                pattern = re.compile(escaped_start)
             self._cached_nested_pattern = pattern
 
-        inner_pattern = self._cached_inner_block_comment_pattern
-        if inner_pattern is None:
-            escaped_start = re.escape(self.block_comment_start)
-            escaped_end = re.escape(self.block_comment_end)
-            inner_pattern = re.compile(f"{escaped_start}|{escaped_end}")
-            self._cached_inner_block_comment_pattern = inner_pattern
+        inner_pattern = self._get_inner_block_comment_pattern()
 
         p = 0
         result = []
@@ -175,12 +179,7 @@ class LanguageProfile:
         p = 0
         result = []
         last_idx = 0
-        inner_pattern = self._cached_inner_block_comment_pattern
-        if inner_pattern is None:
-            escaped_start = re.escape(self.block_comment_start)
-            escaped_end = re.escape(self.block_comment_end)
-            inner_pattern = re.compile(f"{escaped_start}|{escaped_end}")
-            self._cached_inner_block_comment_pattern = inner_pattern
+        inner_pattern = self._get_inner_block_comment_pattern()
 
         while p < len(content):
             match = pattern.search(content, p)
