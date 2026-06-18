@@ -40,6 +40,21 @@ class LanguageProfile:
     uses_rust_character_literals = False
     _cached_block_comment_pattern = None
     _cached_string_literal_pattern = None
+    _CPP_RAW_STRING_PATTERN = (
+        r'\b(?:u8|u|U|L)?R"(?P<cpp_raw_delim>[^ ()\\\t\r\n\v\f]{0,16})'
+        r'\((?:.*?)\)(?P=cpp_raw_delim)"'
+    )
+    _RUST_RAW_STRING_PATTERN = (
+        r'\b(?:br|cr|r)(?P<rust_raw_hashes>#*)"(?:.*?)"'
+        r'(?P=rust_raw_hashes)'
+    )
+    _RUST_CHARACTER_LITERAL_PATTERN = (
+        r'(?:"(?:[^"\\\r\n]|\\.)*")|'
+        r"(?:'(?:\\[xX][0-9a-fA-F]{2}|\\u\{[0-9a-fA-F]{1,6}\}|\\.|[^'\\\r\n])')"
+    )
+    _STANDARD_STRING_PATTERN = (
+        r'(?:"(?:[^"\\\r\n]|\\.)*")|(?:\'(?:[^\'\\\r\n]|\\.)*\')'
+    )
 
     def strip_string_literals(self, line):
         """Remove quoted strings before applying language comment rules."""
@@ -47,24 +62,13 @@ class LanguageProfile:
         if pattern is None:
             parts = []
             if self.supports_cpp_raw_strings:
-                parts.append(
-                    r'\b(?:u8|u|U|L)?R"(?P<cpp_raw_delim>[^ ()\\\t\r\n\v\f]{0,16})'
-                    r'\((?:.*?)\)(?P=cpp_raw_delim)"'
-                )
+                parts.append(self._CPP_RAW_STRING_PATTERN)
             if self.supports_rust_raw_strings:
-                parts.append(
-                    r'\b(?:br|cr|r)(?P<rust_raw_hashes>#*)"(?:.*?)"'
-                    r'(?P=rust_raw_hashes)'
-                )
+                parts.append(self._RUST_RAW_STRING_PATTERN)
             if self.uses_rust_character_literals:
-                parts.append(
-                    r'(?:"(?:[^"\\\r\n]|\\.)*")|'
-                    r"(?:'(?:\\[xX][0-9a-fA-F]{2}|\\u\{[0-9a-fA-F]{1,6}\}|\\.|[^'\\\r\n])')"
-                )
+                parts.append(self._RUST_CHARACTER_LITERAL_PATTERN)
             else:
-                parts.append(
-                    r'(?:"(?:[^"\\\r\n]|\\.)*")|(?:\'(?:[^\'\\\r\n]|\\.)*\')'
-                )
+                parts.append(self._STANDARD_STRING_PATTERN)
             pattern = re.compile('|'.join(parts), re.DOTALL)
             self._cached_string_literal_pattern = pattern
         return pattern.sub(lambda m: "\n" * m.group(0).count("\n"), line)
@@ -127,17 +131,10 @@ class LanguageProfile:
             parts.append(rf'(?P<comment>{escaped_start}.*?{escaped_end})')
 
         if self.supports_cpp_raw_strings:
-            parts.append(
-                r'(?P<multiline_cpp_raw>\b(?:u8|u|U|L)?R"'
-                r'(?P<cpp_raw_delim>[^ ()\\\t\r\n\v\f]{0,16})'
-                r'\((?:.*?)\)(?P=cpp_raw_delim)")'
-            )
+            parts.append(f'(?P<multiline_cpp_raw>{self._CPP_RAW_STRING_PATTERN})')
 
         if self.supports_rust_raw_strings:
-            parts.append(
-                r'(?P<multiline_rust_raw>\b(?:br|cr|r)'
-                r'(?P<rust_raw_hashes>#*)"(?:.*?)"(?P=rust_raw_hashes))'
-            )
+            parts.append(f'(?P<multiline_rust_raw>{self._RUST_RAW_STRING_PATTERN})')
 
         for i, delim in enumerate(self.multiline_string_delimiters):
             escaped_delim = re.escape(delim)
@@ -148,16 +145,9 @@ class LanguageProfile:
 
         # Named backreferences to avoid quote capturing group offset issues
         if self.uses_rust_character_literals:
-            parts.append(
-                r'(?P<string>'
-                r'(?:"(?:[^"\\\r\n]|\\.)*")|'
-                r"(?:'(?:\\[xX][0-9a-fA-F]{2}|\\u\{[0-9a-fA-F]{1,6}\}|\\.|[^'\\\r\n])'))"
-            )
+            parts.append(f'(?P<string>{self._RUST_CHARACTER_LITERAL_PATTERN})')
         else:
-            parts.append(
-                r'(?P<string>'
-                r'(?:"(?:[^"\\\r\n]|\\.)*")|(?:\'(?:[^\'\\\r\n]|\\.)*\'))'
-            )
+            parts.append(f'(?P<string>{self._STANDARD_STRING_PATTERN})')
 
         if self.line_comment:
             escaped_line_comment = re.escape(self.line_comment)
