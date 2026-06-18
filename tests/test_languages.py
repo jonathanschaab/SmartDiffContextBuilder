@@ -411,6 +411,35 @@ class TestLanguageProfiles(unittest.TestCase):
             "",
         )
 
+    def test_prefix_delimiter_matching_and_supports_check(self):
+        """Verify sorting delims by length descending and checking supports flags."""
+        class PrefixOverlappingProfile(LanguageProfile):
+            """Profile with overlapping delimiters where one is prefix of another."""
+            block_comment_start = "/*"
+            block_comment_end = "/*/"  # overlapping, block_comment_start is prefix
+            line_comment = "//"
+            supports_block_comments = True
+            supports_nested_block_comments = True
+
+        profile = PrefixOverlappingProfile()
+        self.assertEqual(
+            profile.strip_strings_and_comments("/* Outer /*/"),
+            "",
+        )
+
+        class NestedDisabledProfile(LanguageProfile):
+            """Profile with nested block comments disabled but configured."""
+            block_comment_start = "/*"
+            block_comment_end = "*/"
+            supports_block_comments = False
+            supports_nested_block_comments = True
+
+        profile_disabled = NestedDisabledProfile()
+        self.assertEqual(
+            profile_disabled.strip_block_comments("/* Outer /* Inner */ */"),
+            "/* Outer /* Inner */ */",
+        )
+
     def test_unclosed_string_literals_do_not_span_lines(self):
         """Unclosed standard strings do not match across newlines in strip_block_comments."""
         profile = get_language_profile("main.cpp")
