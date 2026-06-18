@@ -151,10 +151,15 @@ class LanguageProfile:
 
         for i, delim in enumerate(self.multiline_string_delimiters):
             escaped_delim = re.escape(delim)
-            parts.append(
+            first_char_escaped = re.escape(delim[0])
+            pattern_str = (
                 rf'(?P<multiline_{i}>'
-                rf'{escaped_delim}(?:\\.|(?!{escaped_delim}).)*?{escaped_delim})'
+                rf'{escaped_delim}'
+                rf'(?:[^\\\\{first_char_escaped}]|\\\\.|'
+                rf'(?!{escaped_delim}){first_char_escaped})*?'
+                rf'{escaped_delim})'
             )
+            parts.append(pattern_str)
 
         # Named backreferences to avoid quote capturing group offset issues
         if self.uses_rust_character_literals:

@@ -71,6 +71,10 @@ class TestLanguageProfiles(unittest.TestCase):
             profile.strip_strings_and_comments(redos_str),
             'query = ' + '\\' * 1000,
         )
+        self.assertEqual(
+            profile.strip_block_comments(redos_str),
+            redos_str,
+        )
 
     def test_c_family_profile(self):
         """C-family files expose preprocessing and compile database support."""
