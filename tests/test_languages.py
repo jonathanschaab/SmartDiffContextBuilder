@@ -64,6 +64,14 @@ class TestLanguageProfiles(unittest.TestCase):
             'query = \n\n\n',
         )
 
+        # ReDoS test: 1000 backslashes in an unclosed multiline string
+        # This test ensures there is no exponential backtracking / hang
+        redos_str = 'query = """' + '\\' * 1000
+        self.assertEqual(
+            profile.strip_strings_and_comments(redos_str),
+            'query = ' + '\\' * 1000,
+        )
+
     def test_c_family_profile(self):
         """C-family files expose preprocessing and compile database support."""
         for file_path in (

@@ -68,8 +68,9 @@ class LanguageProfile:
             if self.multiline_string_delimiters:
                 for delim in self.multiline_string_delimiters:
                     escaped_delim = re.escape(delim)
+                    first_char_escaped = re.escape(delim[0])
                     parts.append(
-                        rf'{escaped_delim}(?:\\.|(?!{escaped_delim}).)*?{escaped_delim}'
+                        rf'{escaped_delim}(?:[^\\\\{first_char_escaped}]|\\\\.|(?!{escaped_delim}){first_char_escaped})*?{escaped_delim}'
                     )
                 for delim in self.multiline_string_delimiters:
                     parts.append(re.escape(delim))
