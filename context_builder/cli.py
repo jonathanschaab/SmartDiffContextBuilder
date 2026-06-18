@@ -249,7 +249,7 @@ def _run_comparison_scans(args, start_ref, end_ref, output_dir, repo_root):
     args_lsp = copy.copy(args)
     args_lsp.compare = False
     args_lsp.no_language_server = False
-    original_base_name = args.base_name or "SmartDiffContextBuilder"
+    original_base_name = getattr(args, "base_name", None) or "SmartDiffContextBuilder"
     args_lsp.base_name = f"{original_base_name}_lsp"
 
     print("\n--- Running Pass 1: Language Server (LSP) ---")
@@ -289,6 +289,13 @@ def _run_comparison_scans(args, start_ref, end_ref, output_dir, repo_root):
 
 def run_scan(args, start_ref=None, end_ref=None, output_dir=".", repo_root=None):
     """Execute the context scan."""
+    if getattr(args, "compare", False) and getattr(args, "no_language_server", False):
+        print(
+            "[SmartDiffContextBuilder Error] Cannot run in comparison mode "
+            "with language server disabled (--no-language-server)."
+        )
+        sys.exit(1)
+
     if getattr(args, "compare", False):
         _run_comparison_scans(
             args,
@@ -839,8 +846,9 @@ def main():
     parser.add_argument("--ripgrep-timeout", type=float, default=None)
     parser.add_argument("--git-timeout", type=float, default=None)
     parser.add_argument("--git-probe-timeout", type=float, default=None)
-    parser.add_argument("--no-language-server", action="store_true", default=None)
-    parser.add_argument("--compare", action="store_true", default=None)
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--no-language-server", action="store_true", default=None)
+    group.add_argument("--compare", action="store_true", default=None)
     parser.add_argument("--skip-ffi", action="store_true", default=None)
     parser.add_argument("--skip-macro-expansion", action="store_true", default=None)
     parser.add_argument("--caller-depth", type=int, default=None)
@@ -922,6 +930,13 @@ def main():
     # Populate the Namespace object with merged CONFIG values
     for k, v in CONFIG.items():
         setattr(args, k, v)
+
+    if getattr(args, "compare", False) and getattr(args, "no_language_server", False):
+        print(
+            "[SmartDiffContextBuilder Error] Cannot run in comparison mode "
+            "with language server disabled (--no-language-server)."
+        )
+        sys.exit(1)
 
     commit_range = getattr(args, "commit_range", None)
     if commit_range:

@@ -1822,3 +1822,23 @@ class TestCLI(unittest.TestCase):
             self.assertEqual(second_call_args.compare, False)
             self.assertEqual(second_call_args.no_language_server, True)
             self.assertEqual(second_call_args.base_name, "CompareTest_fallback")
+
+    def test_cli_mutually_exclusive_compare_and_no_lsp(self):
+        from context_builder.cli import main
+        # When both are specified on command line, argparse should raise SystemExit
+        with patch("sys.argv", ["smart_diff_context_builder.py", "--compare", "--no-language-server"]):
+            with self.assertRaises(SystemExit):
+                with patch("sys.stderr"):
+                    main()
+
+    def test_run_scan_aborts_on_compare_and_no_lsp_conflict(self):
+        from context_builder.cli import run_scan
+        args = CliNamespace(
+            compare=True,
+            no_language_server=True,
+        )
+        with self.assertRaises(SystemExit):
+            with patch("builtins.print") as mock_print:
+                run_scan(args)
+            printed = "".join(c[0][0] for c in mock_print.call_args_list if c[0])
+            self.assertIn("Cannot run in comparison mode", printed)

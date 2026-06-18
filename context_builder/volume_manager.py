@@ -101,7 +101,7 @@ class VolumeManager:
             "upstream_dependent_callers": self.local_callers,
             "cross_language_ffi_linkages": self.ffi_linkages,
         }
-        payload = json.dumps(data, indent=2)
+        payload = json.dumps(data, indent=2, ensure_ascii=False)
         payload_bytes = len(payload.encode("utf-8"))
         if payload_bytes > self.max_bytes:
             limit_mb = self.max_bytes / (1024 * 1024)
