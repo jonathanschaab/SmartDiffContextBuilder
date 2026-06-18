@@ -202,6 +202,114 @@ class TestLanguageProfiles(unittest.TestCase):
             "javascript",
         )
 
+    def test_cpp_raw_string_stripping(self):
+        """C++ profile correctly strips single-line and multiline raw string literals."""
+        profile = get_language_profile("main.cpp")
+        self.assertEqual(
+            profile.strip_strings_and_comments('R"delimiter(my_func();)delimiter"'),
+            '',
+        )
+        self.assertEqual(
+            profile.strip_strings_and_comments('R"(my_func();)"'),
+            '',
+        )
+        self.assertEqual(
+            profile.strip_strings_and_comments('R"foo(my_func("hello");)foo"'),
+            '',
+        )
+        self.assertEqual(
+            profile.strip_strings_and_comments('u8R"foo(bar)foo"'),
+            '',
+        )
+        self.assertEqual(
+            profile.strip_strings_and_comments('LR"--(STUV)--"'),
+            '',
+        )
+
+        # Raw string prefixes that are part of larger identifiers should not
+        # be matched as raw strings
+        self.assertEqual(
+            profile.strip_strings_and_comments('fooR"(bar)"'),
+            'fooR',
+        )
+
+        # Multiline raw string in content should be stripped by
+        # strip_block_comments preserving newlines
+        content = 'R"foo(\nmy_func("hello");\n)foo"'
+        self.assertEqual(profile.strip_block_comments(content), '\n\n')
+
+    def test_rust_raw_string_stripping(self):
+        """Rust profile correctly strips single-line and multiline raw string literals."""
+        profile = get_language_profile("lib.rs")
+        self.assertEqual(
+            profile.strip_strings_and_comments('r#"// my_func()"#'),
+            '',
+        )
+        self.assertEqual(
+            profile.strip_strings_and_comments('r"// my_func()"'),
+            '',
+        )
+        self.assertEqual(
+            profile.strip_strings_and_comments('br#"// my_func()"#'),
+            '',
+        )
+        self.assertEqual(
+            profile.strip_strings_and_comments('r##"my_func("hello")"##'),
+            '',
+        )
+        self.assertEqual(
+            profile.strip_strings_and_comments('cr"foo"'),
+            '',
+        )
+        self.assertEqual(
+            profile.strip_strings_and_comments('cr#"foo"#'),
+            '',
+        )
+
+        # Raw string prefixes that are part of larger identifiers should not
+        # be matched as raw strings
+        self.assertEqual(
+            profile.strip_strings_and_comments('bar"hello"'),
+            'bar',
+        )
+
+        # Multiline raw string in content should be stripped by
+        # strip_block_comments preserving newlines
+        content = 'r#"\nline 1\nline 2"#'
+        self.assertEqual(profile.strip_block_comments(content), '\n\n')
+
+    def test_rust_lifetimes_and_character_literals(self):
+        """Rust lifetimes are preserved and valid char literals are stripped."""
+        profile = get_language_profile("lib.rs")
+
+        # Test character literals are correctly stripped
+        self.assertEqual(profile.strip_strings_and_comments("'a'"), "")
+        self.assertEqual(profile.strip_strings_and_comments("'\\n'"), "")
+        self.assertEqual(profile.strip_strings_and_comments("'\\u{1f600}'"), "")
+
+        # Test lifetimes are preserved
+        self.assertEqual(
+            profile.strip_strings_and_comments("fn foo<'a, 'b>()"),
+            "fn foo<'a, 'b>()",
+        )
+
+        # Test block comments on the same line as multiple lifetimes are stripped
+        content = "fn foo<'a /* comment */, 'b>()"
+        self.assertEqual(
+            profile.strip_block_comments(content),
+            "fn foo<'a , 'b>()",
+        )
+
+    def test_unclosed_string_literals_do_not_span_lines(self):
+        """Unclosed standard strings do not match across newlines in strip_block_comments."""
+        profile = get_language_profile("main.cpp")
+        content = '"unclosed\n/* comment containing my_func(); */\n"closed"'
+        # The block comment should be stripped, but standard string shouldn't cross lines
+        self.assertEqual(
+            profile.strip_block_comments(content),
+            '"unclosed\n\n"closed"'
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

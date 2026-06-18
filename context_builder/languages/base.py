@@ -35,12 +35,43 @@ class LanguageProfile:
     test_query = None
     tests_can_share_source_file = False
     multiline_string_delimiters = ()
+    supports_cpp_raw_strings = False
+    supports_rust_raw_strings = False
+    uses_rust_character_literals = False
     _cached_block_comment_pattern = None
+    _cached_string_literal_pattern = None
+    _CPP_RAW_STRING_PATTERN = (
+        r'\b(?:u8|u|U|L)?R"(?P<cpp_raw_delim>[^ ()\\\t\r\n\v\f]{0,16})'
+        r'\((?:.*?)\)(?P=cpp_raw_delim)"'
+    )
+    _RUST_RAW_STRING_PATTERN = (
+        r'\b(?:br|cr|r)(?P<rust_raw_hashes>#*)"(?:.*?)"'
+        r'(?P=rust_raw_hashes)'
+    )
+    _RUST_CHARACTER_LITERAL_PATTERN = (
+        r'(?:"(?:[^"\\\r\n]|\\.)*")|'
+        r"(?:'(?:\\[xX][0-9a-fA-F]{2}|\\u\{[0-9a-fA-F]{1,6}\}|\\.|[^'\\\r\n])')"
+    )
+    _STANDARD_STRING_PATTERN = (
+        r'(?:"(?:[^"\\\r\n]|\\.)*")|(?:\'(?:[^\'\\\r\n]|\\.)*\')'
+    )
 
-    @staticmethod
-    def strip_string_literals(line):
+    def strip_string_literals(self, line):
         """Remove quoted strings before applying language comment rules."""
-        return _STRING_LITERAL_PATTERN.sub("", line)
+        pattern = self._cached_string_literal_pattern
+        if pattern is None:
+            parts = []
+            if self.supports_cpp_raw_strings:
+                parts.append(self._CPP_RAW_STRING_PATTERN)
+            if self.supports_rust_raw_strings:
+                parts.append(self._RUST_RAW_STRING_PATTERN)
+            if self.uses_rust_character_literals:
+                parts.append(self._RUST_CHARACTER_LITERAL_PATTERN)
+            else:
+                parts.append(self._STANDARD_STRING_PATTERN)
+            pattern = re.compile('|'.join(parts), re.DOTALL)
+            self._cached_string_literal_pattern = pattern
+        return pattern.sub(lambda m: "\n" * m.group(0).count("\n"), line)
 
     def strip_strings_and_comments(self, line):
         """Remove strings and same-line comments before regex analysis."""
@@ -88,18 +119,57 @@ class LanguageProfile:
         trail_b = r'\b' if func_name[-1].isalnum() or func_name[-1] == '_' else ''
         return lead_b, trail_b
 
+    def _compile_block_comment_pattern(self):
+        parts = []
+        if (
+            self.supports_block_comments
+            and self.block_comment_start
+            and self.block_comment_end
+        ):
+            escaped_start = re.escape(self.block_comment_start)
+            escaped_end = re.escape(self.block_comment_end)
+            parts.append(rf'(?P<comment>{escaped_start}.*?{escaped_end})')
+
+        if self.supports_cpp_raw_strings:
+            parts.append(f'(?P<multiline_cpp_raw>{self._CPP_RAW_STRING_PATTERN})')
+
+        if self.supports_rust_raw_strings:
+            parts.append(f'(?P<multiline_rust_raw>{self._RUST_RAW_STRING_PATTERN})')
+
+        for i, delim in enumerate(self.multiline_string_delimiters):
+            escaped_delim = re.escape(delim)
+            parts.append(
+                rf'(?P<multiline_{i}>'
+                rf'{escaped_delim}(?:\\.|(?!{escaped_delim}).)*?{escaped_delim})'
+            )
+
+        # Named backreferences to avoid quote capturing group offset issues
+        if self.uses_rust_character_literals:
+            parts.append(f'(?P<string>{self._RUST_CHARACTER_LITERAL_PATTERN})')
+        else:
+            parts.append(f'(?P<string>{self._STANDARD_STRING_PATTERN})')
+
+        if self.line_comment:
+            escaped_line_comment = re.escape(self.line_comment)
+            parts.append(rf'(?P<line_comment>{escaped_line_comment}[^\n]*)')
+
+        return re.compile('|'.join(parts), re.DOTALL)
+
     def strip_block_comments(self, content):
         """Remove block comments and multiline string literals from content.
 
         Replaces them with newlines to preserve line count.
         """
+        has_block_comments = (
+            self.supports_block_comments
+            and self.block_comment_start
+            and self.block_comment_end
+        )
         if (
-            (
-                not self.supports_block_comments
-                or not self.block_comment_start
-                or not self.block_comment_end
-            )
+            not has_block_comments
             and not self.multiline_string_delimiters
+            and not self.supports_cpp_raw_strings
+            and not self.supports_rust_raw_strings
         ):
             return content
 
@@ -108,39 +178,17 @@ class LanguageProfile:
         if self.supports_block_comments and self.block_comment_start:
             starts.append(self.block_comment_start)
         starts.extend(self.multiline_string_delimiters)
+        if self.supports_cpp_raw_strings:
+            starts.append('R"')
+        if self.supports_rust_raw_strings:
+            starts.extend(['r"', 'r#', 'br"', 'br#', 'cr"', 'cr#'])
+
         if not any(start in content for start in starts):
             return content
 
         pattern = self._cached_block_comment_pattern
         if pattern is None:
-            parts = []
-            if (
-                self.supports_block_comments
-                and self.block_comment_start
-                and self.block_comment_end
-            ):
-                escaped_start = re.escape(self.block_comment_start)
-                escaped_end = re.escape(self.block_comment_end)
-                parts.append(rf'(?P<comment>{escaped_start}.*?{escaped_end})')
-
-            for i, delim in enumerate(self.multiline_string_delimiters):
-                escaped_delim = re.escape(delim)
-                parts.append(
-                    rf'(?P<multiline_{i}>'
-                    rf'{escaped_delim}(?:\\.|(?!{escaped_delim}).)*?{escaped_delim})'
-                )
-
-            # Named backreferences to avoid quote capturing group offset issues
-            parts.append(
-                r'(?P<string>(?P<quote>["\'])'
-                r'(?:(?=(?P<backslash>\\?))(?P=backslash).)*?(?P=quote))'
-            )
-
-            if self.line_comment:
-                escaped_line_comment = re.escape(self.line_comment)
-                parts.append(rf'(?P<line_comment>{escaped_line_comment}[^\n]*)')
-
-            pattern = re.compile('|'.join(parts), re.DOTALL)
+            pattern = self._compile_block_comment_pattern()
             self._cached_block_comment_pattern = pattern
 
         def replacer(match):

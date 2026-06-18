@@ -16,6 +16,7 @@ class CFamilyProfile(LanguageProfile):
     supports_macro_expansion = True
     supports_compile_commands = True
     uses_c_style_definitions = True
+    supports_cpp_raw_strings = True
     lsp_command = ("clangd", "--background-index")
 
     def get_definition_patterns(self, func_name):
