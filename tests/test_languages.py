@@ -411,6 +411,37 @@ class TestLanguageProfiles(unittest.TestCase):
             "",
         )
 
+        # Test nested block comments containing string literals with delimiters (blindness fix)
+        content_with_string = (
+            "/* Outer\n"
+            '  let s = "*/";\n'
+            "*/\n"
+            "fn active() {}"
+        )
+        expected_with_string = (
+            "\n"
+            "\n"
+            "\n"
+            "fn active() {}"
+        )
+        self.assertEqual(
+            profile.strip_block_comments(content_with_string),
+            expected_with_string,
+        )
+
+        # Test nested block comments containing raw string literals with delimiters
+        content_with_raw_string = (
+            "/* Outer\n"
+            '  let s = r#"*/"#;\n'
+            "*/\n"
+            "fn active() {}"
+        )
+        self.assertEqual(
+            profile.strip_block_comments(content_with_raw_string),
+            expected_with_string,
+        )
+
+
     def test_prefix_delimiter_matching_and_supports_check(self):
         """Verify sorting delims by length descending and checking supports flags."""
         class PrefixOverlappingProfile(LanguageProfile):

@@ -117,6 +117,12 @@ class LanguageProfile:
             sp = m.end()
         return sp
 
+    def _get_string_literal_pattern(self):
+        """Compile and cache the pattern for matching string literals."""
+        if self._cached_string_literal_pattern is None:
+            self.strip_string_literals("")
+        return self._cached_string_literal_pattern
+
     def _get_inner_block_comment_pattern(self):
         """Compile and cache the pattern for matching inner block comment delimiters."""
         inner_pattern = self._cached_inner_block_comment_pattern
@@ -127,7 +133,12 @@ class LanguageProfile:
                 key=len,
                 reverse=True
             )
-            inner_pattern = re.compile("|".join(re.escape(d) for d in delims))
+            escaped_delims = "|".join(re.escape(d) for d in delims)
+            string_pat = self._get_string_literal_pattern()
+            inner_pattern = re.compile(
+                f"(?:{string_pat.pattern})|{escaped_delims}",
+                re.DOTALL
+            )
             self._cached_inner_block_comment_pattern = inner_pattern
         return inner_pattern
 
