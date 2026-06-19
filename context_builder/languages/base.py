@@ -136,12 +136,11 @@ class LanguageProfile:
             escaped_delims = "|".join(re.escape(d) for d in delims)
             string_pat = self._get_string_literal_pattern()
             inner_pattern = re.compile(
-                f"{string_pat.pattern}|{escaped_delims}",
+                f"(?:{string_pat.pattern})|{escaped_delims}",
                 re.DOTALL
             )
             self._cached_inner_block_comment_pattern = inner_pattern
         return inner_pattern
-
 
     def _strip_nested_block_comments_only(self, text):
         """Remove nested block comments from text where strings are already stripped."""
