@@ -526,16 +526,22 @@ class TestLanguageProfiles(unittest.TestCase):
         # Test macro argument pattern
         self.assertTrue(macro_arg_pattern.search("TEST_F(MyClass, myTarget)"))
         self.assertTrue(macro_arg_pattern.search("TEST(MyClass, myTarget) {"))
-        self.assertTrue(macro_arg_pattern.search("DECLARE_DYNAMIC_MULTICAST_DELEGATE(FMyDelegate, myTarget, Param1)"))
+        self.assertTrue(macro_arg_pattern.search(
+            "DECLARE_DYNAMIC_MULTICAST_DELEGATE(FMyDelegate, myTarget, Param1)"
+        ))
         self.assertFalse(macro_arg_pattern.search("myTarget(foo);"))
         self.assertFalse(macro_arg_pattern.search("void myTarget()"))
 
         # Test macro prefixed pattern
         self.assertTrue(macro_prefix_pattern.search("UFUNCTION(BlueprintCallable) void myTarget()"))
         self.assertTrue(macro_prefix_pattern.search("UFUNCTION() void myTarget()"))
-        self.assertTrue(macro_prefix_pattern.search("UFUNCTION(BlueprintCallable) DEPRECATED(5.0) void myTarget()"))
+        self.assertTrue(macro_prefix_pattern.search(
+            "UFUNCTION(BlueprintCallable) DEPRECATED(5.0) void myTarget()"
+        ))
         self.assertFalse(macro_prefix_pattern.search("void myTarget()"))
-        self.assertFalse(macro_prefix_pattern.search("UFUNCTION(BlueprintCallable) void otherFunc()"))
+        self.assertFalse(macro_prefix_pattern.search(
+            "UFUNCTION(BlueprintCallable) void otherFunc()"
+        ))
 
 
 if __name__ == "__main__":

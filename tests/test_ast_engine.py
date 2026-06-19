@@ -1996,4 +1996,3 @@ class TestAstEngine(unittest.TestCase):
         path, line = find_callee_definition("myTargetSameLine", [file_path], file_cache=self.cache)
         self.assertEqual(path, file_path)
         self.assertEqual(line, 4)
-
