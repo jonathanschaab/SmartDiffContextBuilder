@@ -23,8 +23,16 @@ class CFamilyProfile(LanguageProfile):
         """Return the C-family specific regex boundary patterns (lead_b, trail_b) for func_name."""
         if not func_name:
             return '', ''
-        lead_b = r'(?<![a-zA-Z0-9_])' if func_name[0].isalnum() or func_name[0] == '_' or func_name[0] == '~' else ''
-        trail_b = r'(?![a-zA-Z0-9_])' if func_name[-1].isalnum() or func_name[-1] == '_' else ''
+        lead_b = (
+            r'(?<![a-zA-Z0-9_])'
+            if func_name[0].isalnum() or func_name[0] in ('_', '~')
+            else ''
+        )
+        trail_b = (
+            r'(?![a-zA-Z0-9_])'
+            if func_name[-1].isalnum() or func_name[-1] == '_'
+            else ''
+        )
         return lead_b, trail_b
 
     def get_definition_patterns(self, func_name):

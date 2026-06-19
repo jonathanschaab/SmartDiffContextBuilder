@@ -341,6 +341,7 @@ def trace_lexical_dependencies_regex(func_name, repo_files, file_cache=None):
         if profile is UNKNOWN_LANGUAGE or file_path.endswith('.md'):
             continue
         if profile.name not in profile_patterns_cache:
+            # pylint: disable=protected-access
             p_lead_b, _ = profile._get_boundaries(func_name)
             escaped_name = re.escape(func_name)
             def_cpp_pattern = re.compile(
@@ -666,6 +667,7 @@ def find_callee_definition(callee_name, all_repo_files, file_cache=None):
             continue
 
         if profile.name not in patterns_cache:
+            # pylint: disable=protected-access
             p_lead_b, p_trail_b = profile._get_boundaries(callee_name)
             escaped_callee = re.escape(callee_name)
             pattern = CONFIG['def_pattern_template'].replace(

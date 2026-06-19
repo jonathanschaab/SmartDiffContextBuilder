@@ -120,9 +120,12 @@ class TestLanguageProfiles(unittest.TestCase):
             )
 
     def test_c_family_boundaries(self):
-        """CFamilyProfile boundaries use negative lookbehinds/lookaheads for destructors and identifiers."""
+        """CFamilyProfile boundaries use negative lookbehinds/lookaheads for
+        destructors and identifiers.
+        """
+        # pylint: disable=protected-access
         profile = get_language_profile("main.cpp")
-        
+
         # Test _get_boundaries for normal class name
         lead_b, trail_b = profile._get_boundaries("MyClass")
         self.assertEqual(lead_b, r'(?<![a-zA-Z0-9_])')
@@ -135,12 +138,12 @@ class TestLanguageProfiles(unittest.TestCase):
 
         # Verify call pattern matches / doesn't match boundaries
         pattern = profile.get_call_pattern("~MyClass")
-        
+
         self.assertTrue(pattern.search("obj.~MyClass()"))
         self.assertTrue(pattern.search("ptr->~MyClass()"))
         self.assertTrue(pattern.search("MyClass::~MyClass()"))
         self.assertTrue(pattern.search("~MyClass()"))
-        
+
         self.assertFalse(pattern.search("other_~MyClass()"))
         self.assertFalse(pattern.search("abc~MyClass()"))
 
