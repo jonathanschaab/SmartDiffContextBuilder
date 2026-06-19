@@ -45,6 +45,14 @@ class JavaScriptProfile(LanguageProfile):
                 r'protected\s+|static\s+|readonly\s+)+' +
                 lead_b + escaped + trail_b + r'\s*(?:<[^>]+>)?\s*\('
             ),
+            # Matches ES5 object property function assignments, e.g. "myFunc: function(...) {"
+            # or "myFunc: async function* (...) {".
+            # Anchored to line start and prevents matching ternary operator cases
+            # (e.g. "cond ? myFunc : function() {}").
+            re.compile(
+                r'^\s*[^?]*?' + lead_b + escaped + trail_b +
+                r'\s*:\s*(?:async\s+)?function\b'
+            ),
         ]
 
 

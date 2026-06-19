@@ -1632,7 +1632,7 @@ class TestAstEngine(unittest.TestCase):
         self.assertEqual(lines[-1], "        # ... [Data Structure Omitted] ...")
 
     def test_trace_lexical_dependencies_regex_js_definitions(self):
-        """Verify JS/TS definitions (arrow functions, shorthands) are not treated as callers."""
+        """Verify JS/TS definitions (arrow functions, shorthands, ES5 function properties) are not treated as callers."""
         js_file = os.path.join(self.temp_dir.name, "app.js")
         content = (
             "const myFunc = () => {\n"
@@ -1653,6 +1653,14 @@ class TestAstEngine(unittest.TestCase):
             "    A, B\n"
             "  }\n"
             "}\n"
+            "const obj = {\n"
+            "  myFunc: function(param1) {},\n"
+            "  myFunc: async function(param1) {},\n"
+            "  myFunc: function*(param1) {},\n"
+            "  myFunc: async function * (param1) {},\n"
+            "  myFunc: function <T>(param: T): void {}\n"
+            "};\n"
+            "const callback = useDefault ? myFunc : function() {}; // Caller in ternary\n"
             "myFunc(); // This is the actual caller\n"
         )
         with open(js_file, "w", encoding="utf-8") as f:
@@ -1664,10 +1672,12 @@ class TestAstEngine(unittest.TestCase):
         )
         self.assertIn(js_file, callers)
         occurrences = callers[js_file]
-        # Only the actual call on line 19 should be matched
-        self.assertEqual(len(occurrences), 1)
-        self.assertEqual(occurrences[0]["line"], 19)
-        self.assertEqual(occurrences[0]["code"], "myFunc(); // This is the actual caller")
+        # Actual calls on lines 26 and 27 should be matched
+        self.assertEqual(len(occurrences), 2)
+        self.assertEqual(occurrences[0]["line"], 26)
+        self.assertEqual(occurrences[0]["code"], "const callback = useDefault ? myFunc : function() {}; // Caller in ternary")
+        self.assertEqual(occurrences[1]["line"], 27)
+        self.assertEqual(occurrences[1]["code"], "myFunc(); // This is the actual caller")
 
     def test_trace_lexical_dependencies_regex_no_cross_language_keyword_collisions(self):
         """Verify keyword definition checks are scoped to language profiles."""
