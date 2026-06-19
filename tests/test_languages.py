@@ -189,6 +189,76 @@ class TestLanguageProfiles(unittest.TestCase):
             "echo ",
         )
 
+    def test_batch_double_colon_comments(self):
+        """Batch double-colon :: comments are correctly stripped."""
+        profile = get_language_profile("build.bat")
+
+        # Basic stripping from the start
+        self.assertEqual(
+            profile.strip_strings_and_comments(":: this is a comment"),
+            "",
+        )
+        # Stripping after code/commands
+        self.assertEqual(
+            profile.strip_strings_and_comments("echo hello & :: comment"),
+            "echo hello & ",
+        )
+        # Double colon inside double quotes is not stripped as a comment
+        self.assertEqual(
+            profile.strip_strings_and_comments('echo "this is :: not a comment"'),
+            "echo ",
+        )
+        # Mix of REM and :: strips at the earliest marker
+        self.assertEqual(
+            profile.strip_strings_and_comments("echo before & :: comment & rem comment2"),
+            "echo before & ",
+        )
+        self.assertEqual(
+            profile.strip_strings_and_comments("echo before & rem comment & :: comment2"),
+            "echo before & ",
+        )
+        # Double colon as an argument should not be stripped
+        self.assertEqual(
+            profile.strip_strings_and_comments("echo hello :: world"),
+            "echo hello :: world",
+        )
+        # Double colon in variable assignment should not be stripped
+        self.assertEqual(
+            profile.strip_strings_and_comments("set var=value::suffix"),
+            "set var=value::suffix",
+        )
+        # Stripping after other separators like | or (
+        self.assertEqual(
+            profile.strip_strings_and_comments("echo hello | :: comment"),
+            "echo hello | ",
+        )
+        self.assertEqual(
+            profile.strip_strings_and_comments("(:: comment)"),
+            "(",
+        )
+        # Double colon comments prefixed with @ should be stripped
+        self.assertEqual(
+            profile.strip_strings_and_comments("@:: comment"),
+            "",
+        )
+        self.assertEqual(
+            profile.strip_strings_and_comments("echo hello & @:: comment"),
+            "echo hello & ",
+        )
+        self.assertEqual(
+            profile.strip_strings_and_comments("echo hello & @  :: comment"),
+            "echo hello & ",
+        )
+        self.assertEqual(
+            profile.strip_strings_and_comments("@:: comment & rem comment2"),
+            "",
+        )
+        # @ prefixing a regular command should not strip double colons within arguments
+        self.assertEqual(
+            profile.strip_strings_and_comments("@echo hello :: world"),
+            "@echo hello :: world",
+        )
+
     def test_unknown_language_fallback(self):
         """Unknown extensions use the explicit conservative fallback profile."""
         profile = get_language_profile("source.custom")
