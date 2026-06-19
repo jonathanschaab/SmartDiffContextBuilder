@@ -689,17 +689,25 @@ def find_callee_definition(callee_name, all_repo_files, file_cache=None):
                     "{trail_b}", p_trail_b
                 )
                 cpp_pattern = re.compile(cpp_pattern_str)
-            patterns_cache[profile.name] = (re.compile(pattern), cpp_pattern)
+            patterns_cache[profile.name] = (
+                re.compile(pattern),
+                cpp_pattern,
+                profile.get_definition_patterns(callee_name)
+            )
 
-        pattern, cpp_pattern = patterns_cache[profile.name]
+        pattern, cpp_pattern, lang_def_patterns = patterns_cache[profile.name]
 
         lines = file_cache.get_lines(file_path)
         for idx, line in enumerate(lines):
             clean_line = profile.strip_strings_and_comments(line)
-            is_match = pattern.search(clean_line) or (
-                cpp_pattern is not None and
-                cpp_pattern.search(clean_line) and
-                not clean_line.strip().endswith(';')
+            is_match = (
+                pattern.search(clean_line)
+                or (
+                    cpp_pattern is not None
+                    and cpp_pattern.search(clean_line)
+                    and not clean_line.strip().endswith(';')
+                )
+                or any(p.search(clean_line) for p in lang_def_patterns)
             )
             if is_match:
                 return file_path, idx + 1

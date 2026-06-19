@@ -509,6 +509,40 @@ class TestLanguageProfiles(unittest.TestCase):
             '"unclosed\n\n"closed"'
         )
 
+    def test_c_family_macro_definition_patterns(self):
+        """CFamilyProfile successfully extracts definition patterns for macro-generated
+        and macro-prefixed definitions.
+        """
+        profile = get_language_profile("main.cpp")
+        func_name = "myTarget"
+        patterns = profile.get_definition_patterns(func_name)
+
+        # We expect 7 patterns now (5 original + 2 macro heuristics)
+        self.assertEqual(len(patterns), 7)
+
+        macro_arg_pattern = patterns[5]
+        macro_prefix_pattern = patterns[6]
+
+        # Test macro argument pattern
+        self.assertTrue(macro_arg_pattern.search("TEST_F(MyClass, myTarget)"))
+        self.assertTrue(macro_arg_pattern.search("TEST(MyClass, myTarget) {"))
+        self.assertTrue(macro_arg_pattern.search(
+            "DECLARE_DYNAMIC_MULTICAST_DELEGATE(FMyDelegate, myTarget, Param1)"
+        ))
+        self.assertFalse(macro_arg_pattern.search("myTarget(foo);"))
+        self.assertFalse(macro_arg_pattern.search("void myTarget()"))
+
+        # Test macro prefixed pattern
+        self.assertTrue(macro_prefix_pattern.search("UFUNCTION(BlueprintCallable) void myTarget()"))
+        self.assertTrue(macro_prefix_pattern.search("UFUNCTION() void myTarget()"))
+        self.assertTrue(macro_prefix_pattern.search(
+            "UFUNCTION(BlueprintCallable) DEPRECATED(5.0) void myTarget()"
+        ))
+        self.assertFalse(macro_prefix_pattern.search("void myTarget()"))
+        self.assertFalse(macro_prefix_pattern.search(
+            "UFUNCTION(BlueprintCallable) void otherFunc()"
+        ))
+
 
 if __name__ == "__main__":
     unittest.main()

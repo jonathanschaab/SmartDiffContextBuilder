@@ -55,6 +55,19 @@ class CFamilyProfile(LanguageProfile):
             ),
             re.compile(
                 r'^\s*\}\s*' + lead_b + escaped + trail_b + r'\s*;'
+            ),
+            # Macro-generated definitions (e.g. TEST_F(MyClass, myTarget))
+            re.compile(
+                r'^\s*[A-Z_][A-Za-z0-9_]*\s*\([^)]*'
+                + lead_b + escaped + trail_b
+                + r'[^)]*\)'
+            ),
+            # Macro-prefixed definitions (e.g. UFUNCTION(BlueprintCallable) void myTarget())
+            re.compile(
+                r'^\s*(?:[A-Z_][A-Za-z0-9_]*\s*\([^)]*\)\s*)+'
+                r'(?:[A-Za-z0-9_<>:]+(?:\s+|[*&]+))*[\s*&]*'
+                r'(?:[A-Za-z0-9_<>:]+::)?'
+                + lead_b + escaped + trail_b + r'\s*\('
             )
         ]
 

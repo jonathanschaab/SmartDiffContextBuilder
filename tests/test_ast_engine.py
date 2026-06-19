@@ -1970,3 +1970,29 @@ class TestAstEngine(unittest.TestCase):
         self.assertIn(cpp_file, cpp_callers)
         self.assertEqual(len(cpp_callers[cpp_file]), 1)
         self.assertEqual(cpp_callers[cpp_file][0]["line"], 7)
+
+    def test_find_callee_definition_macro_heuristics(self):
+        # Checks that find_callee_definition successfully identifies macro-generated
+        # and macro-prefixed definitions in C++.
+        code = (
+            "TEST_F(MyClass, myTarget) {\n"
+            "    // body\n"
+            "}\n"
+            "UFUNCTION(BlueprintCallable) void myTargetSameLine() {\n"
+            "}\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "macros.cpp")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        self.cache.get_content(file_path)
+
+        # Test finding definition in Google Test macro-argument format
+        path, line = find_callee_definition("myTarget", [file_path], file_cache=self.cache)
+        self.assertEqual(path, file_path)
+        self.assertEqual(line, 1)
+
+        # Test finding definition in Unreal same-line macro prefixed format
+        path, line = find_callee_definition("myTargetSameLine", [file_path], file_cache=self.cache)
+        self.assertEqual(path, file_path)
+        self.assertEqual(line, 4)
