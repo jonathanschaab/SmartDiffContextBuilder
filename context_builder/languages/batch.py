@@ -22,22 +22,18 @@ class BatchProfile(LanguageProfile):
         """Strip case-insensitive REM tokens and double-colon :: comments."""
         cleaned = self.strip_string_literals(line)
 
-        # Check for double-colon comment
+        # Collect start indices of any matches
+        comment_starts = []
         double_colon_match = _DOUBLE_COLON_COMMENT_PATTERN.search(cleaned)
-
-        # Check for REM comment
-        rem_match = _REM_COMMENT_PATTERN.search(cleaned)
-
-        # Find the earliest comment marker
-        comment_start = None
         if double_colon_match:
-            comment_start = double_colon_match.start(1)
-        if rem_match:
-            if comment_start is None or rem_match.start() < comment_start:
-                comment_start = rem_match.start()
+            comment_starts.append(double_colon_match.start(1))
 
-        if comment_start is not None:
-            return cleaned[:comment_start]
+        rem_match = _REM_COMMENT_PATTERN.search(cleaned)
+        if rem_match:
+            comment_starts.append(rem_match.start())
+
+        if comment_starts:
+            return cleaned[:min(comment_starts)]
         return cleaned
 
 
