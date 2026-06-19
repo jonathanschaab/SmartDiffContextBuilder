@@ -6,6 +6,7 @@ from .base import LanguageProfile
 
 
 _REM_COMMENT_PATTERN = re.compile(r"\brem\b", re.IGNORECASE)
+_DOUBLE_COLON_COMMENT_PATTERN = re.compile(r"(?:\A|&|\||\()\s*(::)")
 
 
 class BatchProfile(LanguageProfile):
@@ -22,15 +23,15 @@ class BatchProfile(LanguageProfile):
         cleaned = self.strip_string_literals(line)
 
         # Check for double-colon comment
-        double_colon_idx = cleaned.find("::")
+        double_colon_match = _DOUBLE_COLON_COMMENT_PATTERN.search(cleaned)
 
         # Check for REM comment
         rem_match = _REM_COMMENT_PATTERN.search(cleaned)
 
         # Find the earliest comment marker
         comment_start = None
-        if double_colon_idx != -1:
-            comment_start = double_colon_idx
+        if double_colon_match:
+            comment_start = double_colon_match.start(1)
         if rem_match:
             if comment_start is None or rem_match.start() < comment_start:
                 comment_start = rem_match.start()

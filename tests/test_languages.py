@@ -217,6 +217,25 @@ class TestLanguageProfiles(unittest.TestCase):
             profile.strip_strings_and_comments("echo before & rem comment & :: comment2"),
             "echo before & ",
         )
+        # Double colon as an argument should not be stripped
+        self.assertEqual(
+            profile.strip_strings_and_comments("echo hello :: world"),
+            "echo hello :: world",
+        )
+        # Double colon in variable assignment should not be stripped
+        self.assertEqual(
+            profile.strip_strings_and_comments("set var=value::suffix"),
+            "set var=value::suffix",
+        )
+        # Stripping after other separators like | or (
+        self.assertEqual(
+            profile.strip_strings_and_comments("echo hello | :: comment"),
+            "echo hello | ",
+        )
+        self.assertEqual(
+            profile.strip_strings_and_comments("(:: comment)"),
+            "(",
+        )
 
     def test_unknown_language_fallback(self):
         """Unknown extensions use the explicit conservative fallback profile."""
