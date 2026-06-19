@@ -236,6 +236,28 @@ class TestLanguageProfiles(unittest.TestCase):
             profile.strip_strings_and_comments("(:: comment)"),
             "(",
         )
+        # Double colon comments prefixed with @ should be stripped
+        self.assertEqual(
+            profile.strip_strings_and_comments("@:: comment"),
+            "",
+        )
+        self.assertEqual(
+            profile.strip_strings_and_comments("echo hello & @:: comment"),
+            "echo hello & ",
+        )
+        self.assertEqual(
+            profile.strip_strings_and_comments("echo hello & @  :: comment"),
+            "echo hello & ",
+        )
+        self.assertEqual(
+            profile.strip_strings_and_comments("@:: comment & rem comment2"),
+            "",
+        )
+        # @ prefixing a regular command should not strip double colons within arguments
+        self.assertEqual(
+            profile.strip_strings_and_comments("@echo hello :: world"),
+            "@echo hello :: world",
+        )
 
     def test_unknown_language_fallback(self):
         """Unknown extensions use the explicit conservative fallback profile."""

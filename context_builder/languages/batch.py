@@ -6,7 +6,7 @@ from .base import LanguageProfile
 
 
 _REM_COMMENT_PATTERN = re.compile(r"\brem\b", re.IGNORECASE)
-_DOUBLE_COLON_COMMENT_PATTERN = re.compile(r"(?:\A|&|\||\()\s*(::)")
+_DOUBLE_COLON_COMMENT_PATTERN = re.compile(r"(?:\A|&|\||\()\s*(@\s*::|::)")
 
 
 class BatchProfile(LanguageProfile):
