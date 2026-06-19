@@ -12,7 +12,7 @@ DEFAULT_LANG_MAP = {
     '.mts': 'typescript', '.cts': 'typescript', '.py': 'python',
     '.cpp': 'cpp', '.cc': 'cpp', '.cxx': 'cpp',
     '.hpp': 'cpp', '.hxx': 'cpp', '.c': 'c', '.h': 'cpp',
-    '.go': 'go', '.pl': 'perl',
+    '.go': 'go', '.pl': 'perl', '.java': 'java',
     '.mk': 'makefile', '.cmake': 'cmake', '.sh': 'bash', '.bat': 'batch'
 }
 
@@ -33,7 +33,8 @@ DEFAULT_BINDINGS = {
     '.cxx': ('tree_sitter_cpp', 'language'),
     '.hpp': ('tree_sitter_cpp', 'language'),
     '.hxx': ('tree_sitter_cpp', 'language'),
-    '.h':   ('tree_sitter_cpp', 'language')
+    '.h':   ('tree_sitter_cpp', 'language'),
+    '.java': ('tree_sitter_java', 'language')
 }
 
 DEFAULT_DEPENDENCY_QUERY_STRINGS = {
@@ -67,6 +68,10 @@ DEFAULT_DEPENDENCY_QUERY_STRINGS = {
         '(scoped_identifier name: (identifier) @id) '
         '(field_expression field: (field_identifier) @id)] '
         '(#match? @id ".*({escaped_func_name}|register).*"))'
+    ),
+    '.java': (
+        '(method_invocation name: (identifier) @id '
+        '(#match? @id ".*({escaped_func_name}|register).*"))'
     )
 }
 
@@ -95,6 +100,9 @@ DEFAULT_CALLEE_QUERY_STRINGS = {
         '(call_expression function: [(identifier) @id '
         '(scoped_identifier name: (identifier) @id) '
         '(field_expression field: (field_identifier) @id)])'
+    ),
+    '.java': (
+        '(method_invocation name: (identifier) @id)'
     )
 }
 

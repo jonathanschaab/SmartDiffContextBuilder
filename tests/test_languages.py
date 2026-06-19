@@ -647,6 +647,62 @@ class TestLanguageProfiles(unittest.TestCase):
             self.assertIn(ext, CONFIG['dependency_query_strings'])
             self.assertIn(ext, CONFIG['callee_query_strings'])
 
+    def test_java_profile(self):
+        """Java profile resolves correctly, strips comments and matches definitions."""
+        profile = get_language_profile("example.java")
+        self.assertEqual(profile.name, "java")
+        self.assertEqual(profile.comment_prefix, "//")
+        self.assertEqual(profile.lsp_command, ("jdtls",))
+
+        # Test comment stripping
+        self.assertEqual(
+            profile.strip_strings_and_comments("int x = 1; // comment"),
+            "int x = 1; ",
+        )
+        self.assertEqual(
+            profile.strip_strings_and_comments("String s = \"hello // comment\";"),
+            "String s = ;",
+        )
+
+        # Test block comments stripping
+        content = "int a = 1; /* block\ncomment */ int b = 2;"
+        self.assertEqual(
+            profile.strip_block_comments(content),
+            "int a = 1; \n int b = 2;",
+        )
+
+        # Test definition patterns
+        # pylint: disable=protected-access
+        patterns = profile.get_definition_patterns("MyTarget")
+
+        class_pat = patterns[0]
+        annotation_pat = patterns[1]
+        method_pat = patterns[2]
+
+        # Class / Interface / Enum / Record
+        self.assertTrue(class_pat.search("public class MyTarget {"))
+        self.assertTrue(class_pat.search("interface MyTarget<T>"))
+        self.assertTrue(class_pat.search("enum MyTarget"))
+        self.assertTrue(class_pat.search("record MyTarget(int x)"))
+        self.assertFalse(class_pat.search("class MyTargetOther"))
+
+        # Annotation (@interface)
+        self.assertTrue(annotation_pat.search("public @interface MyTarget"))
+        self.assertFalse(annotation_pat.search("@interface MyTargetOther"))
+
+        # Methods / Constructors
+        self.assertTrue(method_pat.search("public void MyTarget()"))
+        self.assertTrue(method_pat.search("private static int MyTarget(int x, String y)"))
+        self.assertTrue(method_pat.search("MyTarget(double val) throws Exception {"))
+        self.assertTrue(method_pat.search("synchronized <T> T[] MyTarget()"))
+        self.assertTrue(method_pat.search("MyTarget()"))
+        self.assertFalse(method_pat.search("void MyTargetOther()"))
+
+        self.assertIn(".java", CONFIG['bindings'])
+        self.assertIn(".java", CONFIG['lang_map'])
+        self.assertIn(".java", CONFIG['dependency_query_strings'])
+        self.assertIn(".java", CONFIG['callee_query_strings'])
+
 
 if __name__ == "__main__":
     unittest.main()

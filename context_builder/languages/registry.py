@@ -7,6 +7,7 @@ from .batch import BATCH
 from .c_family import C_FAMILY
 from .go import GO
 from .hash_comments import HASH_COMMENTS
+from .java import JAVA
 from .javascript import JAVASCRIPT, TYPESCRIPT
 from .python import PYTHON
 from .rust import RUST
@@ -15,6 +16,7 @@ from .unknown_language import UNKNOWN_LANGUAGE
 
 _PROFILES = (
     PYTHON,
+    JAVA,
     C_FAMILY,
     RUST,
     GO,
