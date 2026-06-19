@@ -696,6 +696,10 @@ class TestLanguageProfiles(unittest.TestCase):
         self.assertTrue(method_pat.search("MyTarget(double val) throws Exception {"))
         self.assertTrue(method_pat.search("synchronized <T> T[] MyTarget()"))
         self.assertTrue(method_pat.search("MyTarget()"))
+        self.assertTrue(method_pat.search("public Map<String, Object> MyTarget(int x)"))
+        self.assertTrue(method_pat.search("Map.Entry<K, V> MyTarget()"))
+        self.assertTrue(method_pat.search("List<@NonNull String> MyTarget(String... args)"))
+        self.assertTrue(method_pat.search("public static List<@NonNull String> MyTarget(int x)"))
         self.assertFalse(method_pat.search("void MyTargetOther()"))
 
         self.assertIn(".java", CONFIG['bindings'])

@@ -37,7 +37,7 @@ class JavaProfile(LanguageProfile):
                 r'^\s*(?:(?:public|protected|private|static|final|abstract|'
                 r'synchronized|native|strictfp|default|transient|volatile)\s+)*'
                 r'(?:<[^>]+>\s*)?'
-                r'(?:[A-Za-z0-9_<>\[\]]+\s+)?'
+                r'(?:(?:[A-Za-z0-9_<>\[\],.@]+\s+)+)?'
                 + lead_b + escaped + trail_b + r'\s*\('
             )
         ]
