@@ -9,7 +9,7 @@ class JavaScriptProfile(LanguageProfile):
     """JavaScript syntax behavior."""
 
     name = "javascript"
-    extensions = frozenset({".js"})
+    extensions = frozenset({".js", ".jsx", ".mjs", ".cjs"})
     multiline_string_delimiters = ("`",)
 
     def _get_boundaries(self, func_name):
@@ -52,7 +52,7 @@ class TypeScriptProfile(JavaScriptProfile):
     """TypeScript syntax and tooling behavior."""
 
     name = "typescript"
-    extensions = frozenset({".ts"})
+    extensions = frozenset({".ts", ".tsx", ".mts", ".cts"})
     lsp_command = ("typescript-language-server", "--stdio")
 
 

@@ -4,6 +4,7 @@
 
 import unittest
 
+from context_builder.config import CONFIG
 from context_builder.languages import UNKNOWN_LANGUAGE, get_language_profile
 from context_builder.languages.base import LanguageProfile
 
@@ -612,6 +613,39 @@ class TestLanguageProfiles(unittest.TestCase):
         self.assertFalse(macro_prefix_pattern.search(
             "UFUNCTION(BlueprintCallable) void otherFunc()"
         ))
+
+    def test_modern_js_ts_extensions(self):
+        """JavaScript and TypeScript profiles resolve modern extensions correctly."""
+        js_extensions = [".js", ".jsx", ".mjs", ".cjs"]
+        ts_extensions = [".ts", ".tsx", ".mts", ".cts"]
+
+        for ext in js_extensions:
+            profile = get_language_profile(f"example{ext}")
+            self.assertEqual(profile.name, "javascript")
+            self.assertEqual(profile.comment_prefix, "//")
+            self.assertEqual(
+                profile.strip_strings_and_comments("const x = 1; // comment"),
+                "const x = 1; ",
+            )
+
+        for ext in ts_extensions:
+            profile = get_language_profile(f"example{ext}")
+            self.assertEqual(profile.name, "typescript")
+            self.assertEqual(profile.comment_prefix, "//")
+            self.assertEqual(
+                profile.lsp_command,
+                ("typescript-language-server", "--stdio"),
+            )
+            self.assertEqual(
+                profile.strip_strings_and_comments("const x: number = 1; // comment"),
+                "const x: number = 1; ",
+            )
+
+        for ext in js_extensions + ts_extensions:
+            self.assertIn(ext, CONFIG['bindings'])
+            self.assertIn(ext, CONFIG['lang_map'])
+            self.assertIn(ext, CONFIG['dependency_query_strings'])
+            self.assertIn(ext, CONFIG['callee_query_strings'])
 
 
 if __name__ == "__main__":

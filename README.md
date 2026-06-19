@@ -28,7 +28,7 @@ To leverage the full suite of SmartDiffContextBuilder features, ensure the follo
 
 ### Python Libraries
 - Install the required runtime packages with `pip install -r requirements.txt`.
-- **Optional AST support**: `tree-sitter` 0.21.0 or newer plus the language-specific bindings used by your repository (for example, `tree-sitter-python` or `tree-sitter-rust`). Without them, analysis falls back to regex-based parsing.
+- **Optional AST support**: `tree-sitter` 0.21.0 or newer plus the language-specific bindings used by your repository (for example, `tree-sitter-python`, `tree-sitter-rust`, `tree-sitter-javascript`, or `tree-sitter-typescript`). Without them, analysis falls back to regex-based parsing.
 
 ### External Toolchains (Optional but highly recommended)
 - **ripgrep (`rg`)**: Used for fast dependency and test filtering. Falls back to manual scanning if not installed.

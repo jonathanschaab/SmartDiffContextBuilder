@@ -7,7 +7,9 @@ from collections.abc import MutableMapping
 
 # Defaults
 DEFAULT_LANG_MAP = {
-    '.rs': 'rust', '.js': 'javascript', '.ts': 'typescript', '.py': 'python',
+    '.rs': 'rust', '.js': 'javascript', '.jsx': 'javascript', '.mjs': 'javascript',
+    '.cjs': 'javascript', '.ts': 'typescript', '.tsx': 'typescript',
+    '.mts': 'typescript', '.cts': 'typescript', '.py': 'python',
     '.cpp': 'cpp', '.cc': 'cpp', '.cxx': 'cpp',
     '.hpp': 'cpp', '.hxx': 'cpp', '.c': 'c', '.h': 'cpp',
     '.go': 'go', '.pl': 'perl',
@@ -18,7 +20,13 @@ DEFAULT_BINDINGS = {
     '.py': ('tree_sitter_python', 'language'),
     '.rs': ('tree_sitter_rust', 'language'),
     '.js': ('tree_sitter_javascript', 'language'),
+    '.jsx': ('tree_sitter_javascript', 'language'),
+    '.mjs': ('tree_sitter_javascript', 'language'),
+    '.cjs': ('tree_sitter_javascript', 'language'),
     '.ts': ('tree_sitter_typescript', 'language_typescript'),
+    '.tsx': ('tree_sitter_typescript', 'language_tsx'),
+    '.mts': ('tree_sitter_typescript', 'language_typescript'),
+    '.cts': ('tree_sitter_typescript', 'language_typescript'),
     '.c':  ('tree_sitter_c', 'language'),
     '.cc': ('tree_sitter_cpp', 'language'),
     '.cpp': ('tree_sitter_cpp', 'language'),
@@ -96,6 +104,22 @@ for _cpp_extension in ('.cc', '.cxx', '.hpp', '.hxx', '.h'):
     )
     DEFAULT_CALLEE_QUERY_STRINGS[_cpp_extension] = (
         DEFAULT_CALLEE_QUERY_STRINGS['.cpp']
+    )
+
+for _js_extension in ('.jsx', '.mjs', '.cjs'):
+    DEFAULT_DEPENDENCY_QUERY_STRINGS[_js_extension] = (
+        DEFAULT_DEPENDENCY_QUERY_STRINGS['.js']
+    )
+    DEFAULT_CALLEE_QUERY_STRINGS[_js_extension] = (
+        DEFAULT_CALLEE_QUERY_STRINGS['.js']
+    )
+
+for _ts_extension in ('.tsx', '.mts', '.cts'):
+    DEFAULT_DEPENDENCY_QUERY_STRINGS[_ts_extension] = (
+        DEFAULT_DEPENDENCY_QUERY_STRINGS['.ts']
+    )
+    DEFAULT_CALLEE_QUERY_STRINGS[_ts_extension] = (
+        DEFAULT_CALLEE_QUERY_STRINGS['.ts']
     )
 
 DEFAULT_FUNC_DECL_PATTERN = (
