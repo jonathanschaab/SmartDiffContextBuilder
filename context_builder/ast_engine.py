@@ -307,7 +307,7 @@ def _process_regex_file(
                 if any(p.search(clean_line) for p in def_patterns):
                     is_def = True
                 elif (
-                    profile.uses_c_style_definitions
+                    def_cpp_pattern is not None
                     and def_cpp_pattern.search(clean_line)
                     and not clean_line.strip().endswith(';')
                 ):
@@ -331,14 +331,7 @@ def trace_lexical_dependencies_regex(func_name, repo_files, file_cache=None):
         fallback_hint=f"callers of '{func_name}' (regex pass)"
     )
 
-    lead_b = r'\b' if func_name[0].isalnum() or func_name[0] == '_' else ''
-    escaped_name = re.escape(func_name)
-
     profile_patterns_cache = {}
-    def_cpp_pattern = re.compile(
-        r'^\s*(?:[A-Za-z0-9_<>:]+(?:\s+|[*&]+))*[\s*&]*'
-        r'(?:[A-Za-z0-9_<>:]+::)?' + lead_b + escaped_name + r'\s*\('
-    )
     for file_path in iter_scan_progress(
         fast_files,
         label=f"Scanning callers of '{func_name}' (regex pass)",
@@ -348,11 +341,21 @@ def trace_lexical_dependencies_regex(func_name, repo_files, file_cache=None):
         if profile is UNKNOWN_LANGUAGE or file_path.endswith('.md'):
             continue
         if profile.name not in profile_patterns_cache:
+            def_cpp_pattern = None
+            if profile.uses_c_style_definitions:
+                # pylint: disable=protected-access
+                p_lead_b, _ = profile._get_boundaries(func_name)
+                escaped_name = re.escape(func_name)
+                def_cpp_pattern = re.compile(
+                    r'^\s*(?:[A-Za-z0-9_<>:]+(?:\s+|[*&]+))*[\s*&]*'
+                    r'(?:[A-Za-z0-9_<>:]+::)?' + p_lead_b + escaped_name + r'\s*\('
+                )
             profile_patterns_cache[profile.name] = (
                 profile.get_call_pattern(func_name),
-                profile.get_definition_patterns(func_name)
+                profile.get_definition_patterns(func_name),
+                def_cpp_pattern,
             )
-        call_pattern, def_patterns = profile_patterns_cache[profile.name]
+        call_pattern, def_patterns, def_cpp_pattern = profile_patterns_cache[profile.name]
 
         content = file_cache.get_content(file_path)
         _process_regex_file(
@@ -654,25 +657,7 @@ def find_callee_definition(callee_name, all_repo_files, file_cache=None):
         fallback_hint=f"definition of '{callee_name}'"
     )
 
-    lead_b = r'\b' if callee_name[0].isalnum() or callee_name[0] == '_' else ''
-    trail_b = r'\b' if callee_name[-1].isalnum() or callee_name[-1] == '_' else ''
-    escaped_callee = re.escape(callee_name)
-
-    # Precise patterns for definitions
-    pattern = CONFIG['def_pattern_template'].replace(
-        "{lead_b}", lead_b
-    ).replace(
-        "{escaped_callee}", escaped_callee
-    ).replace(
-        "{trail_b}", trail_b
-    )
-    cpp_pattern = CONFIG['cpp_def_pattern_template'].replace(
-        "{lead_b}", lead_b
-    ).replace(
-        "{escaped_callee}", escaped_callee
-    ).replace(
-        "{trail_b}", trail_b
-    )
+    patterns_cache = {}
 
     for file_path in iter_scan_progress(
         candidate_files,
@@ -683,12 +668,37 @@ def find_callee_definition(callee_name, all_repo_files, file_cache=None):
         if profile is UNKNOWN_LANGUAGE:
             continue
 
+        if profile.name not in patterns_cache:
+            # pylint: disable=protected-access
+            p_lead_b, p_trail_b = profile._get_boundaries(callee_name)
+            escaped_callee = re.escape(callee_name)
+            pattern = CONFIG['def_pattern_template'].replace(
+                "{lead_b}", p_lead_b
+            ).replace(
+                "{escaped_callee}", escaped_callee
+            ).replace(
+                "{trail_b}", p_trail_b
+            )
+            cpp_pattern = None
+            if profile.uses_c_style_definitions:
+                cpp_pattern_str = CONFIG['cpp_def_pattern_template'].replace(
+                    "{lead_b}", p_lead_b
+                ).replace(
+                    "{escaped_callee}", escaped_callee
+                ).replace(
+                    "{trail_b}", p_trail_b
+                )
+                cpp_pattern = re.compile(cpp_pattern_str)
+            patterns_cache[profile.name] = (re.compile(pattern), cpp_pattern)
+
+        pattern, cpp_pattern = patterns_cache[profile.name]
+
         lines = file_cache.get_lines(file_path)
         for idx, line in enumerate(lines):
             clean_line = profile.strip_strings_and_comments(line)
-            is_match = re.search(pattern, clean_line) or (
-                profile.uses_c_style_definitions and
-                re.search(cpp_pattern, clean_line) and
+            is_match = pattern.search(clean_line) or (
+                cpp_pattern is not None and
+                cpp_pattern.search(clean_line) and
                 not clean_line.strip().endswith(';')
             )
             if is_match:
