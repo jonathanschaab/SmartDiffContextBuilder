@@ -19,6 +19,14 @@ class CFamilyProfile(LanguageProfile):
     supports_cpp_raw_strings = True
     lsp_command = ("clangd", "--background-index")
 
+    def _get_boundaries(self, func_name):
+        """Return the C-family specific regex boundary patterns (lead_b, trail_b) for func_name."""
+        if not func_name:
+            return '', ''
+        lead_b = r'(?<![a-zA-Z0-9_])' if func_name[0].isalnum() or func_name[0] == '_' or func_name[0] == '~' else ''
+        trail_b = r'(?![a-zA-Z0-9_])' if func_name[-1].isalnum() or func_name[-1] == '_' else ''
+        return lead_b, trail_b
+
     def get_definition_patterns(self, func_name):
         lead_b, trail_b = self._get_boundaries(func_name)
         escaped = re.escape(func_name)
