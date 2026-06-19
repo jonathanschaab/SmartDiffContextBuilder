@@ -189,6 +189,35 @@ class TestLanguageProfiles(unittest.TestCase):
             "echo ",
         )
 
+    def test_batch_double_colon_comments(self):
+        """Batch double-colon :: comments are correctly stripped."""
+        profile = get_language_profile("build.bat")
+
+        # Basic stripping from the start
+        self.assertEqual(
+            profile.strip_strings_and_comments(":: this is a comment"),
+            "",
+        )
+        # Stripping after code/commands
+        self.assertEqual(
+            profile.strip_strings_and_comments("echo hello & :: comment"),
+            "echo hello & ",
+        )
+        # Double colon inside double quotes is not stripped as a comment
+        self.assertEqual(
+            profile.strip_strings_and_comments('echo "this is :: not a comment"'),
+            "echo ",
+        )
+        # Mix of REM and :: strips at the earliest marker
+        self.assertEqual(
+            profile.strip_strings_and_comments("echo before & :: comment & rem comment2"),
+            "echo before & ",
+        )
+        self.assertEqual(
+            profile.strip_strings_and_comments("echo before & rem comment & :: comment2"),
+            "echo before & ",
+        )
+
     def test_unknown_language_fallback(self):
         """Unknown extensions use the explicit conservative fallback profile."""
         profile = get_language_profile("source.custom")

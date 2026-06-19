@@ -18,11 +18,25 @@ class BatchProfile(LanguageProfile):
     supports_block_comments = False
 
     def strip_strings_and_comments(self, line):
-        """Strip case-insensitive REM tokens without matching longer words."""
+        """Strip case-insensitive REM tokens and double-colon :: comments."""
         cleaned = self.strip_string_literals(line)
-        comment = _REM_COMMENT_PATTERN.search(cleaned)
-        if comment:
-            return cleaned[:comment.start()]
+        
+        # Check for double-colon comment
+        double_colon_idx = cleaned.find("::")
+        
+        # Check for REM comment
+        rem_match = _REM_COMMENT_PATTERN.search(cleaned)
+        
+        # Find the earliest comment marker
+        comment_start = None
+        if double_colon_idx != -1:
+            comment_start = double_colon_idx
+        if rem_match:
+            if comment_start is None or rem_match.start() < comment_start:
+                comment_start = rem_match.start()
+                
+        if comment_start is not None:
+            return cleaned[:comment_start]
         return cleaned
 
 
