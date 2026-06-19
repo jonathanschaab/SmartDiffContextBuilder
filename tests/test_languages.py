@@ -411,7 +411,7 @@ class TestLanguageProfiles(unittest.TestCase):
             "",
         )
 
-        # Test nested block comments containing string literals with delimiters (string blindness fix)
+        # Test nested block comments containing string literals with delimiters (blindness fix)
         content_with_string = (
             "/* Outer\n"
             '  let s = "*/";\n'
