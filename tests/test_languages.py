@@ -707,6 +707,18 @@ class TestLanguageProfiles(unittest.TestCase):
         self.assertIn(".java", CONFIG['dependency_query_strings'])
         self.assertIn(".java", CONFIG['callee_query_strings'])
 
+        # Test Tree-sitter query validity for Java (verify method_reference lacks 'name:')
+        dep_query = CONFIG['dependency_query_strings']['.java']
+        callee_query = CONFIG['callee_query_strings']['.java']
+
+        self.assertIn("method_invocation name: (identifier)", dep_query)
+        self.assertIn("method_reference (identifier)", dep_query)
+        self.assertNotIn("method_reference name: (identifier)", dep_query)
+
+        self.assertIn("method_invocation name: (identifier)", callee_query)
+        self.assertIn("method_reference (identifier)", callee_query)
+        self.assertNotIn("method_reference name: (identifier)", callee_query)
+
 
 if __name__ == "__main__":
     unittest.main()
