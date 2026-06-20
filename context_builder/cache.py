@@ -38,11 +38,20 @@ class LRUFileCache:
             int: Estimated memory footprint in bytes.
         """
         try:
-            lines_size = sys.getsizeof(lines) + sum(sys.getsizeof(line) for line in lines)
+            # Estimate lines list size in O(1) time:
+            # - List object base + pointer array overhead: sys.getsizeof(lines)
+            # - Individual line string base overhead: len(lines) * 50
+            # - Combined line string character memory:
+            #   sys.getsizeof(content) - 49 (compact ASCII overhead)
+            estimated_lines_size = (
+                sys.getsizeof(lines)
+                + len(lines) * 50
+                + (sys.getsizeof(content) - 49)
+            )
             return (
                 sys.getsizeof(bytes_content)
                 + sys.getsizeof(content)
-                + lines_size
+                + estimated_lines_size
                 + 150  # Estimating entry dict structure overhead
             )
         except Exception:  # pylint: disable=broad-except

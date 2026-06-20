@@ -152,3 +152,33 @@ class TestLRUFileCache(unittest.TestCase):
 
         cache.resize(-1.0)
         self.assertEqual(cache.max_size_bytes, 200 * 1024 * 1024)
+
+    def test_heuristic_accuracy(self):
+        """Verify that the cache's O(1) heuristic size is within a reasonable margin
+
+        of error compared to the precise O(N) sys.getsizeof measurement.
+        """
+        import sys
+        cache = LRUFileCache(max_size_mb=1.0)
+        cache.get_lines(self.file_path)
+
+        entry = cache.cache[self.file_path]
+        estimated_size = entry["size_bytes"]
+
+        # Calculate precise O(N) size
+        precise_lines_size = sys.getsizeof(entry["lines"]) + sum(
+            sys.getsizeof(line) for line in entry["lines"]
+        )
+        precise_size = (
+            sys.getsizeof(entry["bytes"])
+            + sys.getsizeof(entry["content"])
+            + precise_lines_size
+            + 150
+        )
+
+        ratio = estimated_size / precise_size
+        # The heuristic should be close (within 0.90x to 1.30x of precise size)
+        self.assertTrue(
+            0.90 <= ratio <= 1.30,
+            f"Heuristic ratio {ratio:.2f} is outside [0.90, 1.30] range"
+        )
