@@ -2,6 +2,7 @@
 # pylint: disable=attribute-defined-outside-init,import-outside-toplevel,consider-using-with
 
 import os
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -153,12 +154,15 @@ class TestLRUFileCache(unittest.TestCase):
         cache.resize(-1.0)
         self.assertEqual(cache.max_size_bytes, 200 * 1024 * 1024)
 
+    @unittest.skipIf(
+        sys.implementation.name != "cpython",
+        "sys.getsizeof is only reliable on CPython for deep memory verification"
+    )
     def test_heuristic_accuracy(self):
         """Verify that the cache's O(1) heuristic size is within a reasonable margin
 
         of error compared to the precise O(N) sys.getsizeof measurement.
         """
-        import sys
         cache = LRUFileCache(max_size_mb=1.0)
         cache.get_lines(self.file_path)
 
