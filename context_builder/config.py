@@ -71,7 +71,7 @@ DEFAULT_DEPENDENCY_QUERY_STRINGS = {
     ),
     '.java': (
         '[(method_invocation name: (identifier) @id) '
-        '(method_reference (identifier) @id)] '
+        '(method_reference (_) (identifier) @id)] '
         '(#match? @id ".*({escaped_func_name}|register).*")'
     )
 }
@@ -104,7 +104,7 @@ DEFAULT_CALLEE_QUERY_STRINGS = {
     ),
     '.java': (
         '[(method_invocation name: (identifier) @id) '
-        '(method_reference (identifier) @id)]'
+        '(method_reference (_) (identifier) @id)]'
     )
 }
 

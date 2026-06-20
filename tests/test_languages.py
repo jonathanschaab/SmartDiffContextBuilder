@@ -724,11 +724,11 @@ class TestLanguageProfiles(unittest.TestCase):
         callee_query = CONFIG['callee_query_strings']['.java']
 
         self.assertIn("method_invocation name: (identifier)", dep_query)
-        self.assertIn("method_reference (identifier)", dep_query)
+        self.assertIn("method_reference (_) (identifier)", dep_query)
         self.assertNotIn("method_reference name: (identifier)", dep_query)
 
         self.assertIn("method_invocation name: (identifier)", callee_query)
-        self.assertIn("method_reference (identifier)", callee_query)
+        self.assertIn("method_reference (_) (identifier)", callee_query)
         self.assertNotIn("method_reference name: (identifier)", callee_query)
 
 
