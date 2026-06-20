@@ -700,6 +700,9 @@ class TestLanguageProfiles(unittest.TestCase):
         self.assertTrue(method_pat.search("Map.Entry<K, V> MyTarget()"))
         self.assertTrue(method_pat.search("List<@NonNull String> MyTarget(String... args)"))
         self.assertTrue(method_pat.search("public static List<@NonNull String> MyTarget(int x)"))
+        self.assertTrue(method_pat.search("public List<?> MyTarget()"))
+        self.assertTrue(method_pat.search("public <T extends A & B> T MyTarget()"))
+        self.assertTrue(method_pat.search("List<? extends Runnable & Serializable> MyTarget()"))
         self.assertFalse(method_pat.search("void MyTargetOther()"))
 
         # Package-private constructors (no modifiers/return type, no semicolon)
@@ -759,6 +762,26 @@ class TestLanguageProfiles(unittest.TestCase):
             profile.strip_block_comments(content),
             'String text = \n\n\n;',
         )
+
+    def test_java_tree_sitter_queries_compile(self):
+        """Verify that Java Tree-sitter query strings compile successfully without syntax errors."""
+        # pylint: disable=import-outside-toplevel
+        try:
+            import tree_sitter
+            import tree_sitter_java
+            lang = tree_sitter.Language(tree_sitter_java.language())
+
+            dep_query = CONFIG['dependency_query_strings']['.java'].format(
+                escaped_func_name="myMethod"
+            )
+            callee_query = CONFIG['callee_query_strings']['.java']
+
+            # These should compile without raising QuerySyntaxError or other exceptions
+            lang.query(dep_query)
+            lang.query(callee_query)
+        except ImportError:
+            # Fallback if libraries are not present, but they are installed in this environment
+            pass
 
 
 if __name__ == "__main__":

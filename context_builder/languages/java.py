@@ -35,7 +35,7 @@ class JavaProfile(LanguageProfile):
             re.compile(
                 r'^\s*(?:<[^>]+>\s*)?'
                 r'(?:(?:(?!return\b|throw\b|new\b|else\b|case\b|if\b|while\b|'
-                r'for\b|switch\b|assert\b)[A-Za-z0-9_<>\[\],.@]+\s+)+)'
+                r'for\b|switch\b|assert\b)[A-Za-z0-9_<>\[\],.@?&]+\s+)+)'
                 + lead_b + escaped + trail_b + r'\s*\('
             ),
             # Package-private constructor definition (no modifiers/return type, no semicolon)
