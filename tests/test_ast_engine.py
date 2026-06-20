@@ -91,6 +91,22 @@ class TestAstEngine(unittest.TestCase):
         self.assertEqual(start, 0)
         self.assertEqual(end, 3)
 
+    def test_extract_function_bounds_regex_java(self):
+        code = (
+            "public class MyClass {\n"
+            "    public void myMethod() {\n"
+            "        System.out.println(\"hello\");\n"
+            "    }\n"
+            "}\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "test.java")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        start, end = extract_function_bounds_regex(file_path, 3, file_cache=self.cache)
+        self.assertEqual(start, 1)
+        self.assertEqual(end, 4)
+
     def test_split_massive_block_ast_fallback(self):
         # Test fallback behavior (AST not supported/fallback to line count)
         source = "line1\nline2\nline3\nline4\n"
@@ -108,6 +124,12 @@ class TestAstEngine(unittest.TestCase):
     def test_split_massive_block_ast_cpp_fallback(self):
         source = "line1\nline2\nline3\nline4\n"
         result = split_massive_block_ast(source, "file.cpp", max_lines=2)
+        self.assertEqual(result[0]["suffix"], " (Truncated)")
+        self.assertIn("/* ... [Lines Omitted due to size] ... */", result[0]["text"])
+
+    def test_split_massive_block_ast_java_fallback(self):
+        source = "line1\nline2\nline3\nline4\n"
+        result = split_massive_block_ast(source, "file.java", max_lines=2)
         self.assertEqual(result[0]["suffix"], " (Truncated)")
         self.assertIn("/* ... [Lines Omitted due to size] ... */", result[0]["text"])
 

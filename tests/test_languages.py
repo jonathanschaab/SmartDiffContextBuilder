@@ -647,6 +647,142 @@ class TestLanguageProfiles(unittest.TestCase):
             self.assertIn(ext, CONFIG['dependency_query_strings'])
             self.assertIn(ext, CONFIG['callee_query_strings'])
 
+    def test_java_profile(self):
+        """Java profile resolves correctly, strips comments and matches definitions."""
+        # pylint: disable=too-many-statements
+        profile = get_language_profile("example.java")
+        self.assertEqual(profile.name, "java")
+        self.assertEqual(profile.comment_prefix, "//")
+        self.assertEqual(profile.lsp_command, ("jdtls",))
+
+        # Test comment stripping
+        self.assertEqual(
+            profile.strip_strings_and_comments("int x = 1; // comment"),
+            "int x = 1; ",
+        )
+        self.assertEqual(
+            profile.strip_strings_and_comments("String s = \"hello // comment\";"),
+            "String s = ;",
+        )
+
+        # Test block comments stripping
+        content = "int a = 1; /* block\ncomment */ int b = 2;"
+        self.assertEqual(
+            profile.strip_block_comments(content),
+            "int a = 1; \n int b = 2;",
+        )
+
+        # Test definition patterns
+        # pylint: disable=protected-access
+        patterns = profile.get_definition_patterns("MyTarget")
+
+        class_pat = patterns[0]
+        annotation_pat = patterns[1]
+        method_pat = patterns[2]
+        constructor_pat = patterns[3]
+
+        # Class / Interface / Enum / Record
+        self.assertTrue(class_pat.search("public class MyTarget {"))
+        self.assertTrue(class_pat.search("interface MyTarget<T>"))
+        self.assertTrue(class_pat.search("enum MyTarget"))
+        self.assertTrue(class_pat.search("record MyTarget(int x)"))
+        self.assertFalse(class_pat.search("class MyTargetOther"))
+
+        # Annotation (@interface)
+        self.assertTrue(annotation_pat.search("public @interface MyTarget"))
+        self.assertFalse(annotation_pat.search("@interface MyTargetOther"))
+
+        # Methods / Constructors (with modifiers/return type)
+        self.assertTrue(method_pat.search("public void MyTarget()"))
+        self.assertTrue(method_pat.search("private static int MyTarget(int x, String y)"))
+        self.assertTrue(method_pat.search("synchronized <T> T[] MyTarget()"))
+        self.assertTrue(method_pat.search("public Map<String, Object> MyTarget(int x)"))
+        self.assertTrue(method_pat.search("Map.Entry<K, V> MyTarget()"))
+        self.assertTrue(method_pat.search("List<@NonNull String> MyTarget(String... args)"))
+        self.assertTrue(method_pat.search("public static List<@NonNull String> MyTarget(int x)"))
+        self.assertTrue(method_pat.search("public List<?> MyTarget()"))
+        self.assertTrue(method_pat.search("public <T extends A & B> T MyTarget()"))
+        self.assertTrue(method_pat.search("List<? extends Runnable & Serializable> MyTarget()"))
+        self.assertFalse(method_pat.search("void MyTargetOther()"))
+
+        # Package-private constructors (no modifiers/return type, no semicolon)
+        self.assertTrue(constructor_pat.search("MyTarget()"))
+        self.assertTrue(constructor_pat.search("MyTarget(double val) throws Exception {"))
+        self.assertFalse(constructor_pat.search("MyTargetOther()"))
+
+        # Negative tests to verify keyword-preceded calls are not matched as definitions
+        self.assertFalse(method_pat.search("return MyTarget();"))
+        self.assertFalse(method_pat.search("throw MyTarget();"))
+        self.assertFalse(method_pat.search("new MyTarget()"))
+        self.assertFalse(method_pat.search("else MyTarget();"))
+        self.assertFalse(method_pat.search("case MyTarget():"))
+        self.assertFalse(method_pat.search("if (MyTarget())"))
+        self.assertFalse(method_pat.search("while (MyTarget())"))
+        self.assertFalse(method_pat.search("for (MyTarget(); ;)"))
+        self.assertFalse(method_pat.search("assert MyTarget();"))
+
+        # Negative tests to verify constructor pattern doesn't match keyword-preceded calls
+        self.assertFalse(constructor_pat.search("return MyTarget();"))
+        self.assertFalse(constructor_pat.search("throw MyTarget();"))
+        self.assertFalse(constructor_pat.search("new MyTarget()"))
+        self.assertFalse(constructor_pat.search("else MyTarget();"))
+
+        # Verify a simple method call on a line by itself is not matched as a definition
+        self.assertFalse(method_pat.search("MyTarget();"))
+        self.assertFalse(constructor_pat.search("MyTarget();"))
+
+        self.assertIn(".java", CONFIG['bindings'])
+        self.assertIn(".java", CONFIG['lang_map'])
+        self.assertIn(".java", CONFIG['dependency_query_strings'])
+        self.assertIn(".java", CONFIG['callee_query_strings'])
+
+        # Test Tree-sitter query validity for Java (verify method_reference lacks 'name:')
+        dep_query = CONFIG['dependency_query_strings']['.java']
+        callee_query = CONFIG['callee_query_strings']['.java']
+
+        self.assertIn("method_invocation name: (identifier)", dep_query)
+        self.assertIn("method_reference (_) (identifier)", dep_query)
+        self.assertNotIn("method_reference name: (identifier)", dep_query)
+
+        # Confirm dependency query is properly wrapped in outer parens
+        self.assertTrue(dep_query.startswith("(("), f"Query should start with '((': {dep_query}")
+        self.assertTrue(dep_query.endswith("))"), f"Query should end with '))': {dep_query}")
+
+        self.assertIn("method_invocation name: (identifier)", callee_query)
+        self.assertIn("method_reference (_) (identifier)", callee_query)
+        self.assertNotIn("method_reference name: (identifier)", callee_query)
+
+        # Test Java Text Blocks (multiline string literals) stripping
+        self.assertEqual(
+            profile.strip_strings_and_comments('String text = """hello""";'),
+            "String text = ;",
+        )
+        content = 'String text = """\nline 1\nline 2\n""";'
+        self.assertEqual(
+            profile.strip_block_comments(content),
+            'String text = \n\n\n;',
+        )
+
+    def test_java_tree_sitter_queries_compile(self):
+        """Verify that Java Tree-sitter query strings compile successfully without syntax errors."""
+        # pylint: disable=import-outside-toplevel
+        try:
+            import tree_sitter
+            import tree_sitter_java
+            lang = tree_sitter.Language(tree_sitter_java.language())
+
+            dep_query = CONFIG['dependency_query_strings']['.java'].format(
+                escaped_func_name="myMethod"
+            )
+            callee_query = CONFIG['callee_query_strings']['.java']
+
+            # These should compile without raising QuerySyntaxError or other exceptions
+            lang.query(dep_query)
+            lang.query(callee_query)
+        except ImportError:
+            # Fallback if libraries are not present, but they are installed in this environment
+            pass
+
 
 if __name__ == "__main__":
     unittest.main()
