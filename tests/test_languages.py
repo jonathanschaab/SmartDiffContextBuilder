@@ -679,6 +679,7 @@ class TestLanguageProfiles(unittest.TestCase):
         class_pat = patterns[0]
         annotation_pat = patterns[1]
         method_pat = patterns[2]
+        constructor_pat = patterns[3]
 
         # Class / Interface / Enum / Record
         self.assertTrue(class_pat.search("public class MyTarget {"))
@@ -691,17 +692,20 @@ class TestLanguageProfiles(unittest.TestCase):
         self.assertTrue(annotation_pat.search("public @interface MyTarget"))
         self.assertFalse(annotation_pat.search("@interface MyTargetOther"))
 
-        # Methods / Constructors
+        # Methods / Constructors (with modifiers/return type)
         self.assertTrue(method_pat.search("public void MyTarget()"))
         self.assertTrue(method_pat.search("private static int MyTarget(int x, String y)"))
-        self.assertTrue(method_pat.search("MyTarget(double val) throws Exception {"))
         self.assertTrue(method_pat.search("synchronized <T> T[] MyTarget()"))
-        self.assertTrue(method_pat.search("MyTarget()"))
         self.assertTrue(method_pat.search("public Map<String, Object> MyTarget(int x)"))
         self.assertTrue(method_pat.search("Map.Entry<K, V> MyTarget()"))
         self.assertTrue(method_pat.search("List<@NonNull String> MyTarget(String... args)"))
         self.assertTrue(method_pat.search("public static List<@NonNull String> MyTarget(int x)"))
         self.assertFalse(method_pat.search("void MyTargetOther()"))
+
+        # Package-private constructors (no modifiers/return type, no semicolon)
+        self.assertTrue(constructor_pat.search("MyTarget()"))
+        self.assertTrue(constructor_pat.search("MyTarget(double val) throws Exception {"))
+        self.assertFalse(constructor_pat.search("MyTargetOther()"))
 
         # Negative tests to verify keyword-preceded calls are not matched as definitions
         self.assertFalse(method_pat.search("return MyTarget();"))
@@ -713,6 +717,16 @@ class TestLanguageProfiles(unittest.TestCase):
         self.assertFalse(method_pat.search("while (MyTarget())"))
         self.assertFalse(method_pat.search("for (MyTarget(); ;)"))
         self.assertFalse(method_pat.search("assert MyTarget();"))
+
+        # Negative tests to verify constructor pattern doesn't match keyword-preceded calls
+        self.assertFalse(constructor_pat.search("return MyTarget();"))
+        self.assertFalse(constructor_pat.search("throw MyTarget();"))
+        self.assertFalse(constructor_pat.search("new MyTarget()"))
+        self.assertFalse(constructor_pat.search("else MyTarget();"))
+
+        # Verify a simple method call on a line by itself is not matched as a definition
+        self.assertFalse(method_pat.search("MyTarget();"))
+        self.assertFalse(constructor_pat.search("MyTarget();"))
 
         self.assertIn(".java", CONFIG['bindings'])
         self.assertIn(".java", CONFIG['lang_map'])

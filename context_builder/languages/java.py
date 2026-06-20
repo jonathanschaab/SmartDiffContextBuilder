@@ -31,16 +31,16 @@ class JavaProfile(LanguageProfile):
             ),
             # Annotation type definition (@interface)
             re.compile(r'@interface\s+' + lead_b + escaped + trail_b),
-            # Method and Constructor definitions
-            # Matches modifiers, optional generic params (<T>), optional return type,
-            # method name, and parameter list start
+            # Method and Constructor definitions (with modifiers or return type)
             re.compile(
-                r'^\s*(?:(?:public|protected|private|static|final|abstract|'
-                r'synchronized|native|strictfp|default|transient|volatile)\s+)*'
-                r'(?:<[^>]+>\s*)?'
+                r'^\s*(?:<[^>]+>\s*)?'
                 r'(?:(?:(?!return\b|throw\b|new\b|else\b|case\b|if\b|while\b|'
-                r'for\b|switch\b|assert\b)[A-Za-z0-9_<>\[\],.@]+\s+)+)?'
+                r'for\b|switch\b|assert\b)[A-Za-z0-9_<>\[\],.@]+\s+)+)'
                 + lead_b + escaped + trail_b + r'\s*\('
+            ),
+            # Package-private constructor definition (no modifiers/return type, no semicolon)
+            re.compile(
+                r'^\s*(?!.*;)' + lead_b + escaped + trail_b + r'\s*\('
             )
         ]
 
