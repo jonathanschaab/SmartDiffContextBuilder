@@ -7,7 +7,10 @@ import os
 import sys
 from collections import OrderedDict
 
-_EMPTY_STR_SIZE = sys.getsizeof("")
+try:
+    _EMPTY_STR_SIZE = sys.getsizeof("")
+except (AttributeError, NameError, NotImplementedError):
+    _EMPTY_STR_SIZE = 49  # Fallback for non-CPython runtimes, which bypass it anyway.
 
 
 class LRUFileCache:
