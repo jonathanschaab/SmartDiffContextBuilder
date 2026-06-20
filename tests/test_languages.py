@@ -649,6 +649,7 @@ class TestLanguageProfiles(unittest.TestCase):
 
     def test_java_profile(self):
         """Java profile resolves correctly, strips comments and matches definitions."""
+        # pylint: disable=too-many-statements
         profile = get_language_profile("example.java")
         self.assertEqual(profile.name, "java")
         self.assertEqual(profile.comment_prefix, "//")
@@ -701,6 +702,17 @@ class TestLanguageProfiles(unittest.TestCase):
         self.assertTrue(method_pat.search("List<@NonNull String> MyTarget(String... args)"))
         self.assertTrue(method_pat.search("public static List<@NonNull String> MyTarget(int x)"))
         self.assertFalse(method_pat.search("void MyTargetOther()"))
+
+        # Negative tests to verify keyword-preceded calls are not matched as definitions
+        self.assertFalse(method_pat.search("return MyTarget();"))
+        self.assertFalse(method_pat.search("throw MyTarget();"))
+        self.assertFalse(method_pat.search("new MyTarget()"))
+        self.assertFalse(method_pat.search("else MyTarget();"))
+        self.assertFalse(method_pat.search("case MyTarget():"))
+        self.assertFalse(method_pat.search("if (MyTarget())"))
+        self.assertFalse(method_pat.search("while (MyTarget())"))
+        self.assertFalse(method_pat.search("for (MyTarget(); ;)"))
+        self.assertFalse(method_pat.search("assert MyTarget();"))
 
         self.assertIn(".java", CONFIG['bindings'])
         self.assertIn(".java", CONFIG['lang_map'])
