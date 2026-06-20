@@ -7,6 +7,8 @@ import os
 import sys
 from collections import OrderedDict
 
+_EMPTY_STR_SIZE = sys.getsizeof("")
+
 
 class LRUFileCache:
     """A Least Recently Used (LRU) file cache for storing file lines, contents, and bytes."""
@@ -45,11 +47,10 @@ class LRUFileCache:
 
             # Estimate lines list size in O(1) time:
             # - List object base + pointer array overhead: sys.getsizeof(lines)
-            # - Line strings overhead: (len(lines) - 1) * empty_str_size + sys.getsizeof(content)
+            # - Line strings overhead: (len(lines) - 1) * _EMPTY_STR_SIZE + sys.getsizeof(content)
             # This is 100% exact for ASCII strings on all Python platforms/versions.
-            empty_str_size = sys.getsizeof("")
             line_strings_size = (
-                (len(lines) - 1) * empty_str_size + sys.getsizeof(content)
+                (len(lines) - 1) * _EMPTY_STR_SIZE + sys.getsizeof(content)
                 if lines
                 else 0
             )
