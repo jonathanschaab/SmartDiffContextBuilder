@@ -727,9 +727,24 @@ class TestLanguageProfiles(unittest.TestCase):
         self.assertIn("method_reference (_) (identifier)", dep_query)
         self.assertNotIn("method_reference name: (identifier)", dep_query)
 
+        # Confirm dependency query is properly wrapped in outer parens
+        self.assertTrue(dep_query.startswith("(("), f"Query should start with '((': {dep_query}")
+        self.assertTrue(dep_query.endswith("))"), f"Query should end with '))': {dep_query}")
+
         self.assertIn("method_invocation name: (identifier)", callee_query)
         self.assertIn("method_reference (_) (identifier)", callee_query)
         self.assertNotIn("method_reference name: (identifier)", callee_query)
+
+        # Test Java Text Blocks (multiline string literals) stripping
+        self.assertEqual(
+            profile.strip_strings_and_comments('String text = """hello""";'),
+            "String text = ;",
+        )
+        content = 'String text = """\nline 1\nline 2\n""";'
+        self.assertEqual(
+            profile.strip_block_comments(content),
+            'String text = \n\n\n;',
+        )
 
 
 if __name__ == "__main__":

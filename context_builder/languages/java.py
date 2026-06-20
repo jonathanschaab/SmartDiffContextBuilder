@@ -18,6 +18,7 @@ class JavaProfile(LanguageProfile):
     supports_nested_block_comments = False
     uses_indentation_blocks = False
     lsp_command = ("jdtls",)
+    multiline_string_delimiters = ('"""',)
 
     def get_definition_patterns(self, func_name):
         lead_b, trail_b = self._get_boundaries(func_name)
