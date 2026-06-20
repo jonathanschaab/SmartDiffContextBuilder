@@ -48,11 +48,12 @@ class LRUFileCache:
             # - Line strings overhead: (len(lines) - 1) * empty_str_size + sys.getsizeof(content)
             # This is 100% exact for ASCII strings on all Python platforms/versions.
             empty_str_size = sys.getsizeof("")
-            estimated_lines_size = (
-                sys.getsizeof(lines)
-                + (len(lines) - 1) * empty_str_size
-                + sys.getsizeof(content)
+            line_strings_size = (
+                (len(lines) - 1) * empty_str_size + sys.getsizeof(content)
+                if lines
+                else 0
             )
+            estimated_lines_size = sys.getsizeof(lines) + line_strings_size
             return (
                 sys.getsizeof(bytes_content)
                 + sys.getsizeof(content)
