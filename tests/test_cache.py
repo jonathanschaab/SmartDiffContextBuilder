@@ -27,23 +27,23 @@ class TestLRUFileCache(unittest.TestCase):
         measurer = LRUFileCache(max_size_mb=1.0)
 
         measurer.get_lines(self.file_path)
-        size1 = measurer.current_size_bytes
 
         # Create a second file (5 bytes)
         f2 = os.path.join(self.temp_dir.name, "test2.txt")
         with open(f2, "w", newline="\n", encoding="utf-8") as f:
             f.write("12345")
-
         measurer.get_lines(f2)
-        size2 = measurer.current_size_bytes - size1
 
         # Create a third file (2 bytes)
         f3 = os.path.join(self.temp_dir.name, "test3.txt")
         with open(f3, "w", newline="\n", encoding="utf-8") as f:
             f.write("12")
-
         measurer.get_lines(f3)
-        size3 = measurer.current_size_bytes - size1 - size2
+
+        # Retrieve the calculated sizes directly from the cache entry dictionary
+        size1 = measurer.cache[self.file_path]["size_bytes"]
+        size2 = measurer.cache[f2]["size_bytes"]
+        size3 = measurer.cache[f3]["size_bytes"]
 
         # Set cache size limit to exactly fit file1 and file2 (size1 + size2)
         limit_mb = (size1 + size2) / (1024 * 1024)
