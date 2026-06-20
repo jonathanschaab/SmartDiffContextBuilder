@@ -37,12 +37,12 @@ class LRUFileCache:
         Returns:
             int: Estimated memory footprint in bytes.
         """
-        # On non-CPython runtimes (e.g. PyPy), sys.getsizeof is not reliable.
-        # Fall back to a standard multiplier heuristic.
-        if sys.implementation.name != "cpython":
-            return int(len(bytes_content) * 4.5)
-
         try:
+            # On non-CPython runtimes (e.g. PyPy), sys.getsizeof is not reliable.
+            # Fall back to a standard multiplier heuristic.
+            if sys.implementation.name != "cpython":
+                return int(len(bytes_content) * 4.5)
+
             # Estimate lines list size in O(1) time:
             # - List object base + pointer array overhead: sys.getsizeof(lines)
             # - Line strings overhead: (len(lines) - 1) * empty_str_size + sys.getsizeof(content)
