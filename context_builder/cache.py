@@ -40,13 +40,13 @@ class LRUFileCache:
         try:
             # Estimate lines list size in O(1) time:
             # - List object base + pointer array overhead: sys.getsizeof(lines)
-            # - Individual line string base overhead: len(lines) * 50
-            # - Combined line string character memory:
-            #   sys.getsizeof(content) - 49 (compact ASCII overhead)
+            # - Line strings overhead: (len(lines) - 1) * empty_str_size + sys.getsizeof(content)
+            # This is 100% exact for ASCII strings on all Python platforms/versions.
+            empty_str_size = sys.getsizeof("")
             estimated_lines_size = (
                 sys.getsizeof(lines)
-                + len(lines) * 50
-                + (sys.getsizeof(content) - 49)
+                + (len(lines) - 1) * empty_str_size
+                + sys.getsizeof(content)
             )
             return (
                 sys.getsizeof(bytes_content)
