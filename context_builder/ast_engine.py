@@ -174,9 +174,12 @@ def _extract_bounds_non_py_regex(lines, start_idx, target_idx, profile):
 
 def extract_function_bounds_regex(file_path, line_num, file_cache=None):
     """Extract start and end line bounds using linear non-backtracking regex fallback."""
+    if line_num <= 0:
+        return None, None
     if file_cache is None:
         file_cache = get_global_cache()
-    lines = file_cache.get_lines(file_path)
+    profile = get_language_profile(file_path)
+    lines = file_cache.get_stripped_lines(file_path, profile)
     if not lines:
         return None, None
     target_idx = line_num - 1
@@ -193,7 +196,6 @@ def extract_function_bounds_regex(file_path, line_num, file_cache=None):
     if start_idx < 0:
         start_idx = max(0, target_idx - 10)
 
-    profile = get_language_profile(file_path)
     if profile.uses_indentation_blocks:
         return _extract_bounds_py_regex(lines, start_idx)
     return _extract_bounds_non_py_regex(lines, start_idx, target_idx, profile)
@@ -288,17 +290,18 @@ def trace_lexical_dependencies_ast(func_name, repo_files, file_cache=None):
 
 def _process_regex_file(
     file_path,
-    content,
     profile,
     call_pattern,
     def_patterns,
     def_cpp_pattern,
     callers,
+    file_cache,
 ):
     """Search regex patterns within a single file."""
-    content = profile.strip_block_comments(content)
-    if call_pattern.search(content):
-        for idx, line in enumerate(content.splitlines()):
+    stripped_content = file_cache.get_stripped_content(file_path, profile)
+    if call_pattern.search(stripped_content):
+        lines = file_cache.get_stripped_lines(file_path, profile)
+        for idx, line in enumerate(lines):
             if not call_pattern.search(line):
                 continue
             clean_line = profile.strip_strings_and_comments(line)
@@ -359,15 +362,14 @@ def trace_lexical_dependencies_regex(func_name, repo_files, file_cache=None):
             )
         call_pattern, def_patterns, def_cpp_pattern = profile_patterns_cache[profile.name]
 
-        content = file_cache.get_content(file_path)
         _process_regex_file(
             file_path,
-            content,
             profile,
             call_pattern,
             def_patterns,
             def_cpp_pattern,
             callers,
+            file_cache,
         )
     return callers
 
@@ -619,9 +621,9 @@ def extract_callees_ast(file_path, start_line, end_line, ext, file_cache):
 
 def extract_callees_regex(file_path, start_line, end_line, file_cache):
     """Extract all functions/methods called inside a line range using regex fallback."""
-    lines = file_cache.get_lines(file_path)[start_line:end_line]
-    callees = set()
     profile = get_language_profile(file_path)
+    lines = file_cache.get_stripped_lines(file_path, profile)[start_line:end_line]
+    callees = set()
     callee_pattern = _get_callee_pattern()
     for line in lines:
         line_clean = profile.strip_strings_and_comments(line)
@@ -699,7 +701,7 @@ def find_callee_definition(callee_name, all_repo_files, file_cache=None):
 
         pattern, cpp_pattern, lang_def_patterns = patterns_cache[profile.name]
 
-        lines = file_cache.get_lines(file_path)
+        lines = file_cache.get_stripped_lines(file_path, profile)
         for idx, line in enumerate(lines):
             clean_line = profile.strip_strings_and_comments(line)
             is_match = (

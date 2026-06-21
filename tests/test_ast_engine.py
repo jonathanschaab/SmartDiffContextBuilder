@@ -18,7 +18,8 @@ from context_builder.ast_engine import (
     split_massive_block_ast,
     trace_lexical_dependencies_regex,
     extract_callees,
-    find_callee_definition
+    find_callee_definition,
+    extract_callees_regex
 )
 
 class TestAstEngine(unittest.TestCase):
@@ -584,6 +585,14 @@ class TestAstEngine(unittest.TestCase):
         )
         self.assertEqual(
             extract_function_bounds_regex("short.py", 3, cache),
+            (None, None),
+        )
+        self.assertEqual(
+            extract_function_bounds_regex("some_file.py", 0, cache),
+            (None, None),
+        )
+        self.assertEqual(
+            extract_function_bounds_regex("some_file.py", -5, cache),
             (None, None),
         )
 
@@ -2055,3 +2064,63 @@ class TestAstEngine(unittest.TestCase):
         path, line = find_callee_definition("myTargetSameLine", [file_path], file_cache=self.cache)
         self.assertEqual(path, file_path)
         self.assertEqual(line, 4)
+
+    def test_find_callee_definition_ignores_block_comments(self):
+        # Verify find_callee_definition ignores definitions that are commented out in block comments.
+        code = (
+            "/*\n"
+            "void my_commented_func() {\n"
+            "}\n"
+            "*/\n"
+            "void my_commented_func() {\n"
+            "}\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "block_comments.cpp")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        self.cache.get_content(file_path)
+
+        path, line = find_callee_definition("my_commented_func", [file_path], file_cache=self.cache)
+        self.assertEqual(path, file_path)
+        self.assertEqual(line, 5)  # Should point to line 5, not line 2
+
+    def test_extract_callees_regex_ignores_block_comments(self):
+        # Verify extract_callees_regex ignores call matches inside block comments.
+        code = (
+            "void my_caller() {\n"
+            "    active_call();\n"
+            "    /*\n"
+            "    commented_call();\n"
+            "    */\n"
+            "}\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "callees_block.cpp")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        self.cache.get_content(file_path)
+
+        callees = extract_callees_regex(file_path, 0, 6, self.cache)
+        self.assertIn("active_call", callees)
+        self.assertNotIn("commented_call", callees)
+
+    def test_extract_function_bounds_regex_ignores_unbalanced_braces_in_block_comments(self):
+        # Verify bounds extraction isn't corrupted by unbalanced braces inside block comments.
+        code = (
+            "void my_func() {\n"
+            "    /* \n"
+            "    } \n"
+            "    */\n"
+            "    int x = 0;\n"
+            "}\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "bounds_block.cpp")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        self.cache.get_content(file_path)
+
+        start, end = extract_function_bounds_regex(file_path, 1, self.cache)
+        self.assertEqual(start, 0)
+        self.assertEqual(end, 6)
