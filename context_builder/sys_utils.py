@@ -27,6 +27,8 @@ _IGNORED_DIRS = {
     ".gradle", # Java / Kotlin caches
 }
 
+_IGNORED_DIRS_CACHE = [None, None]
+
 
 def warn_once(key, message):
     """Print a notice warning once per key to avoid stdout pollution.
@@ -561,10 +563,21 @@ def is_in_repo(file_path):
         dir_components = components if is_dir else components[:-1]
 
         ignored_dirs_config = CONFIG.get("ignored_directories")
-        if isinstance(ignored_dirs_config, (list, tuple, set)):
-            ignored_dirs = {str(d).lower() for d in ignored_dirs_config}
+        config_key = (
+            tuple(ignored_dirs_config)
+            if isinstance(ignored_dirs_config, (list, tuple, set))
+            else None
+        )
+
+        if _IGNORED_DIRS_CACHE[0] == config_key:
+            ignored_dirs = _IGNORED_DIRS_CACHE[1]
         else:
-            ignored_dirs = _IGNORED_DIRS
+            if config_key is not None:
+                ignored_dirs = {str(d).lower() for d in ignored_dirs_config}
+            else:
+                ignored_dirs = _IGNORED_DIRS
+            _IGNORED_DIRS_CACHE[0] = config_key
+            _IGNORED_DIRS_CACHE[1] = ignored_dirs
 
         if any(c in ignored_dirs for c in dir_components):
             return False
