@@ -1,7 +1,7 @@
 # pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
 # pylint: disable=attribute-defined-outside-init,import-outside-toplevel,protected-access
 # pylint: disable=redefined-outer-name,reimported,unused-argument,consider-using-from-import
-# pylint: disable=unspecified-encoding,too-few-public-methods,too-many-public-methods
+# pylint: disable=unspecified-encoding,too-few-public-methods,too-many-public-methods,too-many-lines
 # pylint: disable=broad-exception-caught
 
 import os
@@ -358,6 +358,49 @@ class TestSysUtils(unittest.TestCase):
                     # both should be ignored
                     self.assertFalse(is_in_repo(exact_file))
                     self.assertFalse(is_in_repo(lower_file))
+
+            finally:
+                os.chdir(old_cwd)
+                if old_ignored is not None:
+                    CONFIG["ignored_directories"] = old_ignored
+                else:
+                    CONFIG.pop("ignored_directories", None)
+
+    def test_is_in_repo_configured_ignores_in_place_mutation(self):
+        import tempfile
+        import os
+        from context_builder.sys_utils import is_in_repo
+        from context_builder.config import CONFIG
+
+        old_cwd = os.getcwd()
+        old_ignored = CONFIG.get("ignored_directories")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.chdir(temp_dir)
+            try:
+                # 1. Start with a list config
+                CONFIG["ignored_directories"] = ["dir_one"]
+                dir_one_path = os.path.join(temp_dir, "dir_one")
+                os.makedirs(dir_one_path, exist_ok=True)
+                file_one = os.path.join(dir_one_path, "file.py")
+                with open(file_one, "w") as f:
+                    f.write("pass")
+
+                # Checks: dir_one should be ignored
+                self.assertFalse(is_in_repo(file_one))
+
+                # dir_two should NOT be ignored yet
+                dir_two_path = os.path.join(temp_dir, "dir_two")
+                os.makedirs(dir_two_path, exist_ok=True)
+                file_two = os.path.join(dir_two_path, "file.py")
+                with open(file_two, "w") as f:
+                    f.write("pass")
+                self.assertTrue(is_in_repo(file_two))
+
+                # 2. Mutate CONFIG["ignored_directories"] IN-PLACE
+                CONFIG["ignored_directories"].append("dir_two")
+
+                # Checks: dir_two should now be ignored (in-place mutation detected)
+                self.assertFalse(is_in_repo(file_two))
 
             finally:
                 os.chdir(old_cwd)

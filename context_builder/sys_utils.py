@@ -27,7 +27,7 @@ _IGNORED_DIRS = {
     ".gradle", # Java / Kotlin caches
 }
 
-_IGNORED_DIRS_CACHE = [None, None]
+_IGNORED_DIRS_CACHE = [None, None, None]
 
 
 def warn_once(key, message):
@@ -566,20 +566,33 @@ def is_in_repo(file_path):  # pylint: disable=too-many-branches
         dir_components = components if is_dir else components[:-1]
 
         ignored_dirs_config = CONFIG.get("ignored_directories")
-        config_key = (id(ignored_dirs_config), case_sensitive)
 
-        if _IGNORED_DIRS_CACHE[0] == config_key:
-            ignored_dirs = _IGNORED_DIRS_CACHE[1]
+        if (
+            _IGNORED_DIRS_CACHE[0] == ignored_dirs_config
+            and _IGNORED_DIRS_CACHE[1] == case_sensitive
+        ):
+            ignored_dirs = _IGNORED_DIRS_CACHE[2]
         else:
             if ignored_dirs_config is not None:
+                # Copy the list/tuple/set to detect in-place mutations safely
+                if isinstance(ignored_dirs_config, list):
+                    _IGNORED_DIRS_CACHE[0] = list(ignored_dirs_config)
+                elif isinstance(ignored_dirs_config, set):
+                    _IGNORED_DIRS_CACHE[0] = set(ignored_dirs_config)
+                elif isinstance(ignored_dirs_config, tuple):
+                    _IGNORED_DIRS_CACHE[0] = tuple(ignored_dirs_config)
+                else:
+                    _IGNORED_DIRS_CACHE[0] = ignored_dirs_config
+
                 if not case_sensitive:
                     ignored_dirs = {str(d).lower() for d in ignored_dirs_config}
                 else:
                     ignored_dirs = {str(d) for d in ignored_dirs_config}
             else:
+                _IGNORED_DIRS_CACHE[0] = None
                 ignored_dirs = _IGNORED_DIRS
-            _IGNORED_DIRS_CACHE[0] = config_key
-            _IGNORED_DIRS_CACHE[1] = ignored_dirs
+            _IGNORED_DIRS_CACHE[1] = case_sensitive
+            _IGNORED_DIRS_CACHE[2] = ignored_dirs
 
         if any(c in ignored_dirs for c in dir_components):
             return False
