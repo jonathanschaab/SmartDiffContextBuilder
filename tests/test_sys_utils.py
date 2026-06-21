@@ -256,6 +256,19 @@ class TestSysUtils(unittest.TestCase):
                     is_in_repo(lib_file),
                     "lib directory inside workspace should NOT be ignored"
                 )
+                # Check that a file whose name matches an ignored directory name
+                # (e.g. a script named 'build' or 'env') is NOT ignored if it is indeed
+                # a file, not a directory.
+                sub_dir = os.path.join(temp_dir, "safe_subdir")
+                os.makedirs(sub_dir, exist_ok=True)
+                for file_name in ["build", "env"]:
+                    p_file = os.path.join(sub_dir, file_name)
+                    with open(p_file, "w") as f:
+                        f.write("pass")
+                    self.assertTrue(
+                        is_in_repo(p_file),
+                        f"file named '{file_name}' should NOT be ignored"
+                    )
             finally:
                 os.chdir(old_cwd)
 

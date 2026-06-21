@@ -542,11 +542,13 @@ def is_in_repo(file_path):
         if not os.path.exists(file_path):
             return False
 
-        # Check exact directory component matches relative to the repository root
+        # Check exact directory component matches relative to the repository root.
+        # If the path points to a file, the last component is the filename and is excluded.
         rel_path = os.path.relpath(abs_path, repo_root)
         normalized_rel = normalize_for_path_match(rel_path)
         components = normalized_rel.split("/")
-        if any(c in _IGNORED_DIRS for c in components):
+        dir_components = components if os.path.isdir(abs_path) else components[:-1]
+        if any(c in _IGNORED_DIRS for c in dir_components):
             return False
 
         return True
