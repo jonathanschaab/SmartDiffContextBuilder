@@ -2224,3 +2224,278 @@ class TestAstEngine(unittest.TestCase):
             res = extract_identifiers("file.py", [1], file_cache=self.cache)
             self.assertEqual(res, {"regex_var_only"})
             mock_regex.assert_called_once()
+
+    def test_get_lhs_identifiers(self):
+        from context_builder.ast_engine import get_lhs_identifiers
+
+        class FakeNode:
+            def __init__(self, node_type, children=None, parent=None, text=None):
+                self.type = node_type
+                self.children = children or []
+                self.parent = parent
+                self.text = text.encode('utf-8') if isinstance(text, str) else text
+                self.id = id(self)
+                for child in self.children:
+                    child.parent = self
+            def child_by_field_name(self, name):
+                if name == "right" and len(self.children) > 2:
+                    return self.children[2]
+                return None
+
+        x_node = FakeNode("identifier", text="x")
+        op_node = FakeNode("=", text="=")
+        y_node = FakeNode("identifier", text="y")
+        assign_node = FakeNode("assignment_expression", children=[x_node, op_node, y_node])
+
+        lhs_ids = get_lhs_identifiers(assign_node)
+        self.assertEqual(lhs_ids, ["x"])
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_resolve_local_variable_ast(self, mock_engine):
+        from context_builder.ast_engine import resolve_local_variable_ast
+
+        class FakeNode:
+            def __init__(self, node_type, start_line, text=None, children=None, parent=None):
+                self.type = node_type
+                self.start_point = (start_line - 1, 0)
+                self.text = text.encode('utf-8') if isinstance(text, str) else text
+                self.children = children or []
+                self.parent = parent
+                self.id = id(self)
+                for child in self.children:
+                    child.parent = self
+            def child_by_field_name(self, name):
+                return None
+
+        x_node = FakeNode("identifier", 2, "my_var")
+        op_node = FakeNode("=", 2, "=")
+        val_node = FakeNode("number", 2, "42")
+        assign_node = FakeNode("assignment_expression", 2, children=[x_node, op_node, val_node])
+
+        root = FakeNode("module", 1, children=[assign_node])
+        parser = MagicMock()
+        parser.parse.return_value = SimpleNamespace(root_node=root)
+        mock_engine.parsers = {".py": parser}
+        mock_engine.is_supported.return_value = True
+        mock_engine.languages = {}
+
+        cache = MagicMock()
+        cache.get_bytes.return_value = b"some code"
+        cache.get_lines.return_value = ["line 1", "my_var = 42", "line 3"]
+
+        with patch("context_builder.ast_engine.extract_function_bounds") as mock_bounds:
+            mock_bounds.return_value = (0, 3)
+            
+            line, code = resolve_local_variable_ast("file.py", "my_var", 3, file_cache=cache)
+            self.assertEqual(line, 2)
+            self.assertEqual(code, "my_var = 42")
+
+    @patch("context_builder.ast_engine.resolve_local_variable_ast")
+    @patch("context_builder.lsp_client.get_lsp_definition")
+    @patch("context_builder.lsp_client.get_lsp_type_definition")
+    def test_resolve_variable_definition(self, mock_type_def, mock_def, mock_local):
+        from context_builder.ast_engine import resolve_variable_definition
+
+        mock_local.return_value = (2, "my_var = 42")
+        res = resolve_variable_definition("file.py", "my_var", 3, 10, file_cache=self.cache)
+        self.assertEqual(res["resolved_type"], "local")
+        self.assertEqual(res["definitions"][0]["line"], 2)
+
+        mock_local.return_value = (None, None)
+        
+        mock_def.return_value = [{
+            "uri": "file:///c:/path/to/global.py",
+            "range": {
+                "start": {"line": 4, "character": 5},
+                "end": {"line": 4, "character": 15}
+            }
+        }]
+        mock_type_def.return_value = [{
+            "uri": "file:///c:/path/to/type.py",
+            "range": {
+                "start": {"line": 9, "character": 2},
+                "end": {"line": 9, "character": 12}
+            }
+        }]
+
+        with patch("os.path.exists") as mock_exists:
+            mock_exists.return_value = True
+            
+            cache = MagicMock()
+            cache.get_lines.side_effect = lambda path: ["code 1", "code 2", "code 3", "code 4", "global_var = 10", "code 6", "code 7", "code 8", "code 9", "class User {}"]
+            
+            res = resolve_variable_definition("file.py", "my_var", 3, 10, file_cache=cache)
+            self.assertEqual(res["resolved_type"], "global_and_type")
+            self.assertEqual(len(res["definitions"]), 2)
+            self.assertEqual(res["definitions"][0]["code"], "global_var = 10")
+            self.assertEqual(res["definitions"][1]["code"], "class User {}")
+
+    def test_regex_scope_building(self):
+        from context_builder.ast_engine import build_scopes
+        from context_builder.languages.python import PYTHON
+        from context_builder.languages.c_family import C_FAMILY
+        from context_builder.cache import LRUFileCache
+
+        cache = LRUFileCache(capacity=5)
+        # Test Python indentation scopes
+        py_code = (
+            "def foo():\n"
+            "    x = 1\n"
+            "    if True:\n"
+            "        y = 2\n"
+            "    return x\n"
+        )
+        py_file = os.path.join(self.temp_dir.name, "scopes_test.py")
+        with open(py_file, "w", encoding="utf-8") as f:
+            f.write(py_code)
+
+        _, all_scopes = build_scopes(py_file, PYTHON, cache)
+        # Global scope + def scope + if scope
+        self.assertEqual(len(all_scopes), 3)
+        self.assertEqual(all_scopes[1].start_line, 1)  # def foo():
+        self.assertEqual(all_scopes[2].start_line, 3)  # if True:
+        self.assertEqual(all_scopes[2].end_line, 4)
+
+        # Test C++ brace scopes
+        cpp_code = (
+            "void foo() {\n"
+            "    int x = 1;\n"
+            "    if (true) {\n"
+            "        int y = 2;\n"
+            "    }\n"
+            "}\n"
+        )
+        cpp_file = os.path.join(self.temp_dir.name, "scopes_test.cpp")
+        with open(cpp_file, "w", encoding="utf-8") as f:
+            f.write(cpp_code)
+
+        _, all_scopes_cpp = build_scopes(cpp_file, C_FAMILY, cache)
+        self.assertEqual(len(all_scopes_cpp), 3)
+        self.assertEqual(all_scopes_cpp[1].start_line, 1)  # void foo() {
+        self.assertEqual(all_scopes_cpp[2].start_line, 3)  # if (true) {
+        self.assertEqual(all_scopes_cpp[2].end_line, 5)
+
+    def test_regex_fallback_local_resolution(self):
+        from context_builder.ast_engine import resolve_variable_definition
+        from context_builder.cache import LRUFileCache
+
+        cache = LRUFileCache(capacity=5)
+        py_code = (
+            "x = 100\n"  # line 1 (global)
+            "def foo():\n"  # line 2
+            "    x = 1\n"  # line 3
+            "    if True:\n"  # line 4
+            "        y = 2\n"  # line 5
+            "        print(x)\n"  # line 6 (ref to x)
+        )
+        py_file = os.path.join(self.temp_dir.name, "local_test.py")
+        with open(py_file, "w", encoding="utf-8") as f:
+            f.write(py_code)
+
+        # Mock AST check to fail to force regex fallback
+        with patch("context_builder.ast_engine.resolve_local_variable_ast") as mock_ast, \
+             patch("context_builder.lsp_client.get_lsp_definition") as mock_lsp, \
+             patch("context_builder.lsp_client.get_lsp_type_definition") as mock_type_lsp:
+            mock_ast.return_value = (None, None)
+            mock_lsp.return_value = []
+            mock_type_lsp.return_value = []
+
+            # Resolve 'x' referenced at line 6
+            res = resolve_variable_definition(py_file, "x", 6, 14, file_cache=cache)
+            self.assertEqual(res["resolved_type"], "local_regex")
+            self.assertEqual(len(res["definitions"]), 1)
+            self.assertEqual(res["definitions"][0]["line"], 3)  # local definition in foo()
+
+            # Resolve 'y' referenced at line 6 (should not find since it's defined in child 'if' scope)
+            # Wait, y is defined at line 5 (which is inside the if block).
+            # But line 6 is also inside the same if block! So it should find it!
+            res_y = resolve_variable_definition(py_file, "y", 6, 14, file_cache=cache)
+            self.assertEqual(res_y["resolved_type"], "local_regex")
+            self.assertEqual(res_y["definitions"][0]["line"], 5)
+
+    def test_regex_fallback_member_and_inheritance(self):
+        from context_builder.ast_engine import resolve_variable_definition
+        from context_builder.cache import LRUFileCache
+
+        cache = LRUFileCache(capacity=5)
+        # Multiple files to test member crawling and parent inheritance
+        parent_code = (
+            "class Base:\n"
+            "    base_val = 42\n"
+        )
+        child_code = (
+            "from parent import Base\n"
+            "class Child(Base):\n"
+            "    child_val = 24\n"
+            "    def method(self):\n"
+            "        print(self.base_val)\n"  # line 5
+        )
+
+        parent_file = os.path.join(self.temp_dir.name, "parent.py")
+        child_file = os.path.join(self.temp_dir.name, "child.py")
+        with open(parent_file, "w", encoding="utf-8") as f:
+            f.write(parent_code)
+        with open(child_file, "w", encoding="utf-8") as f:
+            f.write(child_code)
+
+        with patch("context_builder.ast_engine.resolve_local_variable_ast") as mock_ast, \
+             patch("context_builder.lsp_client.get_lsp_definition") as mock_lsp, \
+             patch("context_builder.lsp_client.get_lsp_type_definition") as mock_type_lsp, \
+             patch("context_builder.sys_utils.get_git_tracked_files") as mock_tracked:
+            mock_ast.return_value = (None, None)
+            mock_lsp.return_value = []
+            mock_type_lsp.return_value = []
+            mock_tracked.return_value = [parent_file, child_file]
+
+            # Resolve base_val on child class instance referenced in child_file
+            res = resolve_variable_definition(child_file, "base_val", 5, 19, file_cache=cache)
+            self.assertEqual(res["resolved_type"], "member_regex")
+            self.assertEqual(len(res["definitions"]), 1)
+            self.assertEqual(res["definitions"][0]["line"], 2)
+            self.assertEqual(res["definitions"][0]["code"], "base_val = 42")
+
+    def test_regex_fallback_global_search(self):
+        from context_builder.ast_engine import resolve_variable_definition
+        from context_builder.cache import LRUFileCache
+
+        cache = LRUFileCache(capacity=5)
+        lib_code = (
+            "GLOBAL_CONST = 'HELLO'\n"
+            "def helper():\n"
+            "    non_global = 'FAIL'\n"
+        )
+        main_code = (
+            "import lib\n"
+            "def run():\n"
+            "    print(GLOBAL_CONST)\n"
+        )
+
+        lib_file = os.path.join(self.temp_dir.name, "lib.py")
+        main_file = os.path.join(self.temp_dir.name, "main.py")
+        with open(lib_file, "w", encoding="utf-8") as f:
+            f.write(lib_code)
+        with open(main_file, "w", encoding="utf-8") as f:
+            f.write(main_code)
+
+        with patch("context_builder.ast_engine.resolve_local_variable_ast") as mock_ast, \
+             patch("context_builder.lsp_client.get_lsp_definition") as mock_lsp, \
+             patch("context_builder.lsp_client.get_lsp_type_definition") as mock_type_lsp, \
+             patch("context_builder.sys_utils.get_git_tracked_files") as mock_tracked:
+            mock_ast.return_value = (None, None)
+            mock_lsp.return_value = []
+            mock_type_lsp.return_value = []
+            mock_tracked.return_value = [lib_file, main_file]
+
+            # Should find GLOBAL_CONST in lib_file since it's global
+            res = resolve_variable_definition(main_file, "GLOBAL_CONST", 3, 10, file_cache=cache)
+            self.assertEqual(res["resolved_type"], "global_regex")
+            self.assertEqual(len(res["definitions"]), 1)
+            self.assertEqual(res["definitions"][0]["line"], 1)
+            self.assertEqual(res["definitions"][0]["code"], "GLOBAL_CONST = 'HELLO'")
+
+            # Should ignore non_global because it is inside helper() scope
+            res_fail = resolve_variable_definition(main_file, "non_global", 3, 10, file_cache=cache)
+            self.assertEqual(res_fail["resolved_type"], "none")
+
+
+

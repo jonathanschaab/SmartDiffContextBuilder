@@ -1,8 +1,10 @@
+# pylint: disable=too-many-lines,cyclic-import
 """
 AST analysis engine utilizing tree-sitter or regex fallback.
 Provides syntax-aware function boundary extraction, dependency tracing,
 and callee analysis.
 """
+
 
 import os
 import re
@@ -718,27 +720,24 @@ def find_callee_definition(callee_name, all_repo_files, file_cache=None):
     return None, None
 
 
-def extract_identifiers_ast(file_path, line_numbers, file_cache=None):
-    """Query Tree-sitter for raw (identifier) nodes within the modified diff lines.
-
-    Filter out any node that is a child of a call_expression or function_declarator.
-    """
+def extract_identifiers_with_positions_ast(file_path, line_numbers, file_cache=None):
+    """Query Tree-sitter for raw (identifier) nodes with their positions within modified lines."""
     if file_cache is None:
         file_cache = get_global_cache()
     ext = os.path.splitext(file_path)[1].lower()
     if not AST_ENGINE.is_supported(ext):
-        return set()
+        return []
 
     source_bytes = file_cache.get_bytes(file_path)
     if not source_bytes:
-        return set()
+        return []
 
     try:
         tree = AST_ENGINE.parsers[ext].parse(source_bytes)
     except Exception:  # pylint: disable=broad-exception-caught
-        return set()
+        return []
 
-    identifiers = set()
+    results = []
     line_set = set(line_numbers)
 
     def walk(node):
@@ -757,29 +756,25 @@ def extract_identifiers_ast(file_path, line_numbers, file_cache=None):
                     if isinstance(text, bytes):
                         text = text.decode('utf-8', errors='ignore')
                     if text:
-                        identifiers.add(text)
+                        results.append((text, node_line, node.start_point[1]))
 
         for child in node.children:
             walk(child)
 
     walk(tree.root_node)
-    return identifiers
+    return results
 
 
-def extract_identifiers_regex(file_path, line_numbers, file_cache=None):
-    """Extract standalone word boundaries from modified diff lines using regex.
-
-    Filter out any word followed immediately by ( or ::, and filter against
-    a strict list of language keywords (if, return, while, auto, int).
-    """
+def extract_identifiers_with_positions_regex(file_path, line_numbers, file_cache=None):
+    """Extract standalone word boundaries with positions using regex."""
     if file_cache is None:
         file_cache = get_global_cache()
     lines = file_cache.get_lines(file_path)
     if not lines:
-        return set()
+        return []
 
     profile = get_language_profile(file_path)
-    identifiers = set()
+    results = []
     keywords = {'if', 'return', 'while', 'auto', 'int'}
     line_set = set(line_numbers)
 
@@ -797,9 +792,42 @@ def extract_identifiers_regex(file_path, line_numbers, file_cache=None):
                 suffix_stripped = suffix.lstrip()
                 if suffix_stripped.startswith('(') or suffix_stripped.startswith('::'):
                     continue
-                identifiers.add(word)
+                results.append((word, line_num, match.start()))
 
-    return identifiers
+    return results
+
+
+def extract_identifiers_with_positions(file_path, line_numbers, file_cache=None):
+    """Unified entrypoint to extract identifiers with positions, falling back to regex."""
+    if file_cache is None:
+        file_cache = get_global_cache()
+    ext = os.path.splitext(file_path)[1].lower()
+    if AST_ENGINE.is_supported(ext):
+        try:
+            return extract_identifiers_with_positions_ast(file_path, line_numbers, file_cache)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            print(f"\n[SmartDiffContextBuilder Warning] AST position extraction failed: {e}. "
+                  "Falling back to regex-based position extraction.")
+    return extract_identifiers_with_positions_regex(file_path, line_numbers, file_cache)
+
+
+def extract_identifiers_ast(file_path, line_numbers, file_cache=None):
+    """Query Tree-sitter for raw (identifier) nodes within the modified diff lines.
+
+    Filter out any node that is a child of a call_expression or function_declarator.
+    """
+    pos_ids = extract_identifiers_with_positions_ast(file_path, line_numbers, file_cache)
+    return {name for name, _, _ in pos_ids}
+
+
+def extract_identifiers_regex(file_path, line_numbers, file_cache=None):
+    """Extract standalone word boundaries from modified diff lines using regex.
+
+    Filter out any word followed immediately by ( or ::, and filter against
+    a strict list of language keywords (if, return, while, auto, int).
+    """
+    pos_ids = extract_identifiers_with_positions_regex(file_path, line_numbers, file_cache)
+    return {name for name, _, _ in pos_ids}
 
 
 def extract_identifiers(file_path, line_numbers, file_cache=None):
@@ -814,3 +842,725 @@ def extract_identifiers(file_path, line_numbers, file_cache=None):
             print(f"\n[SmartDiffContextBuilder Warning] AST identifier extraction failed: {e}. "
                   "Falling back to regex-based identifier extraction.")
     return extract_identifiers_regex(file_path, line_numbers, file_cache)
+
+
+def get_lhs_identifiers(node):
+    """Walk a Tree-sitter declaration or assignment node to find LHS target identifiers.
+
+    Excludes initializers, RHS expressions, and operators.
+    """
+    ids = []
+
+    def walk_lhs(curr):
+        if curr.type == 'identifier':
+            text = curr.text
+            if isinstance(text, bytes):
+                text = text.decode('utf-8', errors='ignore')
+            if text:
+                ids.append(text)
+            return
+
+        # Check for operator child
+        operator_idx = -1
+        for idx, child in enumerate(curr.children):
+            if child.type in ('=', ':=', '+=', '-=', '*=', '/='):
+                operator_idx = idx
+                break
+
+        # Check for skip fields
+        right_fields = {'right', 'init', 'value'}
+        skip_nodes = set()
+        for field in right_fields:
+            child = curr.child_by_field_name(field)
+            if child:
+                skip_nodes.add(child.id)
+
+        for idx, child in enumerate(curr.children):
+            if operator_idx != -1 and idx >= operator_idx:
+                break
+            if child.id not in skip_nodes:
+                walk_lhs(child)
+
+    walk_lhs(node)
+    return ids
+
+
+def resolve_local_variable_ast(file_path, var_name, ref_line, file_cache=None):
+    """Search locally within the enclosing function for the variable definition.
+
+    Returns:
+        tuple: (line_number, line_code) if found, else (None, None).
+    """
+    if file_cache is None:
+        file_cache = get_global_cache()
+
+    ext = os.path.splitext(file_path)[1].lower()
+    if not AST_ENGINE.is_supported(ext):
+        return None, None
+
+    source_bytes = file_cache.get_bytes(file_path)
+    if not source_bytes:
+        return None, None
+
+    # Get function bounds
+    func_start, _ = extract_function_bounds(file_path, ref_line, file_cache=file_cache)
+    start_line = func_start + 1 if func_start is not None else 1
+
+    try:
+        tree = AST_ENGINE.parsers[ext].parse(source_bytes)
+    except Exception:  # pylint: disable=broad-exception-caught
+        return None, None
+
+    captures = []
+    try:
+        query = AST_ENGINE.languages[ext].query(
+            "[(variable_declaration) @decl (assignment_expression) @assign]"
+        )
+        captures = query.captures(tree.root_node)
+    except Exception:  # pylint: disable=broad-exception-caught
+        # Fallback to manual AST traversal
+        def collect(n, lst):
+            if n.type in (
+                'variable_declaration', 'assignment_expression', 'assignment',
+                'short_var_declaration', 'assignment_statement',
+                'local_variable_declaration', 'lexical_declaration', 'declaration'
+            ):
+                lst.append(n)
+            for c in n.children:
+                collect(c, lst)
+        nodes = []
+        collect(tree.root_node, nodes)
+        captures = [(n, None) for n in nodes]
+
+    instantiations = []
+    for node, _ in captures:
+        lhs_ids = get_lhs_identifiers(node)
+        if var_name in lhs_ids:
+            node_line = node.start_point[0] + 1
+            if start_line <= node_line <= ref_line:
+                instantiations.append(node_line)
+
+    if not instantiations:
+        return None, None
+
+    # Find closest instantiation before ref_line
+    def_line = max(instantiations)
+    lines = file_cache.get_lines(file_path)
+    if 1 <= def_line <= len(lines):
+        return def_line, lines[def_line - 1].strip()
+
+    return None, None
+
+
+def resolve_variable_definition(
+    file_path, var_name, line_num, char_offset, file_cache=None, timeout=None
+):
+    """Resolve variable definition using local scope check, LSP, or Regex fallback.
+
+    Returns:
+        dict: Resolved definitions format.
+    """
+    if file_cache is None:
+        file_cache = get_global_cache()
+
+    # 1. Local Scope Check (AST First)
+    local_line, local_code = resolve_local_variable_ast(file_path, var_name, line_num, file_cache)
+    if local_line is not None:
+        try:
+            rel_path = os.path.relpath(file_path, os.getcwd())
+        except ValueError:
+            rel_path = file_path
+        return {
+            "resolved_type": "local",
+            "definitions": [
+                {
+                    "path": rel_path,
+                    "line": local_line,
+                    "code": local_code
+                }
+            ]
+        }
+
+    # 2. Global & Member Check (LSP Handoff)
+    from .lsp_client import (  # pylint: disable=import-outside-toplevel
+        get_lsp_definition, get_lsp_type_definition, _parse_single_lsp_reference
+    )
+
+    resolved_defs = []
+    defs = get_lsp_definition(file_path, line_num, char_offset, timeout)
+    for d in defs:
+        try:
+            rel_path, def_line, def_code = _parse_single_lsp_reference(d, file_cache)
+            resolved_defs.append({
+                "path": rel_path,
+                "line": def_line + 1,
+                "code": def_code
+            })
+        except Exception:  # pylint: disable=broad-exception-caught
+            pass
+
+    resolved_type_defs = []
+    type_defs = get_lsp_type_definition(file_path, line_num, char_offset, timeout)
+    for td in type_defs:
+        try:
+            rel_path, def_line, def_code = _parse_single_lsp_reference(td, file_cache)
+            resolved_type_defs.append({
+                "path": rel_path,
+                "line": def_line + 1,
+                "code": def_code
+            })
+        except Exception:  # pylint: disable=broad-exception-caught
+            pass
+
+    result_defs = []
+    resolved_type = "none"
+    if resolved_defs:
+        result_defs.extend(resolved_defs)
+        resolved_type = "global"
+    if resolved_type_defs:
+        result_defs.extend(resolved_type_defs)
+        if resolved_type == "none":
+            resolved_type = "type"
+        else:
+            resolved_type = "global_and_type"
+
+    if resolved_type != "none":
+        return {
+            "resolved_type": resolved_type,
+            "definitions": result_defs
+        }
+
+    # 3. Constrained Regex Fallback (Safety Net)
+    ext = os.path.splitext(file_path)[1].lower()
+    profile = get_language_profile(ext)
+    return resolve_variable_definition_regex_fallback(
+        file_path, var_name, line_num, file_cache, profile
+    )
+
+
+class RegexScope:  # pylint: disable=too-few-public-methods
+    """Representation of a lexical scope block for fallback resolution."""
+
+    def __init__(self, start_line, parent=None, indent=-1):
+        self.start_line = start_line
+        self.end_line = None
+        self.parent = parent
+        self.indent = indent
+        self.children = []
+
+    def contains(self, line_num):
+        """Check if this scope contains the specified line number."""
+        if self.end_line is None:
+            return self.start_line <= line_num
+        return self.start_line <= line_num <= self.end_line
+
+
+def build_scopes(file_path, profile, file_cache):  # pylint: disable=too-many-branches
+    """Build scope tree for a file using language profile rules."""
+    lines = file_cache.get_lines(file_path)
+    if profile.uses_indentation_blocks:
+        global_scope = RegexScope(1, indent=-1)
+        stack = [global_scope]
+        all_scopes = [global_scope]
+        for line_idx, line in enumerate(lines):
+            line_num = line_idx + 1
+            stripped = line.strip()
+            comment_marker = profile.comment_prefix or "#"
+            if not stripped or stripped.startswith(comment_marker):
+                continue
+            cleaned = profile.strip_strings_and_comments(line)
+            if not cleaned.strip():
+                continue
+            indent = len(line) - len(line.lstrip())
+            while len(stack) > 1 and indent <= stack[-1].indent:
+                closed = stack.pop()
+                closed.end_line = line_num - 1
+            if cleaned.rstrip().endswith(':'):
+                new_scope = RegexScope(line_num, parent=stack[-1], indent=indent)
+                stack[-1].children.append(new_scope)
+                stack.append(new_scope)
+                all_scopes.append(new_scope)
+        for s in stack:
+            if s.end_line is None:
+                s.end_line = len(lines)
+        return global_scope, all_scopes
+
+    # Brace-based
+    global_scope = RegexScope(1)
+    stack = [global_scope]
+    all_scopes = [global_scope]
+    for line_idx, line in enumerate(lines):
+        line_num = line_idx + 1
+        cleaned = profile.strip_strings_and_comments(line)
+        for char in cleaned:
+            if char == '{':
+                new_scope = RegexScope(line_num, parent=stack[-1])
+                stack[-1].children.append(new_scope)
+                stack.append(new_scope)
+                all_scopes.append(new_scope)
+            elif char == '}':
+                if len(stack) > 1:
+                    closed = stack.pop()
+                    closed.end_line = line_num
+    for s in stack:
+        if s.end_line is None:
+            s.end_line = len(lines)
+    return global_scope, all_scopes
+
+
+def find_innermost_scope(scope, line_num):
+    """Recursively search for the deepest child scope containing line_num."""
+    for child in scope.children:
+        if child.contains(line_num):
+            return find_innermost_scope(child, line_num)
+    return scope
+
+
+def get_lines_directly_in_scope(scope, lines):
+    """Get line numbers (1-based) directly within scope, excluding sub-scopes."""
+    direct = []
+    for line_num in range(scope.start_line, (scope.end_line or len(lines)) + 1):
+        in_child = False
+        for child in scope.children:
+            if child.contains(line_num):
+                in_child = True
+                break
+        if not in_child:
+            direct.append(line_num)
+    return direct
+
+
+def is_line_definition_of_var(cleaned_line, var_name, profile):
+    """Check if a cleaned line defines var_name using simple regex heuristics."""
+    escaped_var = re.escape(var_name)
+
+    # 1. Assignment
+    assign_match = re.search(r'(?<![!=<>])=(?!=)|:=|\+=|-=|\*=|\/=', cleaned_line)
+    if assign_match:
+        lhs = cleaned_line[:assign_match.start()]
+        if re.search(r'\b' + escaped_var + r'\b', lhs):
+            return True
+
+    # 2. Explicit keywords
+    if re.search(r'\b(?:let|const|var|mut)\s+' + escaped_var + r'\b', cleaned_line):
+        return True
+
+    # 3. Type-based declarations (C/C++/Java)
+    if re.search(r'\b[A-Za-z_][A-Za-z0-9_<>:,*&]*\s+' + escaped_var + r'\b', cleaned_line):
+        return True
+
+    # 4. Parameters in function headers
+    if (
+        re.search(r'\b(?:def|fn|function|sub|func)\s+[A-Za-z0-9_]+', cleaned_line)
+        or profile.uses_c_style_definitions
+    ):
+        param_match = re.search(r'\(([^)]*)\)', cleaned_line)
+        if param_match:
+            params = param_match.group(1)
+            if re.search(r'\b' + escaped_var + r'\b', params):
+                return True
+
+    return False
+
+
+_CLASS_MEMBERS_CACHE = {}
+
+
+_RESERVED_KEYWORDS = {
+    'if', 'for', 'while', 'switch', 'catch', 'return', 'sizeof', 'class',
+    'struct', 'def', 'fn', 'function', 'let', 'const', 'var', 'mut', 'self', 'this'
+}
+
+
+def get_class_members(file_path, class_name, profile, file_cache):  # pylint: disable=too-many-branches,too-many-statements
+    """Extract and cache member variables defined in a class."""
+    cache_key = (file_path, class_name)
+    if cache_key in _CLASS_MEMBERS_CACHE:
+        return _CLASS_MEMBERS_CACHE[cache_key]
+
+    lines = file_cache.get_lines(file_path)
+    class_line_num = None
+    class_pattern = re.compile(r'\b(?:class|struct)\s+' + re.escape(class_name) + r'\b')
+    for idx, line in enumerate(lines):
+        cleaned = profile.strip_strings_and_comments(line)
+        if class_pattern.search(cleaned):
+            class_line_num = idx + 1
+            break
+
+    if class_line_num is None:
+        return []
+
+    _, all_scopes = build_scopes(file_path, profile, file_cache)
+    class_scope = None
+    for s in all_scopes:
+        if s.start_line == class_line_num and s.parent is not None:
+            class_scope = s
+            break
+
+    if class_scope is None:
+        return []
+
+    direct_lines = get_lines_directly_in_scope(class_scope, lines)
+    members = []
+    for ln in direct_lines:
+        line = lines[ln - 1]
+        cleaned = profile.strip_strings_and_comments(line)
+        assign_match = re.search(r'(?<![!=<>])=(?!=)|:=|\+=|-=|\*=|\/=', cleaned)
+        if assign_match:
+            lhs = cleaned[:assign_match.start()]
+            for m in re.finditer(r'\b[A-Za-z_][A-Za-z0-9_]*\b', lhs):
+                name = m.group(0)
+                if name not in _RESERVED_KEYWORDS:
+                    members.append((name, ln))
+        else:
+            decl_match = re.search(
+                r'\b[A-Za-z_][A-Za-z0-9_<>:,*&]*\s+([A-Za-z_][A-Za-z0-9_]*)\s*;', cleaned
+            )
+            if decl_match:
+                name = decl_match.group(1)
+                if name not in _RESERVED_KEYWORDS:
+                    members.append((name, ln))
+
+    if profile.name == 'python':
+        for child in class_scope.children:
+            start_line_text = lines[child.start_line - 1]
+            if 'def ' in start_line_text:
+                for ln in range(child.start_line, (child.end_line or len(lines)) + 1):
+                    line = lines[ln - 1]
+                    cleaned = profile.strip_strings_and_comments(line)
+                    self_match = re.search(r'\bself\.([A-Za-z_][A-Za-z0-9_]*)\s*=', cleaned)
+                    if self_match:
+                        name = self_match.group(1)
+                        members.append((name, ln))
+
+    seen = set()
+    unique_members = []
+    for name, ln in members:
+        if name not in seen:
+            seen.add(name)
+            unique_members.append((name, ln))
+
+    # Bounded cache to avoid leaks
+    if len(_CLASS_MEMBERS_CACHE) >= 1024:
+        first_key = next(iter(_CLASS_MEMBERS_CACHE))
+        _CLASS_MEMBERS_CACHE.pop(first_key, None)
+
+    _CLASS_MEMBERS_CACHE[cache_key] = unique_members
+    return unique_members
+
+
+def get_parent_classes(file_path, class_name, profile, file_cache):
+    """Identify the parent class name(s) for a given class."""
+    # pylint: disable=too-many-nested-blocks
+    lines = file_cache.get_lines(file_path)
+    class_pattern = re.compile(r'\b(?:class|struct)\s+' + re.escape(class_name) + r'\b')
+    for line in lines:
+        cleaned = profile.strip_strings_and_comments(line)
+        if class_pattern.search(cleaned):
+            if profile.name == 'python':
+                m = re.search(r'\bclass\s+' + re.escape(class_name) + r'\s*\(([^)]+)\)', cleaned)
+                if m:
+                    return [p.strip() for p in m.group(1).split(',') if p.strip()]
+            elif profile.name in ('java', 'javascript', 'typescript'):
+                m = re.search(
+                    r'\bclass\s+' + re.escape(class_name) + r'\s+extends\s+([A-Za-z0-9_]+)', cleaned
+                )
+                if m:
+                    return [m.group(1).strip()]
+            elif profile.name == 'c_family':
+                m = re.search(
+                    r'\b(?:class|struct)\s+' + re.escape(class_name) + r'\s*:\s*([^{]+)', cleaned
+                )
+                if m:
+                    parents_part = m.group(1)
+                    parents = []
+                    for p in parents_part.split(','):
+                        p = p.strip()
+                        p_clean = re.sub(
+                            r'\b(?:public|protected|private|virtual)\s+', '', p
+                        ).strip()
+                        p_name = re.match(r'^([A-Za-z0-9_]+)', p_clean)
+                        if p_name:
+                            parents.append(p_name.group(1))
+                    return parents
+    return []
+
+
+def find_class_definition(start_file, class_name, profile, file_cache):
+    """Locate the file and line number where class_name is defined."""
+    lines = file_cache.get_lines(start_file)
+    class_pattern = re.compile(r'\b(?:class|struct)\s+' + re.escape(class_name) + r'\b')
+    for idx, line in enumerate(lines):
+        cleaned = profile.strip_strings_and_comments(line)
+        if class_pattern.search(cleaned):
+            return start_file, idx + 1
+
+    included_files = get_directly_included_files(start_file, profile, file_cache)
+    for inc_file in included_files:
+        if os.path.exists(inc_file):
+            lines = file_cache.get_lines(inc_file)
+            for idx, line in enumerate(lines):
+                cleaned = profile.strip_strings_and_comments(line)
+                if class_pattern.search(cleaned):
+                    return inc_file, idx + 1
+
+    from .sys_utils import get_git_tracked_files  # pylint: disable=import-outside-toplevel
+    ext = os.path.splitext(start_file)[1].lower()
+    tracked_files = get_git_tracked_files()
+    for f in tracked_files:
+        if os.path.splitext(f)[1].lower() == ext and f != start_file:
+            if os.path.exists(f):
+                lines = file_cache.get_lines(f)
+                for idx, line in enumerate(lines):
+                    cleaned = profile.strip_strings_and_comments(line)
+                    if class_pattern.search(cleaned):
+                        return f, idx + 1
+
+    return None, None
+
+
+def resolve_class_member_definition(
+    file_path, class_name, var_name, profile, file_cache, searched_classes=None
+):
+    """Recursively search for var_name in class_name and parent inheritance tree."""
+    if searched_classes is None:
+        searched_classes = set()
+
+    class_key = (file_path, class_name)
+    if class_key in searched_classes:
+        return None
+    searched_classes.add(class_key)
+
+    members = get_class_members(file_path, class_name, profile, file_cache)
+    for name, ln in members:
+        if name == var_name:
+            lines = file_cache.get_lines(file_path)
+            try:
+                rel_path = os.path.relpath(file_path, os.getcwd())
+            except ValueError:
+                rel_path = file_path
+            return {
+                "path": rel_path,
+                "line": ln,
+                "code": lines[ln - 1].strip()
+            }
+
+    parents = get_parent_classes(file_path, class_name, profile, file_cache)
+    for parent in parents:
+        parent_file, _ = find_class_definition(file_path, parent, profile, file_cache)
+        if parent_file:
+            res = resolve_class_member_definition(
+                parent_file, parent, var_name, profile, file_cache, searched_classes
+            )
+            if res:
+                return res
+
+    return None
+
+
+def get_directly_included_files(file_path, profile, file_cache):  # pylint: disable=too-many-branches,too-many-statements
+    """Find files directly imported or included in the source file."""
+    lines = file_cache.get_lines(file_path)
+    includes = []
+    curr_dir = os.path.dirname(file_path)
+
+    for line in lines:
+        cleaned = line.strip()
+        if not cleaned:
+            continue
+
+        if profile.name == 'c_family':
+            m = re.match(r'#\s*include\s*["<]([^">]+)[">]', cleaned)
+            if m:
+                includes.append(m.group(1))
+        elif profile.name == 'python':
+            m1 = re.match(r'^import\s+([A-Za-z0-9_.,\s]+)', cleaned)
+            if m1:
+                for parts in m1.group(1).split(','):
+                    parts = parts.strip().split('.')[0]
+                    includes.append(parts)
+            m2 = re.match(r'^from\s+([A-Za-z0-9_.]+)\s+import', cleaned)
+            if m2:
+                parts = m2.group(1).split('.')[0]
+                includes.append(parts)
+        elif profile.name == 'java':
+            m = re.match(r'^import\s+([A-Za-z0-9_.]+)\s*;', cleaned)
+            if m:
+                parts = m.group(1).split('.')
+                if parts:
+                    includes.append('/'.join(parts))
+        elif profile.name in ('javascript', 'typescript'):
+            m1 = re.match(r'^import\s+.*\s+from\s+["\']([^"\']+)["\']', cleaned)
+            if m1:
+                includes.append(m1.group(1))
+            m2 = re.search(r'\brequire\s*\(\s*["\']([^"\']+)["\']\s*\)', cleaned)
+            if m2:
+                includes.append(m2.group(1))
+        elif profile.name == 'go':
+            m = re.match(r'^import\s+["\']([^"\']+)["\']', cleaned)
+            if m:
+                includes.append(m.group(1))
+        elif profile.name == 'rust':
+            m = re.match(r'^use\s+([A-Za-z0-9_:]+)', cleaned)
+            if m:
+                parts = m.group(1).split('::')[0]
+                includes.append(parts)
+
+    from .sys_utils import get_git_tracked_files  # pylint: disable=import-outside-toplevel
+    resolved_paths = []
+    ext = os.path.splitext(file_path)[1].lower()
+    tracked_files = get_git_tracked_files()
+
+    for inc in includes:
+        rel_candidate = os.path.abspath(os.path.join(curr_dir, inc))
+        if os.path.exists(rel_candidate) and os.path.isfile(rel_candidate):
+            resolved_paths.append(rel_candidate)
+            continue
+        if not inc.endswith(ext):
+            rel_candidate_ext = rel_candidate + ext
+            if os.path.exists(rel_candidate_ext) and os.path.isfile(rel_candidate_ext):
+                resolved_paths.append(rel_candidate_ext)
+                continue
+
+        inc_norm = inc.replace('\\', '/').rstrip('/')
+        for tf in tracked_files:
+            tf_norm = tf.replace('\\', '/')
+            if tf_norm.endswith(inc_norm) or tf_norm.endswith(inc_norm + ext):
+                full_tf = os.path.abspath(tf)
+                if os.path.exists(full_tf):
+                    resolved_paths.append(full_tf)
+                    break
+
+    return resolved_paths
+
+
+def resolve_global_definition(file_path, var_name, profile, file_cache, searched_files=None):
+    """Search globally for var_name in current file, imports, and repo files."""
+    if searched_files is None:
+        searched_files = set()
+
+    file_abs = os.path.abspath(file_path)
+    if file_abs in searched_files:
+        return []
+    searched_files.add(file_abs)
+
+    def search_file_globals(f):
+        if not os.path.exists(f):
+            return None
+        lines = file_cache.get_lines(f)
+        global_scope, _ = build_scopes(f, profile, file_cache)
+        global_lines = get_lines_directly_in_scope(global_scope, lines)
+        for ln in global_lines:
+            line = lines[ln - 1]
+            cleaned = profile.strip_strings_and_comments(line)
+            if is_line_definition_of_var(cleaned, var_name, profile):
+                try:
+                    rel_path = os.path.relpath(f, os.getcwd())
+                except ValueError:
+                    rel_path = f
+                return {
+                    "path": rel_path,
+                    "line": ln,
+                    "code": line.strip()
+                }
+        return None
+
+    res = search_file_globals(file_path)
+    if res:
+        return [res]
+
+    included_files = get_directly_included_files(file_path, profile, file_cache)
+    for inc_file in included_files:
+        res = search_file_globals(inc_file)
+        if res:
+            return [res]
+
+    from .sys_utils import get_git_tracked_files  # pylint: disable=import-outside-toplevel
+    ext = os.path.splitext(file_path)[1].lower()
+    tracked_files = get_git_tracked_files()
+    for f in tracked_files:
+        if os.path.splitext(f)[1].lower() == ext:
+            f_abs = os.path.abspath(f)
+            if f_abs not in searched_files:
+                res = search_file_globals(f_abs)
+                if res:
+                    return [res]
+
+    return []
+
+
+def resolve_variable_definition_regex_fallback(
+    file_path, var_name, line_num, file_cache, profile
+):  # pylint: disable=too-many-branches
+    """Fall back to regex resolution scanning local scopes, class members, and globals."""
+    lines = file_cache.get_lines(file_path)
+    global_scope, all_scopes = build_scopes(file_path, profile, file_cache)
+
+    func_start, _ = extract_function_bounds(file_path, line_num, file_cache=file_cache)
+    func_start_line = func_start + 1 if func_start is not None else 1
+
+    innermost = find_innermost_scope(global_scope, line_num)
+
+    scope_chain = []
+    curr = innermost
+    while curr is not None and curr.start_line >= func_start_line:
+        scope_chain.append(curr)
+        curr = curr.parent
+
+    for scope in scope_chain:
+        direct_lines = get_lines_directly_in_scope(scope, lines)
+        valid_lines = [ln for ln in direct_lines if ln < line_num]
+        for ln in sorted(valid_lines, reverse=True):
+            line = lines[ln - 1]
+            cleaned = profile.strip_strings_and_comments(line)
+            if is_line_definition_of_var(cleaned, var_name, profile):
+                try:
+                    rel_path = os.path.relpath(file_path, os.getcwd())
+                except ValueError:
+                    rel_path = file_path
+                return {
+                    "resolved_type": "local_regex",
+                    "definitions": [{
+                        "path": rel_path,
+                        "line": ln,
+                        "code": line.strip()
+                    }]
+                }
+
+    class_name = None
+    func_header = lines[func_start_line - 1]
+    cpp_match = re.search(r'\b([A-Za-z0-9_]+)::[A-Za-z0-9_]+\s*\(', func_header)
+    if cpp_match:
+        class_name = cpp_match.group(1)
+    else:
+        outermost_func_scope = None
+        for s in all_scopes:
+            if s.start_line == func_start_line:
+                outermost_func_scope = s
+                break
+        if outermost_func_scope and outermost_func_scope.parent:
+            parent_scope = outermost_func_scope.parent
+            parent_header = lines[parent_scope.start_line - 1]
+            class_match = re.search(r'\b(?:class|struct)\s+([A-Za-z0-9_]+)\b', parent_header)
+            if class_match:
+                class_name = class_match.group(1)
+
+    if class_name:
+        res = resolve_class_member_definition(file_path, class_name, var_name, profile, file_cache)
+        if res:
+            return {
+                "resolved_type": "member_regex",
+                "definitions": [res]
+            }
+
+    global_defs = resolve_global_definition(file_path, var_name, profile, file_cache)
+    if global_defs:
+        return {
+            "resolved_type": "global_regex",
+            "definitions": global_defs
+        }
+
+    return {
+        "resolved_type": "none",
+        "definitions": []
+    }

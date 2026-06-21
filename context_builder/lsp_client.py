@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines
 """Module lsp_client provides a minimal Language Server Protocol (LSP) client.
 
 It handles starting language server subprocesses, querying them for references,
@@ -590,6 +591,114 @@ class MinimalLSPClient:
                 )
             return []
 
+    def get_definition(self, file_path, line_num, char_num, timeout) -> list:
+        """Query definition for a symbol at a specific file, line, and column position.
+
+        Args:
+            file_path (str): Path to file.
+            line_num (int): 1-based line index.
+            char_num (int): Column offset index.
+            timeout (float): Query timeout.
+
+        Returns:
+            list: List of definition locations.
+        """
+        timeout = _validate_lsp_timeout(
+            timeout,
+            DEFAULT_LSP_QUERY_TIMEOUT,
+            "lsp_timeout",
+            "--lsp-timeout",
+        )
+        if not self.client or getattr(self.client, "stopped", False):
+            return []
+
+        async def _async_get_def():
+            params = types.DefinitionParams(
+                text_document=types.TextDocumentIdentifier(
+                    uri=Path(file_path).absolute().as_uri()
+                ),
+                position=types.Position(line=line_num - 1, character=char_num),
+            )
+            if hasattr(self.client, "text_document_definition_async"):
+                res = await self.client.text_document_definition_async(params)
+            else:
+                res = await self.client.lsp.send_request_async(  # pylint: disable=no-member
+                    "textDocument/definition", params
+                )
+            return _serialize_locations(res)
+
+        try:
+            fut = asyncio.run_coroutine_threadsafe(_async_get_def(), self.loop)
+            return fut.result(timeout=timeout)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            if "fut" in locals():
+                fut.cancel()
+            if _is_timeout_error(e):
+                warn_once(
+                    "lsp_timeout",
+                    f"LSP query timed out after {timeout} seconds.",
+                )
+            else:
+                warn_once(
+                    "lsp_query_fail",
+                    f"LSP definition query failed ({type(e).__name__}): {e}",
+                )
+            return []
+
+    def get_type_definition(self, file_path, line_num, char_num, timeout) -> list:
+        """Query type definition for a symbol at a specific file, line, and column position.
+
+        Args:
+            file_path (str): Path to file.
+            line_num (int): 1-based line index.
+            char_num (int): Column offset index.
+            timeout (float): Query timeout.
+
+        Returns:
+            list: List of type definition locations.
+        """
+        timeout = _validate_lsp_timeout(
+            timeout,
+            DEFAULT_LSP_QUERY_TIMEOUT,
+            "lsp_timeout",
+            "--lsp-timeout",
+        )
+        if not self.client or getattr(self.client, "stopped", False):
+            return []
+
+        async def _async_get_type_def():
+            params = types.TypeDefinitionParams(
+                text_document=types.TextDocumentIdentifier(
+                    uri=Path(file_path).absolute().as_uri()
+                ),
+                position=types.Position(line=line_num - 1, character=char_num),
+            )
+            if hasattr(self.client, "text_document_type_definition_async"):
+                res = await self.client.text_document_type_definition_async(params)
+            else:
+                res = await self.client.lsp.send_request_async(  # pylint: disable=no-member
+                    "textDocument/typeDefinition", params
+                )
+            return _serialize_locations(res)
+
+        try:
+            fut = asyncio.run_coroutine_threadsafe(_async_get_type_def(), self.loop)
+            return fut.result(timeout=timeout)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            if "fut" in locals():
+                fut.cancel()
+            if _is_timeout_error(e):
+                warn_once(
+                    "lsp_timeout",
+                    f"LSP query timed out after {timeout} seconds.",
+                )
+            else:
+                warn_once(
+                    "lsp_query_fail",
+                    f"LSP type definition query failed ({type(e).__name__}): {e}",
+                )
+            return []
+
     def cleanup(self, force_kill=False):
         """Shutdown the language client and terminate the server subprocess."""
         client = self.client
@@ -997,3 +1106,155 @@ def get_lsp_references(
         }]
 
     return callers
+
+
+def _serialize_locations(res):
+    """Serialize LSP locations (Location, Location[], LocationLink[]) to dict list."""
+    if not res:
+        return []
+
+    if not isinstance(res, (list, tuple)):
+        res = [res]
+
+    serialized = []
+    for item in res:
+        if isinstance(item, dict):
+            serialized.append(item)
+            continue
+
+        uri = getattr(item, "uri", None)
+        rng_obj = getattr(item, "range", None)
+        if uri and rng_obj:
+            start_pos = getattr(rng_obj, "start", None)
+            end_pos = getattr(rng_obj, "end", None)
+            if start_pos and end_pos:
+                start_line = getattr(start_pos, "line", None)
+                start_char = getattr(start_pos, "character", None)
+                end_line = getattr(end_pos, "line", None)
+                end_char = getattr(end_pos, "character", None)
+                if (
+                    start_line is not None
+                    and start_char is not None
+                    and end_line is not None
+                    and end_char is not None
+                ):
+                    serialized.append({
+                        "uri": uri,
+                        "range": {
+                            "start": {
+                                "line": start_line,
+                                "character": start_char,
+                            },
+                            "end": {"line": end_line, "character": end_char},
+                        },
+                    })
+                    continue
+
+        target_uri = (
+            getattr(item, "target_uri", None)
+            or getattr(item, "targetUri", None)
+        )
+        target_range = (
+            getattr(item, "target_range", None)
+            or getattr(item, "targetRange", None)
+        )
+        target_selection_range = (
+            getattr(item, "target_selection_range", None)
+            or getattr(item, "targetSelectionRange", None)
+        )
+        if target_uri:
+            res_dict = {"targetUri": target_uri}
+            rng = target_selection_range or target_range
+            if rng:
+                start_pos = getattr(rng, "start", None)
+                end_pos = getattr(rng, "end", None)
+                if start_pos and end_pos:
+                    start_line = getattr(start_pos, "line", None)
+                    start_char = getattr(start_pos, "character", None)
+                    end_line = getattr(end_pos, "line", None)
+                    end_char = getattr(end_pos, "character", None)
+                    if (
+                        start_line is not None
+                        and start_char is not None
+                        and end_line is not None
+                        and end_char is not None
+                    ):
+                        res_dict["targetSelectionRange"] = {
+                            "start": {
+                                "line": start_line,
+                                "character": start_char,
+                            },
+                            "end": {"line": end_line, "character": end_char},
+                        }
+            serialized.append(res_dict)
+    return serialized
+
+
+def get_lsp_definition(
+    file_path,
+    line_num,
+    char_offset,
+    timeout,
+    init_timeout=DEFAULT_LSP_INIT_TIMEOUT,
+):
+    """Find definition of a symbol using the active LSP.
+
+    Args:
+        file_path (str): File path to query.
+        line_num (int): 1-based line index.
+        char_offset (int): 0-based column offset on that line.
+        timeout (float): Query timeout.
+        init_timeout (float): Language-server initialize timeout.
+
+    Returns:
+        list: List of definition locations, serialized to dictionaries.
+    """
+    if not USE_LSP or line_num <= 0 or char_offset < 0:
+        return []
+
+    ext = os.path.splitext(file_path)[1].lower()
+    profile = get_language_profile(ext)
+    if not profile.lsp_command:
+        return []
+    command = list(profile.lsp_command)
+
+    client = _get_or_create_lsp_client(command, init_timeout=init_timeout)
+    if not client:
+        return []
+
+    return client.get_definition(file_path, line_num, char_offset, timeout=timeout)
+
+
+def get_lsp_type_definition(
+    file_path,
+    line_num,
+    char_offset,
+    timeout,
+    init_timeout=DEFAULT_LSP_INIT_TIMEOUT,
+):
+    """Find type definition of a symbol using the active LSP.
+
+    Args:
+        file_path (str): File path to query.
+        line_num (int): 1-based line index.
+        char_offset (int): 0-based column offset on that line.
+        timeout (float): Query timeout.
+        init_timeout (float): Language-server initialize timeout.
+
+    Returns:
+        list: List of type definition locations, serialized to dictionaries.
+    """
+    if not USE_LSP or line_num <= 0 or char_offset < 0:
+        return []
+
+    ext = os.path.splitext(file_path)[1].lower()
+    profile = get_language_profile(ext)
+    if not profile.lsp_command:
+        return []
+    command = list(profile.lsp_command)
+
+    client = _get_or_create_lsp_client(command, init_timeout=init_timeout)
+    if not client:
+        return []
+
+    return client.get_type_definition(file_path, line_num, char_offset, timeout=timeout)

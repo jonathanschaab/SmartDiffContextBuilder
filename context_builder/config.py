@@ -196,6 +196,7 @@ def reset_config():
         'path_case_rules': DEFAULT_PATH_CASE_RULES.copy(),
         'caller_depth': 1,
         'callee_depth': 1,
+        'data_depth': 1,
         'commit_range': None,
         'build_directories': [
             "build", "out", "target", "cmake-build-debug", "cmake-build-release"

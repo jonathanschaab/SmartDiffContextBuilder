@@ -5,11 +5,14 @@ modified files and tracing callers/callees.
 """
 
 import os
+from collections import deque
 from .ast_engine import (
     AST_ENGINE,
     extract_callees,
     extract_function_bounds,
+    extract_identifiers_with_positions,
     find_callee_definition,
+    resolve_variable_definition,
     split_massive_block_ast,
     trace_lexical_dependencies_ast,
     trace_lexical_dependencies_regex,
@@ -243,3 +246,62 @@ class CallGraphTracer:
                     self._process_single_callee(
                         callee_name, depth, processed_callee_spans, callee_queue
                     )
+
+    def _enqueue_identifiers(self, file_path, line_numbers, queue, processed_vars, depth):
+        """Extract identifiers from lines in a file and enqueue them for tracing."""
+        pos_ids = extract_identifiers_with_positions(file_path, line_numbers, self.file_cache)
+        for var_name, ln, char_off in pos_ids:
+            var_key = (file_path, var_name, ln, char_off)
+            if var_key not in processed_vars:
+                processed_vars.add(var_key)
+                queue.append((file_path, var_name, ln, char_off, depth))
+
+    def trace_data_flow(self, diff_files_lines):
+        """Trace data flow / variable definitions recursively from modified diff lines."""
+        data_depth = self._arg_or_default("data_depth", 1)
+        if data_depth <= 0:
+            return
+
+        queue = deque()
+        processed_vars = set()  # set of (file_path, var_name, line_num, char_offset)
+        processed_defs = set()  # set of (path, line) to avoid duplicate resolution output
+
+        # 1. Initialize queue with identifiers from modified diff lines
+        for file_path, line_numbers in diff_files_lines.items():
+            self._enqueue_identifiers(file_path, line_numbers, queue, processed_vars, 0)
+
+        # 2. BFS queue traversal
+        lsp_timeout = self._arg_or_default("lsp_timeout", DEFAULT_LSP_QUERY_TIMEOUT)
+
+        while queue:
+            file_path, var_name, line_num, char_offset, depth = queue.popleft()
+            if depth >= data_depth:
+                continue
+
+            res = resolve_variable_definition(
+                file_path, var_name, line_num, char_offset,
+                file_cache=self.file_cache, timeout=lsp_timeout
+            )
+            for d in res.get("definitions", []):
+                def_path = d["path"]
+                def_line = d["line"]
+                def_code = d["code"]
+
+                abs_def_path = os.path.abspath(def_path)
+                def_key = (abs_def_path, def_line)
+                if def_key in processed_defs:
+                    continue
+                processed_defs.add(def_key)
+
+                try:
+                    rel_path = os.path.relpath(abs_def_path, os.getcwd())
+                except ValueError:
+                    rel_path = abs_def_path
+                self.vm.add_data_state(rel_path, def_line, def_code)
+
+                if depth + 1 >= data_depth or not os.path.exists(abs_def_path):
+                    continue
+
+                self._enqueue_identifiers(
+                    abs_def_path, [def_line], queue, processed_vars, depth + 1
+                )

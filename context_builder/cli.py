@@ -353,6 +353,12 @@ def run_scan(args, start_ref=None, end_ref=None, output_dir=".", repo_root=None)
         processed_spans, vm, queue, callee_queue, all_repo_files
     )
 
+    diff_files_lines = {}
+    for file_path in diff_files:
+        line_numbers = _extract_line_numbers_from_diff(file_path, start_ref, end_ref)
+        if line_numbers and os.path.exists(file_path):
+            diff_files_lines[file_path] = line_numbers
+
     tracer = CallGraphTracer(
         file_cache=file_cache,
         all_repo_files=all_repo_files,
@@ -362,6 +368,7 @@ def run_scan(args, start_ref=None, end_ref=None, output_dir=".", repo_root=None)
         args=args,
     )
 
+    tracer.trace_data_flow(diff_files_lines)
     tracer.trace_callers(queue, processed_spans)
     tracer.trace_callees(callee_queue, processed_spans)
 
@@ -475,6 +482,7 @@ def _merge_cli_mappings(args, active_overrides):
         "skip_macro_expansion": "skip_macro_expansion",
         "caller_depth": "caller_depth",
         "callee_depth": "callee_depth",
+        "data_depth": "data_depth",
         "commit_range": "commit_range",
         "func_decl_pattern": "func_decl_pattern",
         "def_pattern_template": "def_pattern_template",
@@ -828,7 +836,7 @@ def _run_commit_range_worktree(args, commit_range):
         _cleanup_temp_worktree(temp_worktree_dir, original_cwd)
 
 
-def main():
+def main():  # pylint: disable=too-many-statements
     """Main entry point for CLI invocation of SmartDiffContextBuilder."""
     parser = argparse.ArgumentParser(
         description="Compile context-aware git diff tokens optimized for LLMs."
@@ -853,6 +861,7 @@ def main():
     parser.add_argument("--skip-macro-expansion", action="store_true", default=None)
     parser.add_argument("--caller-depth", type=int, default=None)
     parser.add_argument("--callee-depth", type=int, default=None)
+    parser.add_argument("--data-depth", type=int, default=None)
     parser.add_argument(
         "--commit-range",
         type=str,

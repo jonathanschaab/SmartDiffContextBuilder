@@ -609,3 +609,48 @@ class TestCallGraphTracer(unittest.TestCase):
         tracer.trace_callees(queue, set())
 
         self.assertEqual(queue, deque())
+
+    @patch("context_builder.graph_tracer.extract_identifiers_with_positions")
+    @patch("context_builder.graph_tracer.resolve_variable_definition")
+    @patch("os.path.exists", return_value=True)
+    def test_trace_data_flow_basic(self, mock_exists, mock_resolve, mock_extract):
+        from unittest.mock import call
+
+        # Setup mock returns
+        mock_extract.side_effect = [
+            [("var_a", 10, 5)],  # Initial diff file identifiers
+            [("var_b", 20, 8)],  # Definition file identifiers (child)
+        ]
+
+        mock_resolve.side_effect = [
+            {"definitions": [{"path": "file_b.py", "line": 20, "code": "var_b = 2"}]},
+            {"definitions": [{"path": "file_c.py", "line": 30, "code": "var_c = 3"}]},
+        ]
+
+        vm = MagicMock()
+        vm.data_states = []
+
+        args = SimpleNamespace(data_depth=2, lsp_timeout=5.0)
+        tracer = CallGraphTracer(MagicMock(), [], set(), {}, vm, args)
+
+        diff_files_lines = {"file_a.py": [10]}
+        tracer.trace_data_flow(diff_files_lines)
+
+        vm.add_data_state.assert_has_calls([
+            call("file_b.py", 20, "var_b = 2"),
+            call("file_c.py", 30, "var_c = 3")
+        ])
+
+    @patch("context_builder.graph_tracer.extract_identifiers_with_positions")
+    @patch("context_builder.graph_tracer.resolve_variable_definition")
+    @patch("os.path.exists", return_value=True)
+    def test_trace_data_flow_zero_depth(self, mock_exists, mock_resolve, mock_extract):
+        vm = MagicMock()
+        args = SimpleNamespace(data_depth=0)
+        tracer = CallGraphTracer(MagicMock(), [], set(), {}, vm, args)
+
+        diff_files_lines = {"file_a.py": [10]}
+        tracer.trace_data_flow(diff_files_lines)
+
+        mock_extract.assert_not_called()
+        mock_resolve.assert_not_called()

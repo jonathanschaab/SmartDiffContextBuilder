@@ -1,3 +1,4 @@
+# pylint: disable=cyclic-import
 """Language profiles used by shared repository analysis."""
 
 from .registry import get_language_profile
