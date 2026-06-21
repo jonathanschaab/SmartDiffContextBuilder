@@ -825,6 +825,13 @@ def _get_or_create_lsp_client(
     return LSP_INSTANCES.get(instance_key)
 
 
+def _count_parts(p):
+    """Count components in a normalized relative path using system path separator."""
+    if not p or p == ".":
+        return 0
+    return len(p.split(os.sep))
+
+
 def _sort_references_by_closeness(refs, target_file_path):
     """Sort a list of LSP reference objects to prioritize those close to the target file.
 
@@ -876,12 +883,7 @@ def _sort_references_by_closeness(refs, target_file_path):
                 rel_target = os.path.relpath(target_dir, common)
                 rel_ref = os.path.relpath(ref_dir, common)
 
-                def count_parts(p):
-                    if not p or p == ".":
-                        return 0
-                    return len(Path(p).parts)
-
-                dist = count_parts(rel_target) + count_parts(rel_ref)
+                dist = _count_parts(rel_target) + _count_parts(rel_ref)
                 res = (2, dist)
             except ValueError:
                 # Different drives on Windows
