@@ -342,8 +342,10 @@ class TestAstEngine(unittest.TestCase):
         lead_b = r'\b'
         escaped_name = re.escape(func_name)
         pattern = re.compile(
-            r'^\s*(?:[A-Za-z0-9_<>:]+(?:\s+|[*&]+))*[\s*&]*'
-            r'(?:[A-Za-z0-9_<>:]+::)?' + lead_b + escaped_name + r'\s*\('
+            r'^\s*(?:(?:[A-Za-z0-9_<>,]+(?:::[A-Za-z0-9_<>,]+)*)'
+            r'(?:\s+|[*&]+))*[\s*&]*'
+            r'(?:(?:[A-Za-z0-9_<>,]+(?:::[A-Za-z0-9_<>,]+)*)::)?'
+            + lead_b + escaped_name + r'\s*\('
         )
 
         # 1. Test long sequence of trailing spaces
@@ -889,6 +891,31 @@ class TestAstEngine(unittest.TestCase):
         path, line = find_callee_definition("my_multiline_func", [file_path], file_cache=self.cache)
         self.assertEqual(path, file_path)
         self.assertEqual(line, 6)
+
+    def test_find_callee_definition_cpp_template_return_types(self):
+        # Verify that we can find C++ definitions that return multi-argument templates,
+        # and support template class qualifiers with commas.
+        code = (
+            "std::map<int, std::string> get_map() {\n"
+            "}\n"
+            "std::pair<int, int> MyClass<T, U>::get_pair() {\n"
+            "}\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "templates.cpp")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        self.cache.get_content(file_path)
+
+        # 1. Test standard function returning multi-argument template
+        path, line = find_callee_definition("get_map", [file_path], file_cache=self.cache)
+        self.assertEqual(path, file_path)
+        self.assertEqual(line, 1)
+
+        # 2. Test class member function returning multi-argument template in template class
+        path, line = find_callee_definition("get_pair", [file_path], file_cache=self.cache)
+        self.assertEqual(path, file_path)
+        self.assertEqual(line, 3)
 
     def test_trace_lexical_dependencies_regex_excludes_c_def(self):
         # Verify that C-style definitions matched by def_cpp_pattern are excluded,

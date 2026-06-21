@@ -609,6 +609,12 @@ class TestLanguageProfiles(unittest.TestCase):
         self.assertTrue(macro_prefix_pattern.search(
             "UFUNCTION(BlueprintCallable) DEPRECATED(5.0) void myTarget()"
         ))
+        self.assertTrue(macro_prefix_pattern.search(
+            "UFUNCTION(BlueprintCallable) std::map<int, std::string> myTarget()"
+        ))
+        self.assertTrue(macro_prefix_pattern.search(
+            "UFUNCTION(BlueprintCallable) std::pair<int, int> MyClass<T, U>::myTarget()"
+        ))
         self.assertFalse(macro_prefix_pattern.search("void myTarget()"))
         self.assertFalse(macro_prefix_pattern.search(
             "UFUNCTION(BlueprintCallable) void otherFunc()"
