@@ -716,3 +716,101 @@ def find_callee_definition(callee_name, all_repo_files, file_cache=None):
             if is_match:
                 return file_path, idx + 1
     return None, None
+
+
+def extract_identifiers_ast(file_path, line_numbers, file_cache=None):
+    """Query Tree-sitter for raw (identifier) nodes within the modified diff lines.
+
+    Filter out any node that is a child of a call_expression or function_declarator.
+    """
+    if file_cache is None:
+        file_cache = get_global_cache()
+    ext = os.path.splitext(file_path)[1].lower()
+    if not AST_ENGINE.is_supported(ext):
+        return set()
+
+    source_bytes = file_cache.get_bytes(file_path)
+    if not source_bytes:
+        return set()
+
+    try:
+        tree = AST_ENGINE.parsers[ext].parse(source_bytes)
+    except Exception:  # pylint: disable=broad-exception-caught
+        return set()
+
+    identifiers = set()
+    line_set = set(line_numbers)
+
+    def walk(node):
+        if node.type == 'identifier':
+            node_line = node.start_point[0] + 1
+            if node_line in line_set:
+                curr = node.parent
+                is_invalid = False
+                while curr:
+                    if curr.type in ('call_expression', 'function_declarator'):
+                        is_invalid = True
+                        break
+                    curr = curr.parent
+                if not is_invalid:
+                    text = node.text
+                    if isinstance(text, bytes):
+                        text = text.decode('utf-8', errors='ignore')
+                    if text:
+                        identifiers.add(text)
+
+        for child in node.children:
+            walk(child)
+
+    walk(tree.root_node)
+    return identifiers
+
+
+def extract_identifiers_regex(file_path, line_numbers, file_cache=None):
+    """Extract standalone word boundaries from modified diff lines using regex.
+
+    Filter out any word followed immediately by ( or ::, and filter against
+    a strict list of language keywords (if, return, while, auto, int).
+    """
+    if file_cache is None:
+        file_cache = get_global_cache()
+    lines = file_cache.get_lines(file_path)
+    if not lines:
+        return set()
+
+    profile = get_language_profile(file_path)
+    identifiers = set()
+    keywords = {'if', 'return', 'while', 'auto', 'int'}
+    line_set = set(line_numbers)
+
+    word_pattern = re.compile(r'\b[A-Za-z_][A-Za-z0-9_]*\b')
+
+    for line_num in line_set:
+        if 1 <= line_num <= len(lines):
+            line_content = lines[line_num - 1]
+            line_clean = profile.strip_strings_and_comments(line_content)
+            for match in word_pattern.finditer(line_clean):
+                word = match.group(0)
+                if word in keywords:
+                    continue
+                suffix = line_clean[match.end():]
+                suffix_stripped = suffix.lstrip()
+                if suffix_stripped.startswith('(') or suffix_stripped.startswith('::'):
+                    continue
+                identifiers.add(word)
+
+    return identifiers
+
+
+def extract_identifiers(file_path, line_numbers, file_cache=None):
+    """Extract list of identifiers within line numbers, falling back from AST to regex."""
+    if file_cache is None:
+        file_cache = get_global_cache()
+    ext = os.path.splitext(file_path)[1].lower()
+    if AST_ENGINE.is_supported(ext):
+        try:
+            return extract_identifiers_ast(file_path, line_numbers, file_cache)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            print(f"\n[SmartDiffContextBuilder Warning] AST identifier extraction failed: {e}. "
+                  "Falling back to regex-based identifier extraction.")
+    return extract_identifiers_regex(file_path, line_numbers, file_cache)

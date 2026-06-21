@@ -2124,3 +2124,103 @@ class TestAstEngine(unittest.TestCase):
         start, end = extract_function_bounds_regex(file_path, 1, self.cache)
         self.assertEqual(start, 0)
         self.assertEqual(end, 6)
+
+    def test_extract_identifiers_regex(self):
+        from context_builder.ast_engine import extract_identifiers_regex
+
+        code = (
+            "int x = 42;\n"
+            "auto y = 100;\n"
+            "if (x > y) {\n"
+            "    my_func(x, y);\n"
+            "    std::cout << x;\n"
+            "    while (true) { return x; }\n"
+            "}\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "regex_vars.cpp")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        self.cache.get_content(file_path)
+
+        ids_line_1 = extract_identifiers_regex(file_path, [1], file_cache=self.cache)
+        self.assertEqual(ids_line_1, {"x"})
+
+        ids_line_2 = extract_identifiers_regex(file_path, [2], file_cache=self.cache)
+        self.assertEqual(ids_line_2, {"y"})
+
+        ids_line_3 = extract_identifiers_regex(file_path, [3], file_cache=self.cache)
+        self.assertEqual(ids_line_3, {"x", "y"})
+
+        ids_line_4 = extract_identifiers_regex(file_path, [4], file_cache=self.cache)
+        self.assertEqual(ids_line_4, {"x", "y"})
+
+        ids_line_5 = extract_identifiers_regex(file_path, [5], file_cache=self.cache)
+        self.assertEqual(ids_line_5, {"cout", "x"})
+
+        ids_line_6 = extract_identifiers_regex(file_path, [6], file_cache=self.cache)
+        self.assertEqual(ids_line_6, {"true", "x"})
+
+        ids_multi = extract_identifiers_regex(file_path, [1, 2], file_cache=self.cache)
+        self.assertEqual(ids_multi, {"x", "y"})
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_extract_identifiers_ast(self, mock_engine):
+        from context_builder.ast_engine import extract_identifiers_ast
+
+        class FakeNode:
+            def __init__(self, node_type, start_line, text=None, children=None, parent=None):
+                self.type = node_type
+                self.start_point = (start_line - 1, 0)
+                self.text = text.encode('utf-8') if isinstance(text, str) else text
+                self.children = children or []
+                self.parent = parent
+                for child in self.children:
+                    child.parent = self
+
+        var_node = FakeNode("identifier", 2, "my_var")
+        call_id = FakeNode("identifier", 3, "func_call")
+        call_expr = FakeNode("call_expression", 3, children=[call_id])
+        decl_id = FakeNode("identifier", 4, "my_func")
+        func_decl = FakeNode("function_declarator", 4, children=[decl_id])
+
+        root = FakeNode("module", 1, children=[var_node, call_expr, func_decl])
+
+        parser = MagicMock()
+        parser.parse.return_value = SimpleNamespace(root_node=root)
+        mock_engine.parsers = {".py": parser}
+        mock_engine.is_supported.return_value = True
+
+        cache = MagicMock()
+        cache.get_bytes.return_value = b"some code"
+
+        res = extract_identifiers_ast("file.py", [2, 3, 4], file_cache=cache)
+        self.assertEqual(res, {"my_var"})
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_extract_identifiers_unified(self, mock_engine):
+        from context_builder.ast_engine import extract_identifiers
+
+        mock_engine.is_supported.return_value = True
+
+        with patch("context_builder.ast_engine.extract_identifiers_ast") as mock_ast:
+            mock_ast.return_value = {"ast_var"}
+            res = extract_identifiers("file.py", [1], file_cache=self.cache)
+            self.assertEqual(res, {"ast_var"})
+            mock_ast.assert_called_once()
+
+        with patch("context_builder.ast_engine.extract_identifiers_ast") as mock_ast, \
+             patch("context_builder.ast_engine.extract_identifiers_regex") as mock_regex:
+            mock_ast.side_effect = RuntimeError("AST parsing error")
+            mock_regex.return_value = {"regex_var"}
+
+            res = extract_identifiers("file.py", [1], file_cache=self.cache)
+            self.assertEqual(res, {"regex_var"})
+            mock_regex.assert_called_once()
+
+        mock_engine.is_supported.return_value = False
+        with patch("context_builder.ast_engine.extract_identifiers_regex") as mock_regex:
+            mock_regex.return_value = {"regex_var_only"}
+            res = extract_identifiers("file.py", [1], file_cache=self.cache)
+            self.assertEqual(res, {"regex_var_only"})
+            mock_regex.assert_called_once()
