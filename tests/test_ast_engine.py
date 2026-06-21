@@ -2565,6 +2565,45 @@ class TestAstEngine(unittest.TestCase):
                 if os.path.exists(other_module_path):
                     os.remove(other_module_path)
 
+    def test_get_directly_included_files_nested_python_imports(self):
+        from context_builder.ast_engine import get_directly_included_files
+        from context_builder.languages.python import PYTHON
+        from context_builder.cache import LRUFileCache
+
+        cache = LRUFileCache(capacity=5)
+        # Test code containing nested absolute and relative Python imports
+        py_code = (
+            "import my_package.subpackage.my_module\n"
+            "from my_package.subpackage.other_module import x\n"
+            "from .sub.nested_module import y\n"
+        )
+        py_file = os.path.join(self.temp_dir.name, "nested_import_test.py")
+        with open(py_file, "w", encoding="utf-8") as f:
+            f.write(py_code)
+
+        # Set up directories and files simulating the tracked package structure
+        my_package_dir = os.path.join(self.temp_dir.name, "my_package", "subpackage")
+        os.makedirs(my_package_dir, exist_ok=True)
+        sub_dir = os.path.join(self.temp_dir.name, "sub")
+        os.makedirs(sub_dir, exist_ok=True)
+
+        my_module_path = os.path.join(my_package_dir, "my_module.py")
+        other_module_path = os.path.join(my_package_dir, "other_module.py")
+        nested_module_path = os.path.join(sub_dir, "nested_module.py")
+
+        for path in (my_module_path, other_module_path, nested_module_path):
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("")
+
+        # Mock get_git_tracked_files to include these paths
+        with patch("context_builder.sys_utils.get_git_tracked_files") as mock_tracked:
+            mock_tracked.return_value = [my_module_path, other_module_path, nested_module_path]
+            res = get_directly_included_files(py_file, PYTHON, cache)
+
+        self.assertIn(os.path.abspath(my_module_path), res)
+        self.assertIn(os.path.abspath(other_module_path), res)
+        self.assertIn(os.path.abspath(nested_module_path), res)
+
     def test_resolve_variable_definition_regex_fallback_empty_file(self):
         from context_builder.ast_engine import resolve_variable_definition_regex_fallback
         from context_builder.languages.python import PYTHON

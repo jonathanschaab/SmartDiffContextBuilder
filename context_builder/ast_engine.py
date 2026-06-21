@@ -1415,7 +1415,7 @@ def get_directly_included_files(file_path, profile, file_cache):  # pylint: disa
             m1 = re.match(r'^import\s+([A-Za-z0-9_.,\s]+)', cleaned)
             if m1:
                 for parts in m1.group(1).split(','):
-                    parts = parts.strip().split('.')[0]
+                    parts = parts.strip().replace('.', '/')
                     includes.append(parts)
             m2 = re.match(r'^from\s+([A-Za-z0-9_.]+)\s+import', cleaned)
             if m2:
@@ -1424,12 +1424,12 @@ def get_directly_included_files(file_path, profile, file_cache):  # pylint: disa
                 if dots_match:
                     dots = dots_match.group(1)
                     remainder_raw = raw_module[len(dots):]
-                    remainder = remainder_raw.split('.')[0] if remainder_raw else ''
+                    remainder = remainder_raw.replace('.', '/') if remainder_raw else ''
                     if remainder:
                         climb = "../" * (len(dots) - 1) if len(dots) > 1 else ""
                         includes.append(climb + remainder)
                 else:
-                    parts = raw_module.split('.')[0]
+                    parts = raw_module.replace('.', '/')
                     if parts:
                         includes.append(parts)
         elif profile.name == 'java':
