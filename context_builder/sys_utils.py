@@ -566,16 +566,12 @@ def is_in_repo(file_path):  # pylint: disable=too-many-branches
         dir_components = components if is_dir else components[:-1]
 
         ignored_dirs_config = CONFIG.get("ignored_directories")
-        config_key = (
-            (tuple(ignored_dirs_config), case_sensitive)
-            if isinstance(ignored_dirs_config, (list, tuple, set))
-            else (None, case_sensitive)
-        )
+        config_key = (id(ignored_dirs_config), case_sensitive)
 
         if _IGNORED_DIRS_CACHE[0] == config_key:
             ignored_dirs = _IGNORED_DIRS_CACHE[1]
         else:
-            if config_key[0] is not None:
+            if ignored_dirs_config is not None:
                 if not case_sensitive:
                     ignored_dirs = {str(d).lower() for d in ignored_dirs_config}
                 else:
