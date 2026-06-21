@@ -27,7 +27,16 @@ _IGNORED_DIRS = {
     ".gradle", # Java / Kotlin caches
 }
 
-_IGNORED_DIRS_CACHE = [None, None, None]
+class _IgnoredDirsCache:  # pylint: disable=too-few-public-methods
+    """Cache container for ignored directories filtering."""
+
+    def __init__(self):
+        self.config_copy = None
+        self.case_sensitive = None
+        self.ignored_dirs = None
+
+
+_IGNORED_DIRS_CACHE = _IgnoredDirsCache()
 
 
 def warn_once(key, message):
@@ -568,31 +577,31 @@ def is_in_repo(file_path):  # pylint: disable=too-many-branches
         ignored_dirs_config = CONFIG.get("ignored_directories")
 
         if (
-            _IGNORED_DIRS_CACHE[0] == ignored_dirs_config
-            and _IGNORED_DIRS_CACHE[1] == case_sensitive
+            _IGNORED_DIRS_CACHE.config_copy == ignored_dirs_config
+            and _IGNORED_DIRS_CACHE.case_sensitive == case_sensitive
         ):
-            ignored_dirs = _IGNORED_DIRS_CACHE[2]
+            ignored_dirs = _IGNORED_DIRS_CACHE.ignored_dirs
         else:
             if ignored_dirs_config is not None:
                 # Copy the list/tuple/set to detect in-place mutations safely
                 if isinstance(ignored_dirs_config, list):
-                    _IGNORED_DIRS_CACHE[0] = list(ignored_dirs_config)
+                    _IGNORED_DIRS_CACHE.config_copy = list(ignored_dirs_config)
                 elif isinstance(ignored_dirs_config, set):
-                    _IGNORED_DIRS_CACHE[0] = set(ignored_dirs_config)
+                    _IGNORED_DIRS_CACHE.config_copy = set(ignored_dirs_config)
                 elif isinstance(ignored_dirs_config, tuple):
-                    _IGNORED_DIRS_CACHE[0] = tuple(ignored_dirs_config)
+                    _IGNORED_DIRS_CACHE.config_copy = tuple(ignored_dirs_config)
                 else:
-                    _IGNORED_DIRS_CACHE[0] = ignored_dirs_config
+                    _IGNORED_DIRS_CACHE.config_copy = ignored_dirs_config
 
                 if not case_sensitive:
                     ignored_dirs = {str(d).lower() for d in ignored_dirs_config}
                 else:
                     ignored_dirs = {str(d) for d in ignored_dirs_config}
             else:
-                _IGNORED_DIRS_CACHE[0] = None
+                _IGNORED_DIRS_CACHE.config_copy = None
                 ignored_dirs = _IGNORED_DIRS
-            _IGNORED_DIRS_CACHE[1] = case_sensitive
-            _IGNORED_DIRS_CACHE[2] = ignored_dirs
+            _IGNORED_DIRS_CACHE.case_sensitive = case_sensitive
+            _IGNORED_DIRS_CACHE.ignored_dirs = ignored_dirs
 
         if any(c in ignored_dirs for c in dir_components):
             return False
