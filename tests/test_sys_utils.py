@@ -275,9 +275,10 @@ class TestSysUtils(unittest.TestCase):
     def test_is_in_repo_with_system_path_in_root(self):
         from context_builder.sys_utils import is_in_repo
         with patch("os.path.abspath") as mock_abspath, \
-             patch("os.path.exists", return_value=True), \
+             patch("os.stat") as mock_stat, \
              patch("context_builder.path_utils.detect_root_case_sensitivity", return_value=True):
 
+            mock_stat.return_value.st_mode = 32768  # Regular file mode
             def abspath_side_effect(path):
                 if path == ".":
                     return os.path.normpath("/var/lib/jenkins/workspace/project")
@@ -299,9 +300,10 @@ class TestSysUtils(unittest.TestCase):
     def test_is_in_repo_case_insensitive_mismatch(self):
         from context_builder.sys_utils import is_in_repo
         with patch("os.path.abspath") as mock_abspath, \
-             patch("os.path.exists", return_value=True), \
+             patch("os.stat") as mock_stat, \
              patch("context_builder.path_utils.detect_root_case_sensitivity", return_value=False):
 
+            mock_stat.return_value.st_mode = 32768  # Regular file mode
             def abspath_side_effect(path):
                 if path == ".":
                     return os.path.normpath("/Users/build/project")

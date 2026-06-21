@@ -1,6 +1,7 @@
 """Module sys_utils provides system utility functions for running commands and filtering files."""
 
 import os
+import stat
 import subprocess
 import sys
 import time
@@ -539,7 +540,10 @@ def is_in_repo(file_path):
         if not path_is_within_root(abs_path, repo_root, case_sensitive=case_sensitive):
             return False
 
-        if not os.path.exists(file_path):
+        try:
+            st = os.stat(file_path)
+            is_dir = stat.S_ISDIR(st.st_mode)
+        except OSError:
             return False
 
         # Check exact directory component matches relative to the repository root.
@@ -550,7 +554,7 @@ def is_in_repo(file_path):
             rel_path = os.path.relpath(abs_path, repo_root)
         normalized_rel = normalize_for_path_match(rel_path)
         components = normalized_rel.split("/")
-        dir_components = components if os.path.isdir(abs_path) else components[:-1]
+        dir_components = components if is_dir else components[:-1]
         if any(c in _IGNORED_DIRS for c in dir_components):
             return False
 
