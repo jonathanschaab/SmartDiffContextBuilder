@@ -1526,6 +1526,7 @@ class TestLspClient(unittest.TestCase):
         ref_sub_dir = make_ref(os.path.join(base_dir, "src", "core", "nested", "foo.py"))
         ref_distant_dir = make_ref(os.path.join(base_dir, "tests", "test_utils.py"))
         ref_invalid = {"uri": "invalid_uri"}
+        ref_empty_path = {"uri": "file://"}
 
         # Shuffle them
         refs = [
@@ -1534,6 +1535,7 @@ class TestLspClient(unittest.TestCase):
             ref_same_file,
             ref_invalid,
             ref_same_dir,
+            ref_empty_path,
         ]
 
         _sort_references_by_closeness(refs, target_file)
@@ -1543,6 +1545,7 @@ class TestLspClient(unittest.TestCase):
         self.assertEqual(refs[2], ref_sub_dir)
         self.assertEqual(refs[3], ref_distant_dir)
         self.assertEqual(refs[4], ref_invalid)
+        self.assertEqual(refs[5], ref_empty_path)
 
     @patch("context_builder.lsp_client.USE_LSP", True)
     @patch("context_builder.lsp_client.LSP_INSTANCES")

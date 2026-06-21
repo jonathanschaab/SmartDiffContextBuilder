@@ -862,7 +862,7 @@ def _sort_references_by_closeness(refs, target_file_path):
 
         try:
             parsed = urllib.parse.urlparse(ref_uri)
-            if parsed.scheme != "file":
+            if parsed.scheme != "file" or not parsed.path:
                 distance_cache[ref_uri] = (4, 0)
                 return (4, 0)
             ref_path = url2pathname(parsed.path)
