@@ -183,6 +183,7 @@ class TestSysUtils(unittest.TestCase):
                 self.assertTrue(is_in_repo(in_repo_file))
                 self.assertFalse(is_in_repo("nonexistent.py"))
                 self.assertFalse(is_in_repo(ignored_file))
+
                 # Check external file
                 self.assertFalse(is_in_repo("/usr/include/stdio.h"))
 
@@ -202,6 +203,118 @@ class TestSysUtils(unittest.TestCase):
                         shutil.rmtree(sibling_dir)
                 except Exception:
                     pass
+
+    def test_is_in_repo_new_ignores(self):
+        import tempfile
+        import os
+        from context_builder.sys_utils import is_in_repo
+
+        old_cwd = os.getcwd()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.chdir(temp_dir)
+            try:
+                # Check newly added ignored paths
+                for ignore_name in ["venv", ".venv", "env", "build", "out"]:
+                    p_dir = os.path.join(temp_dir, ignore_name)
+                    os.makedirs(p_dir, exist_ok=True)
+                    p_file = os.path.join(p_dir, "some_file.py")
+                    with open(p_file, "w") as f:
+                        f.write("pass")
+                    self.assertFalse(
+                        is_in_repo(p_file),
+                        f"{ignore_name} should be ignored"
+                    )
+
+                # Check that partial/substring matches are NOT ignored
+                safe_names = [
+                    "checkout",
+                    "rebuild",
+                    "my_env",
+                    "my_venv",
+                    "about",
+                    "without",
+                    "timeout",
+                ]
+                for safe_name in safe_names:
+                    p_dir = os.path.join(temp_dir, safe_name)
+                    os.makedirs(p_dir, exist_ok=True)
+                    p_file = os.path.join(p_dir, "some_file.py")
+                    with open(p_file, "w") as f:
+                        f.write("pass")
+                    self.assertTrue(
+                        is_in_repo(p_file),
+                        f"{safe_name} should NOT be ignored"
+                    )
+
+                # Check that a library directory inside the workspace is NOT ignored
+                lib_dir = os.path.join(temp_dir, "lib")
+                os.makedirs(lib_dir, exist_ok=True)
+                lib_file = os.path.join(lib_dir, "helper.py")
+                with open(lib_file, "w") as f:
+                    f.write("pass")
+                self.assertTrue(
+                    is_in_repo(lib_file),
+                    "lib directory inside workspace should NOT be ignored"
+                )
+                # Check that a file whose name matches an ignored directory name
+                # (e.g. a script named 'build' or 'env') is NOT ignored if it is indeed
+                # a file, not a directory.
+                sub_dir = os.path.join(temp_dir, "safe_subdir")
+                os.makedirs(sub_dir, exist_ok=True)
+                for file_name in ["build", "env"]:
+                    p_file = os.path.join(sub_dir, file_name)
+                    with open(p_file, "w") as f:
+                        f.write("pass")
+                    self.assertTrue(
+                        is_in_repo(p_file),
+                        f"file named '{file_name}' should NOT be ignored"
+                    )
+            finally:
+                os.chdir(old_cwd)
+
+    def test_is_in_repo_with_system_path_in_root(self):
+        from context_builder.sys_utils import is_in_repo
+        with patch("os.path.abspath") as mock_abspath, \
+             patch("os.stat") as mock_stat, \
+             patch("context_builder.path_utils.detect_root_case_sensitivity", return_value=True):
+
+            mock_stat.return_value.st_mode = 32768  # Regular file mode
+            def abspath_side_effect(path):
+                if path == ".":
+                    return os.path.normpath("/var/lib/jenkins/workspace/project")
+                target_path = os.path.normpath(
+                    "/var/lib/jenkins/workspace/project/src/lib/helper.py"
+                )
+                if path in {
+                    target_path,
+                    "src/lib/helper.py",
+                    os.path.normpath("src/lib/helper.py"),
+                }:
+                    return target_path
+                return os.path.normpath(path)
+
+            mock_abspath.side_effect = abspath_side_effect
+
+            self.assertTrue(is_in_repo("src/lib/helper.py"))
+
+    def test_is_in_repo_case_insensitive_mismatch(self):
+        from context_builder.sys_utils import is_in_repo
+        with patch("os.path.abspath") as mock_abspath, \
+             patch("os.stat") as mock_stat, \
+             patch("context_builder.path_utils.detect_root_case_sensitivity", return_value=False):
+
+            mock_stat.return_value.st_mode = 32768  # Regular file mode
+            def abspath_side_effect(path):
+                if path == ".":
+                    return os.path.normpath("/Users/build/project")
+                target_path = os.path.normpath("/users/build/project/src/main.py")
+                if path in {target_path, "src/main.py", os.path.normpath("src/main.py")}:
+                    return target_path
+                return os.path.normpath(path)
+
+            mock_abspath.side_effect = abspath_side_effect
+
+            self.assertTrue(is_in_repo("src/main.py"))
 
     @patch("context_builder.path_utils.detect_root_case_sensitivity", return_value=True)
     def test_is_in_repo_honors_case_sensitive_root(self, _mock_case_sensitive):

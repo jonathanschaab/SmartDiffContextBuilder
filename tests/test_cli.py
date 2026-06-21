@@ -389,6 +389,7 @@ class TestCLI(unittest.TestCase):
         # Run main
         with patch("context_builder.cli.get_global_cache", return_value=mock_cache), \
              patch("context_builder.cli.is_in_repo", return_value=True), \
+             patch("context_builder.graph_tracer.is_in_repo", return_value=True), \
              patch("os.path.exists", return_value=True):
             main()
 
@@ -473,6 +474,7 @@ class TestCLI(unittest.TestCase):
 
         with patch("context_builder.cli.get_global_cache", return_value=mock_cache), \
              patch("context_builder.cli.is_in_repo", return_value=True), \
+             patch("context_builder.graph_tracer.is_in_repo", return_value=True), \
              patch("os.path.exists", return_value=True):
             main()
 
@@ -570,6 +572,7 @@ class TestCLI(unittest.TestCase):
 
         with patch("context_builder.cli.get_global_cache", return_value=mock_cache), \
              patch("context_builder.cli.is_in_repo", return_value=True), \
+             patch("context_builder.graph_tracer.is_in_repo", return_value=True), \
              patch("os.path.exists", return_value=True):
             main()
 
@@ -655,6 +658,7 @@ class TestCLI(unittest.TestCase):
 
             with patch("context_builder.cli.get_global_cache", return_value=mock_cache), \
                  patch("context_builder.cli.is_in_repo", return_value=True), \
+                 patch("context_builder.graph_tracer.is_in_repo", return_value=True), \
                  patch("os.path.exists", return_value=True):
                 main()
 
@@ -720,6 +724,7 @@ class TestCLI(unittest.TestCase):
 
         with patch("context_builder.cli.get_global_cache", return_value=mock_cache), \
              patch("context_builder.cli.is_in_repo", return_value=True), \
+             patch("context_builder.graph_tracer.is_in_repo", return_value=True), \
              patch("os.path.exists", return_value=True):
             main()
 
