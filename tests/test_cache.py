@@ -2,6 +2,7 @@
 # pylint: disable=attribute-defined-outside-init,import-outside-toplevel,consider-using-with
 
 import os
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -22,38 +23,52 @@ class TestLRUFileCache(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_cache_hit_and_eviction(self):
-        # Set cache size limit to 20 bytes
-        limit_mb = 20 / (1024 * 1024)
-        cache = LRUFileCache(max_size_mb=limit_mb)
+        # We need to measure the dynamic size of each loaded entry first.
+        # We'll use a temporary, large cache to perform the measurements.
+        measurer = LRUFileCache(max_size_mb=1.0)
 
-        # Load first file (14 bytes)
-        lines1 = cache.get_lines(self.file_path)
-        self.assertEqual(lines1, ["line 1\n", "line 2\n"])
-        self.assertIn(self.file_path, cache.cache)
-        self.assertEqual(cache.current_size_bytes, 14)
+        measurer.get_lines(self.file_path)
 
         # Create a second file (5 bytes)
         f2 = os.path.join(self.temp_dir.name, "test2.txt")
         with open(f2, "w", newline="\n", encoding="utf-8") as f:
             f.write("12345")
+        measurer.get_lines(f2)
 
-        cache.get_lines(f2)
-        self.assertIn(self.file_path, cache.cache)
-        self.assertIn(f2, cache.cache)
-        self.assertEqual(cache.current_size_bytes, 19)
-
-        # Create a third file (2 bytes) to exceed 20 bytes threshold
+        # Create a third file (2 bytes)
         f3 = os.path.join(self.temp_dir.name, "test3.txt")
         with open(f3, "w", newline="\n", encoding="utf-8") as f:
             f.write("12")
+        measurer.get_lines(f3)
 
+        # Retrieve the calculated sizes directly from the cache entry dictionary
+        size1 = measurer.cache[self.file_path]["size_bytes"]
+        size2 = measurer.cache[f2]["size_bytes"]
+        size3 = measurer.cache[f3]["size_bytes"]
+
+        # Set cache size limit to exactly fit file1 and file2 (size1 + size2)
+        limit_mb = (size1 + size2) / (1024 * 1024)
+        cache = LRUFileCache(max_size_mb=limit_mb)
+
+        # Load first file
+        lines1 = cache.get_lines(self.file_path)
+        self.assertEqual(lines1, ["line 1\n", "line 2\n"])
+        self.assertIn(self.file_path, cache.cache)
+        self.assertEqual(cache.current_size_bytes, size1)
+
+        # Load second file
+        cache.get_lines(f2)
+        self.assertIn(self.file_path, cache.cache)
+        self.assertIn(f2, cache.cache)
+        self.assertEqual(cache.current_size_bytes, size1 + size2)
+
+        # Load third file (which exceeds the size1 + size2 threshold)
         cache.get_lines(f3)
-        # Total would be 14 + 5 + 2 = 21 bytes.
-        # First file (14 bytes) must be evicted, leaving f2 and f3 (5 + 2 = 7 bytes)
+        # First file (oldest) must be evicted, leaving f2 and f3 (size2 + size3)
         self.assertNotIn(self.file_path, cache.cache)
         self.assertIn(f2, cache.cache)
         self.assertIn(f3, cache.cache)
-        self.assertEqual(cache.current_size_bytes, 7)
+        self.assertEqual(cache.current_size_bytes, size2 + size3)
 
     def test_get_content_and_bytes(self):
         cache = LRUFileCache(max_size_mb=5)
@@ -103,15 +118,17 @@ class TestLRUFileCache(unittest.TestCase):
         cache = get_global_cache(5.0)
         self.assertEqual(cache.max_size_bytes, 5 * 1024 * 1024)
 
-        # 2. Add an item (14 bytes)
+        # 2. Add an item and measure its size
         cache.get_lines(self.file_path)
         self.assertIn(self.file_path, cache.cache)
+        item_size = cache.current_size_bytes
+        self.assertGreater(item_size, 0)
 
-        # 3. Resize global cache to 10 bytes (10 / (1024 * 1024) MB)
-        limit_mb = 10 / (1024 * 1024)
+        # 3. Resize global cache to be smaller than the item size (e.g. item_size - 1 bytes)
+        limit_mb = (item_size - 1) / (1024 * 1024)
         get_global_cache(limit_mb)
 
-        # The item should be immediately evicted because 14 bytes > 10 bytes limit
+        # The item should be immediately evicted because item_size > (item_size - 1) limit
         self.assertNotIn(self.file_path, cache.cache)
         self.assertEqual(cache.current_size_bytes, 0)
 
@@ -136,3 +153,36 @@ class TestLRUFileCache(unittest.TestCase):
 
         cache.resize(-1.0)
         self.assertEqual(cache.max_size_bytes, 200 * 1024 * 1024)
+
+    @unittest.skipIf(
+        sys.implementation.name != "cpython",
+        "sys.getsizeof is only reliable on CPython for deep memory verification"
+    )
+    def test_heuristic_accuracy(self):
+        """Verify that the cache's O(1) heuristic size is within a reasonable margin
+
+        of error compared to the precise O(N) sys.getsizeof measurement.
+        """
+        cache = LRUFileCache(max_size_mb=1.0)
+        cache.get_lines(self.file_path)
+
+        entry = cache.cache[self.file_path]
+        estimated_size = entry["size_bytes"]
+
+        # Calculate precise O(N) size
+        precise_lines_size = sys.getsizeof(entry["lines"]) + sum(
+            sys.getsizeof(line) for line in entry["lines"]
+        )
+        precise_size = (
+            sys.getsizeof(entry["bytes"])
+            + sys.getsizeof(entry["content"])
+            + precise_lines_size
+            + 150
+        )
+
+        ratio = estimated_size / precise_size
+        # The heuristic should be close (within 0.90x to 1.30x of precise size)
+        self.assertTrue(
+            0.90 <= ratio <= 1.30,
+            f"Heuristic ratio {ratio:.2f} is outside [0.90, 1.30] range"
+        )

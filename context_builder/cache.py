@@ -4,7 +4,13 @@ This prevents redundant disk reads and speeds up processing across multiple pass
 """
 
 import os
+import sys
 from collections import OrderedDict
+
+try:
+    _EMPTY_STR_SIZE = sys.getsizeof("")
+except (AttributeError, NameError, NotImplementedError):
+    _EMPTY_STR_SIZE = 49  # Fallback for non-CPython runtimes, which bypass it anyway.
 
 
 class LRUFileCache:
@@ -24,6 +30,42 @@ class LRUFileCache:
             limit = 200.0
         self.max_size_bytes = int(limit * 1024 * 1024)
         self.current_size_bytes = 0
+
+    def _get_entry_memory_usage(self, bytes_content, content, lines):
+        """Calculate the estimated deep memory usage of a cache entry in bytes.
+
+        Args:
+            bytes_content (bytes): Raw bytes content of the file.
+            content (str): Decoded string content of the file.
+            lines (list): List of lines in the file.
+
+        Returns:
+            int: Estimated memory footprint in bytes.
+        """
+        try:
+            # On non-CPython runtimes (e.g. PyPy), sys.getsizeof is not reliable.
+            # Fall back to a standard multiplier heuristic.
+            if sys.implementation.name != "cpython":
+                return int(len(bytes_content) * 4.5)
+
+            # Estimate lines list size in O(1) time:
+            # - List object base + pointer array overhead: sys.getsizeof(lines)
+            # - Line strings overhead: (len(lines) - 1) * _EMPTY_STR_SIZE + sys.getsizeof(content)
+            # This is 100% exact for ASCII strings on all Python platforms/versions.
+            line_strings_size = (
+                (len(lines) - 1) * _EMPTY_STR_SIZE + sys.getsizeof(content)
+                if lines
+                else 0
+            )
+            estimated_lines_size = sys.getsizeof(lines) + line_strings_size
+            return (
+                sys.getsizeof(bytes_content)
+                + sys.getsizeof(content)
+                + estimated_lines_size
+                + 150  # Estimating entry dict structure overhead
+            )
+        except Exception:  # pylint: disable=broad-except
+            return int(len(bytes_content) * 4.5)
 
     def _load(self, file_path):
         """Load the file from disk if not cached, and move it to the end of the LRU.
@@ -50,10 +92,16 @@ class LRUFileCache:
         content = bytes_content.decode("utf-8", errors="ignore")
         lines = content.splitlines(keepends=True)
 
-        entry = {"lines": lines, "content": content, "bytes": bytes_content}
+        size_bytes = self._get_entry_memory_usage(bytes_content, content, lines)
+        entry = {
+            "lines": lines,
+            "content": content,
+            "bytes": bytes_content,
+            "size_bytes": size_bytes,
+        }
         self.cache[file_path] = entry
         self.cache.move_to_end(file_path)
-        self.current_size_bytes += len(bytes_content)
+        self.current_size_bytes += size_bytes
         self.evict_to_limit()
         return entry
 
@@ -61,7 +109,9 @@ class LRUFileCache:
         """Evict oldest cache entries if total memory footprint exceeds the threshold."""
         while self.cache and self.current_size_bytes > self.max_size_bytes:
             _, popped_entry = self.cache.popitem(last=False)
-            self.current_size_bytes -= len(popped_entry["bytes"])
+            self.current_size_bytes -= popped_entry.get(
+                "size_bytes", len(popped_entry["bytes"])
+            )
 
     def resize(self, max_size_mb):
         """Resize the cache limit in MB, performing validation and immediate evictions.
