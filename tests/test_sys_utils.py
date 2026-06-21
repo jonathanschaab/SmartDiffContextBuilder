@@ -280,15 +280,39 @@ class TestSysUtils(unittest.TestCase):
 
             def abspath_side_effect(path):
                 if path == ".":
-                    return "/var/lib/jenkins/workspace/project"
-                target_path = "/var/lib/jenkins/workspace/project/src/lib/helper.py"
-                if path in {target_path, "src/lib/helper.py"}:
+                    return os.path.normpath("/var/lib/jenkins/workspace/project")
+                target_path = os.path.normpath(
+                    "/var/lib/jenkins/workspace/project/src/lib/helper.py"
+                )
+                if path in {
+                    target_path,
+                    "src/lib/helper.py",
+                    os.path.normpath("src/lib/helper.py"),
+                }:
                     return target_path
-                return path
+                return os.path.normpath(path)
 
             mock_abspath.side_effect = abspath_side_effect
 
             self.assertTrue(is_in_repo("src/lib/helper.py"))
+
+    def test_is_in_repo_case_insensitive_mismatch(self):
+        from context_builder.sys_utils import is_in_repo
+        with patch("os.path.abspath") as mock_abspath, \
+             patch("os.path.exists", return_value=True), \
+             patch("context_builder.path_utils.detect_root_case_sensitivity", return_value=False):
+
+            def abspath_side_effect(path):
+                if path == ".":
+                    return os.path.normpath("/Users/build/project")
+                target_path = os.path.normpath("/users/build/project/src/main.py")
+                if path in {target_path, "src/main.py", os.path.normpath("src/main.py")}:
+                    return target_path
+                return os.path.normpath(path)
+
+            mock_abspath.side_effect = abspath_side_effect
+
+            self.assertTrue(is_in_repo("src/main.py"))
 
     @patch("context_builder.path_utils.detect_root_case_sensitivity", return_value=True)
     def test_is_in_repo_honors_case_sensitive_root(self, _mock_case_sensitive):
