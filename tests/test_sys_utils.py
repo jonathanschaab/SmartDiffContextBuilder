@@ -183,6 +183,16 @@ class TestSysUtils(unittest.TestCase):
                 self.assertTrue(is_in_repo(in_repo_file))
                 self.assertFalse(is_in_repo("nonexistent.py"))
                 self.assertFalse(is_in_repo(ignored_file))
+
+                # Check newly added ignored paths
+                for ignore_name in ["venv", ".venv", "env", "build", "out"]:
+                    p_dir = os.path.join(temp_dir, ignore_name)
+                    os.makedirs(p_dir, exist_ok=True)
+                    p_file = os.path.join(p_dir, "some_file.py")
+                    with open(p_file, "w") as f:
+                        f.write("pass")
+                    self.assertFalse(is_in_repo(p_file), f"{ignore_name} should be ignored")
+
                 # Check external file
                 self.assertFalse(is_in_repo("/usr/include/stdio.h"))
 

@@ -521,7 +521,19 @@ def is_in_repo(file_path):
     # Normalize paths
     normalized = normalize_for_path_match(file_path)
     # Check ignore list patterns
-    for pattern in ["node_modules/", "target/", ".git/", "/usr/include/", "/lib/", "sdk/"]:
+    for pattern in [
+        "node_modules/",
+        "target/",
+        ".git/",
+        "/usr/include/",
+        "/lib/",
+        "sdk/",
+        "venv/",
+        ".venv/",
+        "env/",
+        "build/",
+        "out/",
+    ]:
         if pattern in normalized:
             return False
     try:
