@@ -342,8 +342,10 @@ class TestAstEngine(unittest.TestCase):
         lead_b = r'\b'
         escaped_name = re.escape(func_name)
         pattern = re.compile(
-            r'^\s*(?:[A-Za-z0-9_<>:,]+(?:\s+|[*&]+))*[\s*&]*'
-            r'(?:[A-Za-z0-9_<>:,]+::)?' + lead_b + escaped_name + r'\s*\('
+            r'^\s*(?:(?:[A-Za-z0-9_<>,]+(?:::[A-Za-z0-9_<>,]+)*)'
+            r'(?:\s+|[*&]+))*[\s*&]*'
+            r'(?:(?:[A-Za-z0-9_<>,]+(?:::[A-Za-z0-9_<>,]+)*)::)?'
+            + lead_b + escaped_name + r'\s*\('
         )
 
         # 1. Test long sequence of trailing spaces

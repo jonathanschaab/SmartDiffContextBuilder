@@ -142,8 +142,9 @@ DEFAULT_DEF_PATTERN_TEMPLATE = (
     r"\b(?:fn|def|function|sub|func|class|macro)\s+{lead_b}{escaped_callee}{trail_b}"
 )
 DEFAULT_CPP_DEF_PATTERN_TEMPLATE = (
-    r"^\s*(?:[A-Za-z0-9_<>:,]+(?:\s+|[*&]+))*[\s*&]*"
-    r"(?:[A-Za-z0-9_<>:,]+::)?{lead_b}{escaped_callee}\s*\("
+    r"^\s*(?:(?:[A-Za-z0-9_<>,]+(?:::[A-Za-z0-9_<>,]+)*)"
+    r"(?:\s+|[*&]+))*[\s*&]*"
+    r"(?:(?:[A-Za-z0-9_<>,]+(?:::[A-Za-z0-9_<>,]+)*)::)?{lead_b}{escaped_callee}\s*\("
 )
 
 DEFAULT_CALLEE_PATTERN = r'\b([A-Za-z_][A-Za-z0-9_]*)\s*\('

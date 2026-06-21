@@ -347,8 +347,10 @@ def trace_lexical_dependencies_regex(func_name, repo_files, file_cache=None):
                 p_lead_b, _ = profile._get_boundaries(func_name)
                 escaped_name = re.escape(func_name)
                 def_cpp_pattern = re.compile(
-                    r'^\s*(?:[A-Za-z0-9_<>:,]+(?:\s+|[*&]+))*[\s*&]*'
-                    r'(?:[A-Za-z0-9_<>:,]+::)?' + p_lead_b + escaped_name + r'\s*\('
+                    r'^\s*(?:(?:[A-Za-z0-9_<>,]+(?:::[A-Za-z0-9_<>,]+)*)'
+                    r'(?:\s+|[*&]+))*[\s*&]*'
+                    r'(?:(?:[A-Za-z0-9_<>,]+(?:::[A-Za-z0-9_<>,]+)*)::)?'
+                    + p_lead_b + escaped_name + r'\s*\('
                 )
             profile_patterns_cache[profile.name] = (
                 profile.get_call_pattern(func_name),
