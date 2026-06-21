@@ -193,6 +193,24 @@ class TestSysUtils(unittest.TestCase):
                         f.write("pass")
                     self.assertFalse(is_in_repo(p_file), f"{ignore_name} should be ignored")
 
+                # Check that partial/substring matches are NOT ignored
+                safe_names = [
+                    "checkout",
+                    "rebuild",
+                    "my_env",
+                    "my_venv",
+                    "about",
+                    "without",
+                    "timeout",
+                ]
+                for safe_name in safe_names:
+                    p_dir = os.path.join(temp_dir, safe_name)
+                    os.makedirs(p_dir, exist_ok=True)
+                    p_file = os.path.join(p_dir, "some_file.py")
+                    with open(p_file, "w") as f:
+                        f.write("pass")
+                    self.assertTrue(is_in_repo(p_file), f"{safe_name} should NOT be ignored")
+
                 # Check external file
                 self.assertFalse(is_in_repo("/usr/include/stdio.h"))
 

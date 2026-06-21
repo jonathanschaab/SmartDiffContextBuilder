@@ -520,20 +520,24 @@ def is_in_repo(file_path):
         return False
     # Normalize paths
     normalized = normalize_for_path_match(file_path)
-    # Check ignore list patterns
-    for pattern in [
-        "node_modules/",
-        "target/",
-        ".git/",
-        "/usr/include/",
-        "/lib/",
-        "sdk/",
-        "venv/",
-        ".venv/",
-        "env/",
-        "build/",
-        "out/",
-    ]:
+    # Check exact directory component matches
+    ignored_dirs = {
+        "node_modules",
+        "target",
+        ".git",
+        "sdk",
+        "venv",
+        ".venv",
+        "env",
+        "build",
+        "out",
+    }
+    components = normalized.split("/")
+    if any(c in ignored_dirs for c in components):
+        return False
+
+    # Check system/absolute path substring matches
+    for pattern in ["/usr/include/", "/lib/"]:
         if pattern in normalized:
             return False
     try:
