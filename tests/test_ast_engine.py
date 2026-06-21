@@ -2577,3 +2577,65 @@ class TestAstEngine(unittest.TestCase):
         )
         self.assertEqual(res["resolved_type"], "none")
         self.assertEqual(res["definitions"], [])
+
+    @patch("context_builder.ast_engine.ripgrep_filter")
+    @patch("context_builder.sys_utils.get_git_tracked_files")
+    def test_find_class_definition_uses_ripgrep_filter(self, mock_tracked, mock_filter):
+        from context_builder.ast_engine import find_class_definition
+        from context_builder.languages.python import PYTHON
+
+        mock_tracked.return_value = ["file1.py", "file2.py"]
+        mock_filter.return_value = ["file2.py"]
+
+        cache = MagicMock()
+        cache.get_lines.side_effect = lambda path: (
+            [] if path == "file1.py" else ["class TargetClass:", "    pass"]
+        )
+
+        with patch("os.path.exists", return_value=True):
+            res_file, res_line = find_class_definition(
+                "file1.py", "TargetClass", PYTHON, cache
+            )
+
+        self.assertEqual(res_file, "file2.py")
+        self.assertEqual(res_line, 1)
+
+        # Verify ripgrep_filter was called to pre-filter file1.py out
+        mock_filter.assert_called_once_with(
+            ["file2.py"], "TargetClass", fallback_hint="class/struct definition of 'TargetClass'"
+        )
+
+    @patch("context_builder.ast_engine.ripgrep_filter")
+    @patch("context_builder.sys_utils.get_git_tracked_files")
+    def test_resolve_global_definition_uses_ripgrep_filter(self, mock_tracked, mock_filter):
+        from context_builder.ast_engine import resolve_global_definition
+        from context_builder.languages.python import PYTHON
+
+        mock_tracked.return_value = ["file1.py", "file2.py"]
+        mock_filter.return_value = ["file2.py"]
+
+        cache = MagicMock()
+        cache.get_lines.side_effect = lambda path: (
+            [] if path == "file1.py" else ["GLOBAL_VAR = 42"]
+        )
+
+        # Mock build_scopes to return a dummy global scope
+        from context_builder.ast_engine import RegexScope
+        dummy_scope = RegexScope(1)
+        dummy_scope.end_line = 2
+
+        with patch("os.path.exists", return_value=True), \
+             patch("context_builder.ast_engine.build_scopes", return_value=(dummy_scope, [dummy_scope])), \
+             patch("context_builder.ast_engine.get_lines_directly_in_scope", return_value=[1]):
+            res = resolve_global_definition(
+                "file1.py", "GLOBAL_VAR", PYTHON, cache
+            )
+
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0]["path"], "file2.py")
+        self.assertEqual(res[0]["line"], 1)
+
+        # Verify ripgrep_filter was called
+        mock_filter.assert_called_once_with(
+            ["file1.py", "file2.py"], "GLOBAL_VAR", fallback_hint="global definition of 'GLOBAL_VAR'"
+        )

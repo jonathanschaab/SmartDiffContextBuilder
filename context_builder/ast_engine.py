@@ -1313,14 +1313,21 @@ def find_class_definition(start_file, class_name, profile, file_cache):
     from .sys_utils import get_git_tracked_files  # pylint: disable=import-outside-toplevel
     ext = os.path.splitext(start_file)[1].lower()
     tracked_files = get_git_tracked_files()
-    for f in tracked_files:
-        if os.path.splitext(f)[1].lower() == ext and f != start_file:
-            if os.path.exists(f):
-                lines = file_cache.get_lines(f)
-                for idx, line in enumerate(lines):
-                    cleaned = profile.strip_strings_and_comments(line)
-                    if class_pattern.search(cleaned):
-                        return f, idx + 1
+    same_ext_files = [
+        f for f in tracked_files
+        if os.path.splitext(f)[1].lower() == ext and f != start_file
+    ]
+    candidate_files = ripgrep_filter(
+        same_ext_files, class_name,
+        fallback_hint=f"class/struct definition of '{class_name}'"
+    )
+    for f in candidate_files:
+        if os.path.exists(f):
+            lines = file_cache.get_lines(f)
+            for idx, line in enumerate(lines):
+                cleaned = profile.strip_strings_and_comments(line)
+                if class_pattern.search(cleaned):
+                    return f, idx + 1
 
     return None, None
 
@@ -1465,6 +1472,8 @@ def resolve_global_definition(file_path, var_name, profile, file_cache, searched
         if not os.path.exists(f):
             return None
         lines = file_cache.get_lines(f)
+        if not lines:
+            return None
         f_profile = get_language_profile(f)
         global_scope, _ = build_scopes(f, f_profile, file_cache)
         global_lines = get_lines_directly_in_scope(global_scope, lines)
@@ -1496,13 +1505,17 @@ def resolve_global_definition(file_path, var_name, profile, file_cache, searched
     from .sys_utils import get_git_tracked_files  # pylint: disable=import-outside-toplevel
     ext = os.path.splitext(file_path)[1].lower()
     tracked_files = get_git_tracked_files()
-    for f in tracked_files:
-        if os.path.splitext(f)[1].lower() == ext:
-            f_abs = os.path.abspath(f)
-            if f_abs not in searched_files:
-                res = search_file_globals(f_abs)
-                if res:
-                    return [res]
+    same_ext_files = [f for f in tracked_files if os.path.splitext(f)[1].lower() == ext]
+    candidate_files = ripgrep_filter(
+        same_ext_files, var_name,
+        fallback_hint=f"global definition of '{var_name}'"
+    )
+    for f in candidate_files:
+        f_abs = os.path.abspath(f)
+        if f_abs not in searched_files:
+            res = search_file_globals(f_abs)
+            if res:
+                return [res]
 
     return []
 
