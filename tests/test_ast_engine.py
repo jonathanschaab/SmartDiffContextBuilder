@@ -2639,3 +2639,59 @@ class TestAstEngine(unittest.TestCase):
         mock_filter.assert_called_once_with(
             ["file1.py", "file2.py"], "GLOBAL_VAR", fallback_hint="global definition of 'GLOBAL_VAR'"
         )
+
+    def test_align_clean_to_original(self):
+        from context_builder.ast_engine import _align_clean_to_original
+
+        # Test basic alignment where nothing is stripped
+        orig1 = "foo bar"
+        clean1 = "foo bar"
+        self.assertEqual(_align_clean_to_original(orig1, clean1), [0, 1, 2, 3, 4, 5, 6])
+
+        # Test alignment with inline comment stripped
+        orig2 = "foo // comment\n"
+        clean2 = "foo \n"
+        mapping2 = _align_clean_to_original(orig2, clean2)
+        # Expected mapping length = len(clean2) = 5
+        # 'f' -> 0, 'o' -> 1, 'o' -> 2, ' ' -> 3, '\n' -> 14
+        self.assertEqual(mapping2, [0, 1, 2, 3, 14])
+
+        # Test alignment with string literal stripped
+        orig3 = 'foo("hello") + bar'
+        clean3 = 'foo() + bar'
+        mapping3 = _align_clean_to_original(orig3, clean3)
+        # Check that characters match correctly
+        # clean3[6] is '+' -> should map to orig3[13] which is '+'
+        self.assertEqual(mapping3[6], 13)
+        # clean3[7] is ' ' -> should map to orig3[14]
+        self.assertEqual(mapping3[7], 14)
+        # clean3[8] is 'b' -> should map to orig3[15]
+        self.assertEqual(mapping3[8], 15)
+
+    def test_extract_identifiers_with_positions_regex_alignment(self):
+        from context_builder.ast_engine import extract_identifiers_with_positions_regex
+
+        cache = MagicMock()
+        # Original line has comment and string stripped
+        # "    foo = 'value' # comment"
+        # Identifier is "foo"
+        cache.get_lines.return_value = ["    foo = 'value' # comment"]
+
+        # Let's test using PYTHON profile (since it strips comments and strings)
+        res = extract_identifiers_with_positions_regex("file.py", [1], file_cache=cache)
+        # "foo" should start at index 4 in original (UTF-16 code units = 4)
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0][0], "foo")
+        self.assertEqual(res[0][1], 1)
+        self.assertEqual(res[0][2], 4)
+
+        # Let's test with unicode characters and surrogate pairs to verify UTF-16 conversion
+        # "🌟_foo = 'val' // comment"
+        # "🌟" is 1 char in Python, but 2 UTF-16 code units.
+        # "_foo" starts at char index 1, which is UTF-16 index 2.
+        cache.get_lines.return_value = ["🌟_foo = 'val' # comment"]
+        res_unicode = extract_identifiers_with_positions_regex("file.py", [1], file_cache=cache)
+        self.assertEqual(len(res_unicode), 1)
+        self.assertEqual(res_unicode[0][0], "_foo")
+        self.assertEqual(res_unicode[0][1], 1)
+        self.assertEqual(res_unicode[0][2], 2)

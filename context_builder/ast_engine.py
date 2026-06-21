@@ -772,6 +772,22 @@ def extract_identifiers_with_positions_ast(file_path, line_numbers, file_cache=N
     return results
 
 
+def _align_clean_to_original(original, clean):
+    """Map indices of 'clean' back to their corresponding indices in 'original'."""
+    mapping = []
+    o_idx = 0
+    o_len = len(original)
+    for c in clean:
+        while o_idx < o_len and original[o_idx] != c:
+            o_idx += 1
+        if o_idx < o_len:
+            mapping.append(o_idx)
+            o_idx += 1
+        else:
+            mapping.append(o_len)
+    return mapping
+
+
 def extract_identifiers_with_positions_regex(file_path, line_numbers, file_cache=None):
     """Extract standalone word boundaries with positions using regex."""
     if file_cache is None:
@@ -791,6 +807,7 @@ def extract_identifiers_with_positions_regex(file_path, line_numbers, file_cache
         if 1 <= line_num <= len(lines):
             line_content = lines[line_num - 1]
             line_clean = profile.strip_strings_and_comments(line_content)
+            mapping = _align_clean_to_original(line_content, line_clean)
             for match in word_pattern.finditer(line_clean):
                 word = match.group(0)
                 if word in keywords:
@@ -799,7 +816,15 @@ def extract_identifiers_with_positions_regex(file_path, line_numbers, file_cache
                 suffix_stripped = suffix.lstrip()
                 if suffix_stripped.startswith('(') or suffix_stripped.startswith('::'):
                     continue
-                results.append((word, line_num, match.start()))
+                clean_start = match.start()
+                orig_start = (
+                    mapping[clean_start]
+                    if clean_start < len(mapping)
+                    else len(line_content)
+                )
+                prefix_str = line_content[:orig_start]
+                char_offset = len(prefix_str.encode("utf-16-le")) // 2
+                results.append((word, line_num, char_offset))
 
     return results
 
