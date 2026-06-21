@@ -320,6 +320,52 @@ class TestSysUtils(unittest.TestCase):
                 else:
                     CONFIG.pop("ignored_directories", None)
 
+    def test_is_in_repo_configured_ignores_case_sensitivity(self):
+        import tempfile
+        import os
+        from unittest.mock import patch
+        from context_builder.sys_utils import is_in_repo
+        from context_builder.config import CONFIG
+
+        old_cwd = os.getcwd()
+        old_ignored = CONFIG.get("ignored_directories")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.chdir(temp_dir)
+            try:
+                CONFIG["ignored_directories"] = ["AnotherIgnoredDir"]
+
+                # Case 1: Case Sensitive filesystem
+                patch_path = "context_builder.path_utils.detect_root_case_sensitivity"
+                with patch(patch_path, return_value=True):
+                    # exact match ignored
+                    exact_dir = os.path.join(temp_dir, "AnotherIgnoredDir")
+                    os.makedirs(exact_dir, exist_ok=True)
+                    exact_file = os.path.join(exact_dir, "file.py")
+                    with open(exact_file, "w") as f:
+                        f.write("pass")
+                    self.assertFalse(is_in_repo(exact_file))
+
+                    # lowercase match is NOT ignored
+                    lower_dir = os.path.join(temp_dir, "anotherignoreddir")
+                    os.makedirs(lower_dir, exist_ok=True)
+                    lower_file = os.path.join(lower_dir, "file.py")
+                    with open(lower_file, "w") as f:
+                        f.write("pass")
+                    self.assertTrue(is_in_repo(lower_file))
+
+                # Case 2: Case Insensitive filesystem
+                with patch(patch_path, return_value=False):
+                    # both should be ignored
+                    self.assertFalse(is_in_repo(exact_file))
+                    self.assertFalse(is_in_repo(lower_file))
+
+            finally:
+                os.chdir(old_cwd)
+                if old_ignored is not None:
+                    CONFIG["ignored_directories"] = old_ignored
+                else:
+                    CONFIG.pop("ignored_directories", None)
+
     def test_is_in_repo_with_system_path_in_root(self):
         from context_builder.sys_utils import is_in_repo
         with patch("os.path.abspath") as mock_abspath, \
