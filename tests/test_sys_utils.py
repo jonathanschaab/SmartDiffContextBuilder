@@ -214,7 +214,10 @@ class TestSysUtils(unittest.TestCase):
             os.chdir(temp_dir)
             try:
                 # Check newly added ignored paths
-                for ignore_name in ["venv", ".venv", "env", "build", "out"]:
+                for ignore_name in [
+                    "venv", ".venv", "env", "build", "out",
+                    "vendor", "bin", "obj", ".gradle"
+                ]:
                     p_dir = os.path.join(temp_dir, ignore_name)
                     os.makedirs(p_dir, exist_ok=True)
                     p_file = os.path.join(p_dir, "some_file.py")
@@ -234,6 +237,11 @@ class TestSysUtils(unittest.TestCase):
                     "about",
                     "without",
                     "timeout",
+                    "bind",
+                    "cabin",
+                    "object",
+                    "vendor_data",
+                    "gradle",
                 ]
                 for safe_name in safe_names:
                     p_dir = os.path.join(temp_dir, safe_name)

@@ -21,6 +21,10 @@ _IGNORED_DIRS = {
     "env",
     "build",
     "out",
+    "vendor",  # Go local dependencies
+    "bin",     # C# / .NET compiled binaries
+    "obj",     # C# / .NET intermediate object files
+    ".gradle", # Java / Kotlin caches
 }
 
 
