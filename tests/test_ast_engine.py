@@ -2695,3 +2695,43 @@ class TestAstEngine(unittest.TestCase):
         self.assertEqual(res_unicode[0][0], "_foo")
         self.assertEqual(res_unicode[0][1], 1)
         self.assertEqual(res_unicode[0][2], 2)
+
+    def test_get_class_members_new_line_brace(self):
+        from context_builder.ast_engine import get_class_members
+        from context_builder.languages.c_family import C_FAMILY
+
+        cache = MagicMock()
+        # Class with brace on the next line
+        cache.get_lines.return_value = [
+            "class TargetClass",
+            "{",
+            "    int myVar;",
+            "};"
+        ]
+
+        res = get_class_members("file.cpp", "TargetClass", C_FAMILY, cache)
+        self.assertEqual(res, [("myVar", 3)])
+
+    def test_resolve_variable_definition_regex_fallback_new_line_brace(self):
+        from context_builder.ast_engine import resolve_variable_definition
+
+        cache = MagicMock()
+        # Function/Class member variable resolution with braces on next lines
+        lines = [
+            "class TargetClass",
+            "{",
+            "    int myVar;",
+            "    void myFunc()",
+            "    {",
+            "        myVar = 42;",
+            "    }",
+            "};"
+        ]
+        cache.get_lines.return_value = lines
+        cache.get_stripped_lines.return_value = lines
+        cache.get_bytes.return_value = "\n".join(lines).encode('utf-8')
+
+        # We try to resolve "myVar" from line 6 (inside myFunc)
+        res = resolve_variable_definition("file.cpp", "myVar", 6, 8, file_cache=cache)
+        self.assertEqual(res["resolved_type"], "member_regex")
+        self.assertEqual(res["definitions"][0]["line"], 3)

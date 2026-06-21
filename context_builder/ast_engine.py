@@ -1224,7 +1224,7 @@ def get_class_members(file_path, class_name, profile, file_cache):  # pylint: di
     _, all_scopes = build_scopes(file_path, profile, file_cache)
     class_scope = None
     for s in all_scopes:
-        if s.start_line == class_line_num and s.parent is not None:
+        if s.start_line >= class_line_num and s.parent is not None:
             class_scope = s
             break
 
@@ -1593,15 +1593,18 @@ def resolve_variable_definition_regex_fallback(
     else:
         outermost_func_scope = None
         for s in all_scopes:
-            if s.start_line == func_start_line:
+            if s.start_line >= func_start_line and s.parent is not None:
                 outermost_func_scope = s
                 break
         if outermost_func_scope and outermost_func_scope.parent:
             parent_scope = outermost_func_scope.parent
-            parent_header = lines[parent_scope.start_line - 1]
-            class_match = re.search(r'\b(?:class|struct)\s+([A-Za-z0-9_]+)\b', parent_header)
-            if class_match:
-                class_name = class_match.group(1)
+            limit = parent_scope.parent.start_line if parent_scope.parent else 1
+            for l_idx in range(parent_scope.start_line - 1, limit - 2, -1):
+                parent_header = lines[l_idx]
+                class_match = re.search(r'\b(?:class|struct)\s+([A-Za-z0-9_]+)\b', parent_header)
+                if class_match:
+                    class_name = class_match.group(1)
+                    break
 
     if class_name:
         res = resolve_class_member_definition(file_path, class_name, var_name, profile, file_cache)
