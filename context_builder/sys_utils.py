@@ -559,7 +559,14 @@ def is_in_repo(file_path):
         normalized_rel = normalize_for_path_match(rel_path)
         components = normalized_rel.split("/")
         dir_components = components if is_dir else components[:-1]
-        if any(c in _IGNORED_DIRS for c in dir_components):
+
+        ignored_dirs_config = CONFIG.get("ignored_directories")
+        if isinstance(ignored_dirs_config, (list, tuple, set)):
+            ignored_dirs = {str(d).lower() for d in ignored_dirs_config}
+        else:
+            ignored_dirs = _IGNORED_DIRS
+
+        if any(c in ignored_dirs for c in dir_components):
             return False
 
         return True

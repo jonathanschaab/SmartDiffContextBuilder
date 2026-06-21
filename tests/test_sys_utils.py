@@ -280,6 +280,46 @@ class TestSysUtils(unittest.TestCase):
             finally:
                 os.chdir(old_cwd)
 
+    def test_is_in_repo_configured_ignores(self):
+        import tempfile
+        import os
+        from context_builder.sys_utils import is_in_repo
+        from context_builder.config import CONFIG
+
+        old_cwd = os.getcwd()
+        old_ignored = CONFIG.get("ignored_directories")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.chdir(temp_dir)
+            try:
+                # Configure custom ignored directories
+                CONFIG["ignored_directories"] = ["custom_ignore_dir", "AnotherIgnoredDir"]
+
+                # Check that standard node_modules is NOT ignored because it was overridden
+                node_modules_dir = os.path.join(temp_dir, "node_modules")
+                os.makedirs(node_modules_dir, exist_ok=True)
+                node_modules_file = os.path.join(node_modules_dir, "some_file.js")
+                with open(node_modules_file, "w") as f:
+                    f.write("pass")
+                self.assertTrue(is_in_repo(node_modules_file))
+
+                # Check that configured custom ignore directories are ignored
+                for ignore_name in ["custom_ignore_dir", "AnotherIgnoredDir"]:
+                    p_dir = os.path.join(temp_dir, ignore_name)
+                    os.makedirs(p_dir, exist_ok=True)
+                    p_file = os.path.join(p_dir, "some_file.py")
+                    with open(p_file, "w") as f:
+                        f.write("pass")
+                    self.assertFalse(
+                        is_in_repo(p_file),
+                        f"{ignore_name} should be ignored"
+                    )
+            finally:
+                os.chdir(old_cwd)
+                if old_ignored is not None:
+                    CONFIG["ignored_directories"] = old_ignored
+                else:
+                    CONFIG.pop("ignored_directories", None)
+
     def test_is_in_repo_with_system_path_in_root(self):
         from context_builder.sys_utils import is_in_repo
         with patch("os.path.abspath") as mock_abspath, \

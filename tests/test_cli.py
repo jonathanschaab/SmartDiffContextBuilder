@@ -1555,6 +1555,21 @@ class TestCLI(unittest.TestCase):
 
     @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
     @patch("context_builder.cli.run_scan")
+    def test_cli_ignored_directories_override(self, mock_run_scan, mock_parse_args):
+        """Verify that main() handles --ignored-directories override correctly."""
+        from context_builder.config import CONFIG, reset_config
+        reset_config()
+
+        mock_args = CliNamespace()
+        mock_args.ignored_directories = '["custom_cli_ignore"]'
+        mock_parse_args.return_value = mock_args
+
+        main()
+        self.assertEqual(CONFIG["ignored_directories"], ["custom_cli_ignore"])
+        reset_config()
+
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    @patch("context_builder.cli.run_scan")
     def test_cli_partial_namespace_safety(self, mock_run_scan, mock_parse_args):
         """Verify that main() executes safely when passed a partial namespace
 
