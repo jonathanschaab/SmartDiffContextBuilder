@@ -229,3 +229,27 @@ class TestLRUFileCache(unittest.TestCase):
         cache.get_lines(f2)
         self.assertNotIn(self.file_path, cache.cache)
         self.assertIn(f2, cache.cache)
+
+    def test_eviction_during_stripping_does_not_inflate_current_size(self):
+        class MockProfile:
+            def strip_block_comments(self, content):
+                return content
+
+        profile = MockProfile()
+        # Initialize cache with 1 byte limit so anything loaded will be immediately evicted
+        cache = LRUFileCache(max_size_mb=0.000001)
+
+        # Call get_stripped_content on a file.
+        # Since cache limit is 1 byte, the loaded entry will be immediately evicted in _load.
+        cache.get_stripped_content(self.file_path, profile)
+
+        # Ensure that it was evicted and cache does not contain the file path
+        self.assertNotIn(self.file_path, cache.cache)
+
+        # Crucially, current_size_bytes must remain exactly 0 and not be inflated!
+        self.assertEqual(cache.current_size_bytes, 0)
+
+        # Repeat for get_stripped_lines
+        cache.get_stripped_lines(self.file_path, profile)
+        self.assertNotIn(self.file_path, cache.cache)
+        self.assertEqual(cache.current_size_bytes, 0)

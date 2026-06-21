@@ -179,8 +179,9 @@ class LRUFileCache:
             except Exception:  # pylint: disable=broad-except
                 added_bytes = len(stripped)
             entry["size_bytes"] += added_bytes
-            self.current_size_bytes += added_bytes
-            self.evict_to_limit()
+            if file_path in self.cache:
+                self.current_size_bytes += added_bytes
+                self.evict_to_limit()
         return entry["stripped_content"]
 
     def get_stripped_lines(self, file_path, profile):
@@ -203,7 +204,8 @@ class LRUFileCache:
                     added_bytes = len(stripped_content) * 2
                 else:
                     line_strings_size = (
-                        (len(stripped_lines) - 1) * _EMPTY_STR_SIZE + sys.getsizeof(stripped_content)
+                        (len(stripped_lines) - 1) * _EMPTY_STR_SIZE
+                        + sys.getsizeof(stripped_content)
                         if stripped_lines
                         else 0
                     )
@@ -211,8 +213,9 @@ class LRUFileCache:
             except Exception:  # pylint: disable=broad-except
                 added_bytes = len(stripped_content) * 2
             entry["size_bytes"] += added_bytes
-            self.current_size_bytes += added_bytes
-            self.evict_to_limit()
+            if file_path in self.cache:
+                self.current_size_bytes += added_bytes
+                self.evict_to_limit()
         return entry["stripped_lines"]
 
 
