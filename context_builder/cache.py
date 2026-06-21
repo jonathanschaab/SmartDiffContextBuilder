@@ -169,7 +169,18 @@ class LRUFileCache:
         """
         entry = self._load(file_path)
         if "stripped_content" not in entry:
-            entry["stripped_content"] = profile.strip_block_comments(entry["content"])
+            stripped = profile.strip_block_comments(entry["content"])
+            entry["stripped_content"] = stripped
+            try:
+                if sys.implementation.name != "cpython":
+                    added_bytes = len(stripped)
+                else:
+                    added_bytes = sys.getsizeof(stripped)
+            except Exception:  # pylint: disable=broad-except
+                added_bytes = len(stripped)
+            entry["size_bytes"] += added_bytes
+            self.current_size_bytes += added_bytes
+            self.evict_to_limit()
         return entry["stripped_content"]
 
     def get_stripped_lines(self, file_path, profile):
@@ -185,7 +196,23 @@ class LRUFileCache:
         entry = self._load(file_path)
         if "stripped_lines" not in entry:
             stripped_content = self.get_stripped_content(file_path, profile)
-            entry["stripped_lines"] = stripped_content.splitlines(keepends=True)
+            stripped_lines = stripped_content.splitlines(keepends=True)
+            entry["stripped_lines"] = stripped_lines
+            try:
+                if sys.implementation.name != "cpython":
+                    added_bytes = len(stripped_content) * 2
+                else:
+                    line_strings_size = (
+                        (len(stripped_lines) - 1) * _EMPTY_STR_SIZE + sys.getsizeof(stripped_content)
+                        if stripped_lines
+                        else 0
+                    )
+                    added_bytes = sys.getsizeof(stripped_lines) + line_strings_size
+            except Exception:  # pylint: disable=broad-except
+                added_bytes = len(stripped_content) * 2
+            entry["size_bytes"] += added_bytes
+            self.current_size_bytes += added_bytes
+            self.evict_to_limit()
         return entry["stripped_lines"]
 
 

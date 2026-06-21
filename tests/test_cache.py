@@ -1,5 +1,6 @@
 # pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
 # pylint: disable=attribute-defined-outside-init,import-outside-toplevel,consider-using-with
+# pylint: disable=import-error,too-few-public-methods
 
 import os
 import sys
@@ -186,3 +187,45 @@ class TestLRUFileCache(unittest.TestCase):
             0.90 <= ratio <= 1.30,
             f"Heuristic ratio {ratio:.2f} is outside [0.90, 1.30] range"
         )
+
+    def test_stripped_lines_caching_memory_and_eviction(self):
+        class MockProfile:
+            def strip_block_comments(self, content):
+                return content
+
+        profile = MockProfile()
+        measurer = LRUFileCache(max_size_mb=1.0)
+        measurer.get_lines(self.file_path)
+        initial_size = measurer.cache[self.file_path]["size_bytes"]
+
+        # Call get_stripped_content, which should increase size
+        measurer.get_stripped_content(self.file_path, profile)
+        content_size = measurer.cache[self.file_path]["size_bytes"]
+        self.assertGreater(content_size, initial_size)
+
+        # Call get_stripped_lines, which should increase size further
+        measurer.get_stripped_lines(self.file_path, profile)
+        lines_size = measurer.cache[self.file_path]["size_bytes"]
+        self.assertGreater(lines_size, content_size)
+
+        # Verify eviction works with these dynamic sizes
+        f2 = os.path.join(self.temp_dir.name, "test2.txt")
+        with open(f2, "w", newline="\n", encoding="utf-8") as f:
+            f.write("12345")
+        measurer.get_lines(f2)
+        size2 = measurer.cache[f2]["size_bytes"]
+        self.assertGreater(size2, 0)
+
+        # Setup cache that fits exactly the fully loaded first file,
+        # but will evict if we add f2.
+        limit_mb = lines_size / (1024 * 1024)
+        cache = LRUFileCache(max_size_mb=limit_mb)
+        cache.get_lines(self.file_path)
+        cache.get_stripped_lines(self.file_path, profile)
+        self.assertIn(self.file_path, cache.cache)
+
+        # Load second file. Should evict self.file_path because total
+        # size (lines_size + size2) exceeds capacity.
+        cache.get_lines(f2)
+        self.assertNotIn(self.file_path, cache.cache)
+        self.assertIn(f2, cache.cache)
