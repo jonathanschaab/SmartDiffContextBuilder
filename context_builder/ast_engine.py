@@ -174,6 +174,8 @@ def _extract_bounds_non_py_regex(lines, start_idx, target_idx, profile):
 
 def extract_function_bounds_regex(file_path, line_num, file_cache=None):
     """Extract start and end line bounds using linear non-backtracking regex fallback."""
+    if line_num <= 0:
+        return None, None
     if file_cache is None:
         file_cache = get_global_cache()
     profile = get_language_profile(file_path)

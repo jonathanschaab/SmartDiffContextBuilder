@@ -587,6 +587,14 @@ class TestAstEngine(unittest.TestCase):
             extract_function_bounds_regex("short.py", 3, cache),
             (None, None),
         )
+        self.assertEqual(
+            extract_function_bounds_regex("some_file.py", 0, cache),
+            (None, None),
+        )
+        self.assertEqual(
+            extract_function_bounds_regex("some_file.py", -5, cache),
+            (None, None),
+        )
 
         start, end = extract_function_bounds("some_file.py", -10, file_cache=self.cache)
         self.assertIsNone(start)
