@@ -1603,3 +1603,29 @@ class TestLspClient(unittest.TestCase):
             self.assertIn("[Pruned Instances]", res)
             self.assertEqual(res["[Pruned Instances]"][0]["line"], 0)
             self.assertIn("Omitted 1 additional", res["[Pruned Instances]"][0]["code"])
+
+    def test_sort_references_by_closeness_caches_calculations(self):
+        from context_builder.lsp_client import _sort_references_by_closeness
+        import os
+        from urllib.request import pathname2url
+
+        base_dir = os.path.abspath(".")
+        target_file = os.path.join(base_dir, "src", "core", "utils.py")
+
+        ref1 = {"uri": "file://" + pathname2url(os.path.abspath(os.path.join(base_dir, "src", "core", "db.py")))}
+        ref2 = {"uri": ref1["uri"]}
+        ref3 = {"uri": ref1["uri"]}
+
+        refs = [ref1, ref2, ref3]
+
+        with patch("os.path.abspath", wraps=os.path.abspath) as mock_abspath:
+            _sort_references_by_closeness(refs, target_file)
+
+            # Count calls to mock_abspath for db.py
+            # target_file is resolved first, and then reference paths.
+            # If caching works, we should only resolve db.py's path once.
+            db_py_calls = sum(
+                1 for call in mock_abspath.call_args_list
+                if len(call[0]) > 0 and isinstance(call[0][0], str) and "db.py" in call[0][0]
+            )
+            self.assertEqual(db_py_calls, 1)

@@ -840,6 +840,8 @@ def _sort_references_by_closeness(refs, target_file_path):
     target_abs = os.path.normcase(os.path.abspath(target_file_path))
     target_dir = os.path.dirname(target_abs)
 
+    distance_cache = {}
+
     # pylint: disable=too-many-return-statements
     def get_distance(ref):
         if not isinstance(ref, dict):
@@ -847,18 +849,25 @@ def _sort_references_by_closeness(refs, target_file_path):
         ref_uri = ref.get("uri") or ref.get("targetUri", "")
         if not ref_uri:
             return (4, 0)
+
+        if ref_uri in distance_cache:
+            return distance_cache[ref_uri]
+
         try:
             parsed = urllib.parse.urlparse(ref_uri)
             if parsed.scheme != "file":
+                distance_cache[ref_uri] = (4, 0)
                 return (4, 0)
             ref_path = url2pathname(parsed.path)
             ref_abs = os.path.normcase(os.path.abspath(ref_path))
 
             if ref_abs == target_abs:
+                distance_cache[ref_uri] = (0, 0)
                 return (0, 0)
 
             ref_dir = os.path.dirname(ref_abs)
             if ref_dir == target_dir:
+                distance_cache[ref_uri] = (1, 0)
                 return (1, 0)
 
             # Compute distance in directory hierarchy
@@ -873,11 +882,14 @@ def _sort_references_by_closeness(refs, target_file_path):
                     return len(Path(p).parts)
 
                 dist = count_parts(rel_target) + count_parts(rel_ref)
-                return (2, dist)
+                res = (2, dist)
             except ValueError:
                 # Different drives on Windows
-                return (3, 0)
+                res = (3, 0)
+            distance_cache[ref_uri] = res
+            return res
         except Exception:  # pylint: disable=broad-exception-caught
+            distance_cache[ref_uri] = (4, 0)
             return (4, 0)
 
     refs.sort(key=get_distance)
