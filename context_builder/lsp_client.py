@@ -825,6 +825,78 @@ def _get_or_create_lsp_client(
     return LSP_INSTANCES.get(instance_key)
 
 
+def _count_parts(p):
+    """Count components in a normalized relative path using system path separator."""
+    if not p or p == ".":
+        return 0
+    return len(p.split(os.sep))
+
+
+def _sort_references_by_closeness(refs, target_file_path):
+    """Sort a list of LSP reference objects to prioritize those close to the target file.
+
+    Priority order:
+    1. Same file as target (category 0)
+    2. Same directory as target (category 1)
+    3. Closer directories in the directory tree (category 2, ordered by directory distance)
+    4. Distant directories/files (category 3)
+    5. Malformed/missing path (category 4)
+
+    Within each category, Python's stable sort preserves the original order.
+    """
+    target_abs = os.path.normcase(os.path.abspath(target_file_path))
+    target_dir = os.path.dirname(target_abs)
+
+    distance_cache = {}
+
+    # pylint: disable=too-many-return-statements
+    def get_distance(ref):
+        if not isinstance(ref, dict):
+            return (4, 0)
+        ref_uri = ref.get("uri") or ref.get("targetUri", "")
+        if not ref_uri:
+            return (4, 0)
+
+        if ref_uri in distance_cache:
+            return distance_cache[ref_uri]
+
+        try:
+            parsed = urllib.parse.urlparse(ref_uri)
+            if parsed.scheme != "file" or not parsed.path:
+                distance_cache[ref_uri] = (4, 0)
+                return (4, 0)
+            ref_path = url2pathname(parsed.path)
+            ref_abs = os.path.normcase(os.path.abspath(ref_path))
+
+            if ref_abs == target_abs:
+                distance_cache[ref_uri] = (0, 0)
+                return (0, 0)
+
+            ref_dir = os.path.dirname(ref_abs)
+            if ref_dir == target_dir:
+                distance_cache[ref_uri] = (1, 0)
+                return (1, 0)
+
+            # Compute distance in directory hierarchy
+            try:
+                common = os.path.commonpath([target_dir, ref_dir])
+                rel_target = os.path.relpath(target_dir, common)
+                rel_ref = os.path.relpath(ref_dir, common)
+
+                dist = _count_parts(rel_target) + _count_parts(rel_ref)
+                res = (2, dist)
+            except ValueError:
+                # Different drives on Windows
+                res = (3, 0)
+            distance_cache[ref_uri] = res
+            return res
+        except Exception:  # pylint: disable=broad-exception-caught
+            distance_cache[ref_uri] = (4, 0)
+            return (4, 0)
+
+    refs.sort(key=get_distance)
+
+
 def get_lsp_references(
     file_path,
     line_num,
@@ -899,6 +971,7 @@ def get_lsp_references(
     total_refs = len(refs)
 
     if not disable_pruning and total_refs > max_depth:
+        _sort_references_by_closeness(refs, file_path)
         refs = refs[:max_depth]
         warn_once(
             f"prune_{func_name}",

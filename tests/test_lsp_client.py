@@ -1508,3 +1508,127 @@ class TestLspClient(unittest.TestCase):
         mock_warn.assert_called_once()
         # Ensure it didn't call the client to get references
         mock_client.get_references.assert_not_called()
+
+    def test_sort_references_by_closeness(self):
+        from context_builder.lsp_client import _sort_references_by_closeness
+        import os
+        from urllib.request import pathname2url
+
+        base_dir = os.path.abspath(".")
+        target_file = os.path.join(base_dir, "src", "core", "utils.py")
+
+        def make_ref(path):
+            uri = "file://" + pathname2url(os.path.abspath(path))
+            return {"uri": uri}
+
+        ref_same_file = make_ref(target_file)
+        ref_same_dir = make_ref(os.path.join(base_dir, "src", "core", "db.py"))
+        ref_sub_dir = make_ref(os.path.join(base_dir, "src", "core", "nested", "foo.py"))
+        ref_distant_dir = make_ref(os.path.join(base_dir, "tests", "test_utils.py"))
+        ref_invalid = {"uri": "invalid_uri"}
+        ref_empty_path = {"uri": "file://"}
+
+        # Shuffle them
+        refs = [
+            ref_distant_dir,
+            ref_sub_dir,
+            ref_same_file,
+            ref_invalid,
+            ref_same_dir,
+            ref_empty_path,
+        ]
+
+        _sort_references_by_closeness(refs, target_file)
+
+        self.assertEqual(refs[0], ref_same_file)
+        self.assertEqual(refs[1], ref_same_dir)
+        self.assertEqual(refs[2], ref_sub_dir)
+        self.assertEqual(refs[3], ref_distant_dir)
+        self.assertEqual(refs[4], ref_invalid)
+        self.assertEqual(refs[5], ref_empty_path)
+
+    @patch("context_builder.lsp_client.USE_LSP", True)
+    @patch("context_builder.lsp_client.LSP_INSTANCES")
+    def test_get_lsp_references_pruning_sorts_first(self, mock_instances):
+        import os
+        from urllib.request import pathname2url
+
+        mock_client = MagicMock()
+        mock_instances.__contains__.return_value = True
+        mock_instances.get.return_value = mock_client
+
+        base_dir = os.path.abspath(".")
+        target_file = os.path.join(base_dir, "src", "core", "utils.py")
+
+        def make_ref(path, line):
+            uri = "file://" + pathname2url(os.path.abspath(path))
+            return {
+                "uri": uri,
+                "range": {
+                    "start": {"line": line, "character": 0},
+                    "end": {"line": line, "character": 10}
+                }
+            }
+
+        ref_same_file = make_ref(target_file, 5)
+        ref_same_dir = make_ref(os.path.join(base_dir, "src", "core", "db.py"), 10)
+        ref_distant_dir = make_ref(os.path.join(base_dir, "tests", "test_utils.py"), 15)
+
+        # The LSP returns them in arbitrary order: distant, then same_file, then same_dir
+        mock_client.get_references.return_value = [
+            ref_distant_dir,
+            ref_same_file,
+            ref_same_dir,
+        ]
+
+        mock_file_cache = MagicMock()
+        # Mock lines for any requested file path:
+        mock_file_cache.get_lines.return_value = ["def utils(): pass"] * 30
+
+        with patch("os.path.exists", return_value=True):
+            # Query with max_depth=2. This should prune the 3rd ref (the distant one).
+            res = get_lsp_references(
+                target_file, 1, "utils", timeout=5.0, max_depth=2,
+                disable_pruning=False, file_cache=mock_file_cache
+            )
+
+            # Verify the resulting callers dictionary
+            # It should have target_file and db.py references, but not test_utils.py (distant)
+            rel_same_file = os.path.relpath(target_file, os.getcwd())
+            rel_same_dir = os.path.relpath(os.path.join(base_dir, "src", "core", "db.py"), os.getcwd())
+            rel_distant_dir = os.path.relpath(os.path.join(base_dir, "tests", "test_utils.py"), os.getcwd())
+
+            self.assertIn(rel_same_file, res)
+            self.assertIn(rel_same_dir, res)
+            self.assertNotIn(rel_distant_dir, res)
+
+            # It should also contain the special '[Pruned Instances]' key
+            self.assertIn("[Pruned Instances]", res)
+            self.assertEqual(res["[Pruned Instances]"][0]["line"], 0)
+            self.assertIn("Omitted 1 additional", res["[Pruned Instances]"][0]["code"])
+
+    def test_sort_references_by_closeness_caches_calculations(self):
+        from context_builder.lsp_client import _sort_references_by_closeness
+        import os
+        from urllib.request import pathname2url
+
+        base_dir = os.path.abspath(".")
+        target_file = os.path.join(base_dir, "src", "core", "utils.py")
+
+        ref1 = {"uri": "file://" + pathname2url(os.path.abspath(os.path.join(base_dir, "src", "core", "db.py")))}
+        ref2 = {"uri": ref1["uri"]}
+        ref3 = {"uri": ref1["uri"]}
+
+        refs = [ref1, ref2, ref3]
+
+        with patch("os.path.abspath", wraps=os.path.abspath) as mock_abspath:
+            _sort_references_by_closeness(refs, target_file)
+
+            # Count calls to mock_abspath for db.py
+            # target_file is resolved first, and then reference paths.
+            # If caching works, we should only resolve db.py's path once.
+            db_py_calls = sum(
+                1 for call in mock_abspath.call_args_list
+                if len(call[0]) > 0 and isinstance(call[0][0], str) and "db.py" in call[0][0]
+            )
+            self.assertEqual(db_py_calls, 1)
