@@ -10,6 +10,18 @@ from .languages import get_language_profile
 
 WARNED_MISSING_DEPS = set()
 
+_IGNORED_DIRS = {
+    "node_modules",
+    "target",
+    ".git",
+    "sdk",
+    "venv",
+    ".venv",
+    "env",
+    "build",
+    "out",
+}
+
 
 def warn_once(key, message):
     """Print a notice warning once per key to avoid stdout pollution.
@@ -518,40 +530,26 @@ def is_in_repo(file_path):
 
     if not file_path:
         return False
-    # Normalize paths
-    normalized = normalize_for_path_match(file_path)
-    # Check exact directory component matches
-    ignored_dirs = {
-        "node_modules",
-        "target",
-        ".git",
-        "sdk",
-        "venv",
-        ".venv",
-        "env",
-        "build",
-        "out",
-    }
-    components = normalized.split("/")
-    if any(c in ignored_dirs for c in components):
-        return False
-
-    # Check system/absolute path substring matches
-    for pattern in ["/usr/include/", "/lib/"]:
-        if pattern in normalized:
-            return False
     try:
         abs_path = os.path.abspath(file_path)
         repo_root = os.path.abspath(".")
         case_sensitive = detect_root_case_sensitivity(repo_root)
-        return (
-            path_is_within_root(
-                abs_path,
-                repo_root,
-                case_sensitive=case_sensitive,
-            )
-            and os.path.exists(file_path)
-        )
+
+        # Check if the path is within the repository root
+        if not path_is_within_root(abs_path, repo_root, case_sensitive=case_sensitive):
+            return False
+
+        if not os.path.exists(file_path):
+            return False
+
+        # Check exact directory component matches relative to the repository root
+        rel_path = os.path.relpath(abs_path, repo_root)
+        normalized_rel = normalize_for_path_match(rel_path)
+        components = normalized_rel.split("/")
+        if any(c in _IGNORED_DIRS for c in components):
+            return False
+
+        return True
     except Exception:  # pylint: disable=broad-exception-caught
         return False
 
