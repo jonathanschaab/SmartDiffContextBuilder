@@ -200,6 +200,10 @@ def reset_config():
         'build_directories': [
             "build", "out", "target", "cmake-build-debug", "cmake-build-release"
         ],
+        'ignored_directories': [
+            "node_modules", "target", ".git", "sdk", "venv", ".venv", "env", "build", "out",
+            "vendor", "bin", "obj", ".gradle"
+        ],
 
         # Externalized language mappings & queries
         'lang_map': DEFAULT_LANG_MAP.copy(),
@@ -247,7 +251,8 @@ def generate_commented_config(active_options):
             'lsp_timeout', 'ripgrep_timeout', 'git_timeout',
             'git_probe_timeout', 'no_language_server', 'compare',
             'skip_ffi', 'skip_macro_expansion', 'path_case_rules',
-            'caller_depth', 'callee_depth', 'commit_range', 'build_directories'
+            'caller_depth', 'callee_depth', 'commit_range', 'build_directories',
+            'ignored_directories'
         ],
         "Language Definitions": [
             'lang_map', 'bindings', 'dependency_query_strings', 'callee_query_strings'

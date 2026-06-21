@@ -509,6 +509,7 @@ def _merge_json_mappings(args, active_overrides):
         "callee_ignored_keywords": "callee_ignored_keywords",
         "ffi_patterns": "ffi_patterns",
         "build_directories": "build_directories",
+        "ignored_directories": "ignored_directories",
     }
 
     for arg_name, cfg_key in json_mappings.items():
@@ -913,6 +914,12 @@ def main():
         type=str,
         default=None,
         help="JSON list of build directories to scan",
+    )
+    parser.add_argument(
+        "--ignored-directories",
+        type=str,
+        default=None,
+        help="JSON list of directories to ignore when scanning/traversing",
     )
 
     args = parser.parse_args()

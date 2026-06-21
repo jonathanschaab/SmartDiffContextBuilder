@@ -21,7 +21,22 @@ _IGNORED_DIRS = {
     "env",
     "build",
     "out",
+    "vendor",  # Go local dependencies
+    "bin",     # C# / .NET compiled binaries
+    "obj",     # C# / .NET intermediate object files
+    ".gradle", # Java / Kotlin caches
 }
+
+class _IgnoredDirsCache:  # pylint: disable=too-few-public-methods
+    """Cache container for ignored directories filtering."""
+
+    def __init__(self):
+        self.config_copy = None
+        self.case_sensitive = None
+        self.ignored_dirs = None
+
+
+_IGNORED_DIRS_CACHE = _IgnoredDirsCache()
 
 
 def warn_once(key, message):
@@ -514,7 +529,7 @@ def ripgrep_filter(files, token, fixed_strings=True, fallback_hint=None):
     return _fallback_candidates(files, fallback_hint)
 
 
-def is_in_repo(file_path):
+def is_in_repo(file_path):  # pylint: disable=too-many-branches
     """Check if file_path is within the current repository and is not ignored.
 
     Args:
@@ -527,6 +542,7 @@ def is_in_repo(file_path):
         detect_root_case_sensitivity,
         normalize_for_path_match,
         path_is_within_root,
+        to_forward_slashes,
     )
 
     if not file_path:
@@ -550,12 +566,44 @@ def is_in_repo(file_path):
         # If the path points to a file, the last component is the filename and is excluded.
         if not case_sensitive:
             rel_path = os.path.relpath(abs_path.lower(), repo_root.lower())
+            normalized_rel = normalize_for_path_match(rel_path)
         else:
             rel_path = os.path.relpath(abs_path, repo_root)
-        normalized_rel = normalize_for_path_match(rel_path)
+            normalized_rel = to_forward_slashes(rel_path)
+
         components = normalized_rel.split("/")
         dir_components = components if is_dir else components[:-1]
-        if any(c in _IGNORED_DIRS for c in dir_components):
+
+        ignored_dirs_config = CONFIG.get("ignored_directories")
+
+        if (
+            _IGNORED_DIRS_CACHE.config_copy == ignored_dirs_config
+            and _IGNORED_DIRS_CACHE.case_sensitive == case_sensitive
+        ):
+            ignored_dirs = _IGNORED_DIRS_CACHE.ignored_dirs
+        else:
+            if ignored_dirs_config is not None:
+                # Copy the list/tuple/set to detect in-place mutations safely
+                if isinstance(ignored_dirs_config, list):
+                    _IGNORED_DIRS_CACHE.config_copy = list(ignored_dirs_config)
+                elif isinstance(ignored_dirs_config, set):
+                    _IGNORED_DIRS_CACHE.config_copy = set(ignored_dirs_config)
+                elif isinstance(ignored_dirs_config, tuple):
+                    _IGNORED_DIRS_CACHE.config_copy = tuple(ignored_dirs_config)
+                else:
+                    _IGNORED_DIRS_CACHE.config_copy = ignored_dirs_config
+
+                if not case_sensitive:
+                    ignored_dirs = {str(d).lower() for d in ignored_dirs_config}
+                else:
+                    ignored_dirs = {str(d) for d in ignored_dirs_config}
+            else:
+                _IGNORED_DIRS_CACHE.config_copy = None
+                ignored_dirs = _IGNORED_DIRS
+            _IGNORED_DIRS_CACHE.case_sensitive = case_sensitive
+            _IGNORED_DIRS_CACHE.ignored_dirs = ignored_dirs
+
+        if any(c in ignored_dirs for c in dir_components):
             return False
 
         return True

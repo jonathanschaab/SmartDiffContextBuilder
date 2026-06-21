@@ -1,7 +1,7 @@
 # pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
 # pylint: disable=attribute-defined-outside-init,import-outside-toplevel,protected-access
 # pylint: disable=redefined-outer-name,reimported,unused-argument,consider-using-from-import
-# pylint: disable=unspecified-encoding,too-few-public-methods,too-many-public-methods
+# pylint: disable=unspecified-encoding,too-few-public-methods,too-many-public-methods,too-many-lines
 # pylint: disable=broad-exception-caught
 
 import os
@@ -214,7 +214,10 @@ class TestSysUtils(unittest.TestCase):
             os.chdir(temp_dir)
             try:
                 # Check newly added ignored paths
-                for ignore_name in ["venv", ".venv", "env", "build", "out"]:
+                for ignore_name in [
+                    "venv", ".venv", "env", "build", "out",
+                    "vendor", "bin", "obj", ".gradle"
+                ]:
                     p_dir = os.path.join(temp_dir, ignore_name)
                     os.makedirs(p_dir, exist_ok=True)
                     p_file = os.path.join(p_dir, "some_file.py")
@@ -234,6 +237,11 @@ class TestSysUtils(unittest.TestCase):
                     "about",
                     "without",
                     "timeout",
+                    "bind",
+                    "cabin",
+                    "object",
+                    "vendor_data",
+                    "gradle",
                 ]
                 for safe_name in safe_names:
                     p_dir = os.path.join(temp_dir, safe_name)
@@ -271,6 +279,135 @@ class TestSysUtils(unittest.TestCase):
                     )
             finally:
                 os.chdir(old_cwd)
+
+    def test_is_in_repo_configured_ignores(self):
+        import tempfile
+        import os
+        from context_builder.sys_utils import is_in_repo
+        from context_builder.config import CONFIG
+
+        old_cwd = os.getcwd()
+        old_ignored = CONFIG.get("ignored_directories")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.chdir(temp_dir)
+            try:
+                # Configure custom ignored directories
+                CONFIG["ignored_directories"] = ["custom_ignore_dir", "AnotherIgnoredDir"]
+
+                # Check that standard node_modules is NOT ignored because it was overridden
+                node_modules_dir = os.path.join(temp_dir, "node_modules")
+                os.makedirs(node_modules_dir, exist_ok=True)
+                node_modules_file = os.path.join(node_modules_dir, "some_file.js")
+                with open(node_modules_file, "w") as f:
+                    f.write("pass")
+                self.assertTrue(is_in_repo(node_modules_file))
+
+                # Check that configured custom ignore directories are ignored
+                for ignore_name in ["custom_ignore_dir", "AnotherIgnoredDir"]:
+                    p_dir = os.path.join(temp_dir, ignore_name)
+                    os.makedirs(p_dir, exist_ok=True)
+                    p_file = os.path.join(p_dir, "some_file.py")
+                    with open(p_file, "w") as f:
+                        f.write("pass")
+                    self.assertFalse(
+                        is_in_repo(p_file),
+                        f"{ignore_name} should be ignored"
+                    )
+            finally:
+                os.chdir(old_cwd)
+                if old_ignored is not None:
+                    CONFIG["ignored_directories"] = old_ignored
+                else:
+                    CONFIG.pop("ignored_directories", None)
+
+    def test_is_in_repo_configured_ignores_case_sensitivity(self):
+        import tempfile
+        import os
+        from unittest.mock import patch
+        from context_builder.sys_utils import is_in_repo
+        from context_builder.config import CONFIG
+
+        old_cwd = os.getcwd()
+        old_ignored = CONFIG.get("ignored_directories")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.chdir(temp_dir)
+            try:
+                CONFIG["ignored_directories"] = ["AnotherIgnoredDir"]
+
+                # Case 1: Case Sensitive filesystem
+                patch_path = "context_builder.path_utils.detect_root_case_sensitivity"
+                with patch(patch_path, return_value=True):
+                    # exact match ignored
+                    exact_dir = os.path.join(temp_dir, "AnotherIgnoredDir")
+                    os.makedirs(exact_dir, exist_ok=True)
+                    exact_file = os.path.join(exact_dir, "file.py")
+                    with open(exact_file, "w") as f:
+                        f.write("pass")
+                    self.assertFalse(is_in_repo(exact_file))
+
+                    # lowercase match is NOT ignored
+                    lower_dir = os.path.join(temp_dir, "anotherignoreddir")
+                    os.makedirs(lower_dir, exist_ok=True)
+                    lower_file = os.path.join(lower_dir, "file.py")
+                    with open(lower_file, "w") as f:
+                        f.write("pass")
+                    self.assertTrue(is_in_repo(lower_file))
+
+                # Case 2: Case Insensitive filesystem
+                with patch(patch_path, return_value=False):
+                    # both should be ignored
+                    self.assertFalse(is_in_repo(exact_file))
+                    self.assertFalse(is_in_repo(lower_file))
+
+            finally:
+                os.chdir(old_cwd)
+                if old_ignored is not None:
+                    CONFIG["ignored_directories"] = old_ignored
+                else:
+                    CONFIG.pop("ignored_directories", None)
+
+    def test_is_in_repo_configured_ignores_in_place_mutation(self):
+        import tempfile
+        import os
+        from context_builder.sys_utils import is_in_repo
+        from context_builder.config import CONFIG
+
+        old_cwd = os.getcwd()
+        old_ignored = CONFIG.get("ignored_directories")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.chdir(temp_dir)
+            try:
+                # 1. Start with a list config
+                CONFIG["ignored_directories"] = ["dir_one"]
+                dir_one_path = os.path.join(temp_dir, "dir_one")
+                os.makedirs(dir_one_path, exist_ok=True)
+                file_one = os.path.join(dir_one_path, "file.py")
+                with open(file_one, "w") as f:
+                    f.write("pass")
+
+                # Checks: dir_one should be ignored
+                self.assertFalse(is_in_repo(file_one))
+
+                # dir_two should NOT be ignored yet
+                dir_two_path = os.path.join(temp_dir, "dir_two")
+                os.makedirs(dir_two_path, exist_ok=True)
+                file_two = os.path.join(dir_two_path, "file.py")
+                with open(file_two, "w") as f:
+                    f.write("pass")
+                self.assertTrue(is_in_repo(file_two))
+
+                # 2. Mutate CONFIG["ignored_directories"] IN-PLACE
+                CONFIG["ignored_directories"].append("dir_two")
+
+                # Checks: dir_two should now be ignored (in-place mutation detected)
+                self.assertFalse(is_in_repo(file_two))
+
+            finally:
+                os.chdir(old_cwd)
+                if old_ignored is not None:
+                    CONFIG["ignored_directories"] = old_ignored
+                else:
+                    CONFIG.pop("ignored_directories", None)
 
     def test_is_in_repo_with_system_path_in_root(self):
         from context_builder.sys_utils import is_in_repo
