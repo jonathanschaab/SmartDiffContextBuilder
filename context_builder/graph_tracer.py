@@ -249,12 +249,13 @@ class CallGraphTracer:
 
     def _enqueue_identifiers(self, file_path, line_numbers, queue, processed_vars, depth):
         """Extract identifiers from lines in a file and enqueue them for tracing."""
-        pos_ids = extract_identifiers_with_positions(file_path, line_numbers, self.file_cache)
+        abs_path = os.path.abspath(file_path)
+        pos_ids = extract_identifiers_with_positions(abs_path, line_numbers, self.file_cache)
         for var_name, ln, char_off in pos_ids:
-            var_key = (file_path, var_name, ln, char_off)
+            var_key = (abs_path, var_name, ln, char_off)
             if var_key not in processed_vars:
                 processed_vars.add(var_key)
-                queue.append((file_path, var_name, ln, char_off, depth))
+                queue.append((abs_path, var_name, ln, char_off, depth))
 
     def trace_data_flow(self, diff_files_lines):
         """Trace data flow / variable definitions recursively from modified diff lines."""

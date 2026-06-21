@@ -2550,13 +2550,30 @@ class TestAstEngine(unittest.TestCase):
         with patch("context_builder.sys_utils.get_git_tracked_files") as mock_tracked:
             # We want tracked files to include sys_utils.py and other_module.py
             sys_utils_path = os.path.join(self.temp_dir.name, "sys_utils.py")
-            other_module_path = os.path.join(self.temp_dir.name, "other_module.py")
+            other_module_path = os.path.join(os.path.dirname(self.temp_dir.name), "other_module.py")
             with open(sys_utils_path, "w", encoding="utf-8") as f:
                 f.write("")
             with open(other_module_path, "w", encoding="utf-8") as f:
                 f.write("")
             mock_tracked.return_value = [sys_utils_path, other_module_path]
 
-            res = get_directly_included_files(py_file, PYTHON, cache)
-            self.assertIn(os.path.abspath(sys_utils_path), res)
-            self.assertIn(os.path.abspath(other_module_path), res)
+            try:
+                res = get_directly_included_files(py_file, PYTHON, cache)
+                self.assertIn(os.path.abspath(sys_utils_path), res)
+                self.assertIn(os.path.abspath(other_module_path), res)
+            finally:
+                if os.path.exists(other_module_path):
+                    os.remove(other_module_path)
+
+    def test_resolve_variable_definition_regex_fallback_empty_file(self):
+        from context_builder.ast_engine import resolve_variable_definition_regex_fallback
+        from context_builder.languages.python import PYTHON
+
+        cache = MagicMock()
+        cache.get_lines.return_value = []
+
+        res = resolve_variable_definition_regex_fallback(
+            "empty.py", "my_var", 1, cache, PYTHON
+        )
+        self.assertEqual(res["resolved_type"], "none")
+        self.assertEqual(res["definitions"], [])

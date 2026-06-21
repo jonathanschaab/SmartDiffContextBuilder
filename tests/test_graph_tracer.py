@@ -1,6 +1,6 @@
 # pylint: disable=missing-class-docstring,missing-function-docstring
 # pylint: disable=attribute-defined-outside-init,unused-argument,consider-using-with
-# pylint: disable=import-outside-toplevel,protected-access,too-few-public-methods
+# pylint: disable=import-outside-toplevel,protected-access,too-few-public-methods,too-many-public-methods
 
 """Unit tests for CallGraphTracer."""
 
@@ -677,3 +677,33 @@ class TestCallGraphTracer(unittest.TestCase):
 
         # var_b should still be resolved and added
         vm.add_data_state.assert_called_once_with("file_b.py", 20, "var_b = 2")
+
+    @patch("context_builder.graph_tracer.extract_identifiers_with_positions")
+    def test_enqueue_identifiers_normalizes_to_abspath(self, mock_extract):
+        import os
+        mock_extract.return_value = [("var_x", 5, 2)]
+
+        vm = MagicMock()
+        tracer = CallGraphTracer(MagicMock(), [], set(), {}, vm, None)
+
+        queue = deque()
+        processed_vars = set()
+
+        # Enqueue using a relative path
+        tracer._enqueue_identifiers("relative_dir/file.py", [5], queue, processed_vars, 1)
+
+        self.assertEqual(len(queue), 1)
+        enqueued_path, var_name, line_num, char_offset, depth = queue[0]
+
+        # Verify it became absolute path
+        self.assertTrue(os.path.isabs(enqueued_path))
+        self.assertEqual(var_name, "var_x")
+        self.assertEqual(line_num, 5)
+        self.assertEqual(char_offset, 2)
+        self.assertEqual(depth, 1)
+
+        # Check processed_vars set has absolute path as well
+        self.assertEqual(len(processed_vars), 1)
+        key = list(processed_vars)[0]
+        self.assertTrue(os.path.isabs(key[0]))
+        self.assertEqual(key[1], "var_x")

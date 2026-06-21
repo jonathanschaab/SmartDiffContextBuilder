@@ -1038,8 +1038,7 @@ def resolve_variable_definition(
         }
 
     # 3. Constrained Regex Fallback (Safety Net)
-    ext = os.path.splitext(file_path)[1].lower()
-    profile = get_language_profile(ext)
+    profile = get_language_profile(file_path)
     return resolve_variable_definition_regex_fallback(
         file_path, var_name, line_num, file_cache, profile
     )
@@ -1388,9 +1387,19 @@ def get_directly_included_files(file_path, profile, file_cache):  # pylint: disa
                     includes.append(parts)
             m2 = re.match(r'^from\s+([A-Za-z0-9_.]+)\s+import', cleaned)
             if m2:
-                parts_list = [p for p in m2.group(1).split('.') if p]
-                if parts_list:
-                    includes.append(parts_list[0])
+                raw_module = m2.group(1)
+                dots_match = re.match(r'^(\.+)', raw_module)
+                if dots_match:
+                    dots = dots_match.group(1)
+                    remainder_raw = raw_module[len(dots):]
+                    remainder = remainder_raw.split('.')[0] if remainder_raw else ''
+                    if remainder:
+                        climb = "../" * (len(dots) - 1) if len(dots) > 1 else ""
+                        includes.append(climb + remainder)
+                else:
+                    parts = raw_module.split('.')[0]
+                    if parts:
+                        includes.append(parts)
         elif profile.name == 'java':
             m = re.match(r'^import\s+([A-Za-z0-9_.]+)\s*;', cleaned)
             if m:
@@ -1456,12 +1465,13 @@ def resolve_global_definition(file_path, var_name, profile, file_cache, searched
         if not os.path.exists(f):
             return None
         lines = file_cache.get_lines(f)
-        global_scope, _ = build_scopes(f, profile, file_cache)
+        f_profile = get_language_profile(f)
+        global_scope, _ = build_scopes(f, f_profile, file_cache)
         global_lines = get_lines_directly_in_scope(global_scope, lines)
         for ln in global_lines:
             line = lines[ln - 1]
-            cleaned = profile.strip_strings_and_comments(line)
-            if is_line_definition_of_var(cleaned, var_name, profile):
+            cleaned = f_profile.strip_strings_and_comments(line)
+            if is_line_definition_of_var(cleaned, var_name, f_profile):
                 try:
                     rel_path = os.path.relpath(f, os.getcwd())
                 except ValueError:
@@ -1502,6 +1512,8 @@ def resolve_variable_definition_regex_fallback(
 ):  # pylint: disable=too-many-branches
     """Fall back to regex resolution scanning local scopes, class members, and globals."""
     lines = file_cache.get_lines(file_path)
+    if not lines:
+        return {"resolved_type": "none", "definitions": []}
     global_scope, all_scopes = build_scopes(file_path, profile, file_cache)
 
     func_start, _ = extract_function_bounds(file_path, line_num, file_cache=file_cache)
