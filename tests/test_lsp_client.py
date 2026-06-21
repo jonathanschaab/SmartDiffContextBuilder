@@ -1637,7 +1637,7 @@ class TestLspClient(unittest.TestCase):
     @patch("context_builder.lsp_client.LSP_INSTANCES")
     def test_get_lsp_definition_and_type_definition(self, mock_instances):
         from context_builder.lsp_client import get_lsp_definition, get_lsp_type_definition
-        
+
         mock_client = MagicMock()
         mock_instances.get.return_value = mock_client
         mock_instances.__contains__.return_value = True
@@ -1649,7 +1649,7 @@ class TestLspClient(unittest.TestCase):
                 "end": {"line": 10, "character": 10}
             }
         }]
-        
+
         mock_client.get_type_definition.return_value = [{
             "uri": "file:///c:/path/to/type.py",
             "range": {
@@ -1660,7 +1660,7 @@ class TestLspClient(unittest.TestCase):
 
         with patch("os.path.splitext", return_value=("", ".py")), \
              patch("context_builder.lsp_client.get_language_profile") as mock_profile_getter:
-            
+
             mock_profile = MagicMock()
             mock_profile.lsp_command = ["some-lsp"]
             mock_profile_getter.return_value = mock_profile
@@ -1675,35 +1675,27 @@ class TestLspClient(unittest.TestCase):
 
     def test_serialize_locations(self):
         from context_builder.lsp_client import _serialize_locations
-        
-        class FakePos:
-            def __init__(self, line, character):
-                self.line = line
-                self.character = character
-        
-        class FakeRange:
-            def __init__(self, start, end):
-                self.start = start
-                self.end = end
-                
-        class FakeLocation:
-            def __init__(self, uri, rng):
-                self.uri = uri
-                self.range = rng
+        from types import SimpleNamespace
 
-        loc = FakeLocation("file:///a.py", FakeRange(FakePos(1, 2), FakePos(3, 4)))
+        loc = SimpleNamespace(
+            uri="file:///a.py",
+            range=SimpleNamespace(
+                start=SimpleNamespace(line=1, character=2),
+                end=SimpleNamespace(line=3, character=4)
+            )
+        )
         res = _serialize_locations(loc)
         self.assertEqual(len(res), 1)
         self.assertEqual(res[0]["uri"], "file:///a.py")
         self.assertEqual(res[0]["range"]["start"]["line"], 1)
 
-        class FakeLocationLink:
-            def __init__(self, target_uri, target_range):
-                self.target_uri = target_uri
-                self.target_range = target_range
-
-        link = FakeLocationLink("file:///b.py", FakeRange(FakePos(5, 6), FakePos(7, 8)))
+        link = SimpleNamespace(
+            target_uri="file:///b.py",
+            target_range=SimpleNamespace(
+                start=SimpleNamespace(line=5, character=6),
+                end=SimpleNamespace(line=7, character=8)
+            )
+        )
         res2 = _serialize_locations(link)
         self.assertEqual(len(res2), 1)
         self.assertEqual(res2[0]["targetUri"], "file:///b.py")
-

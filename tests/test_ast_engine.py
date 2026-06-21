@@ -2234,7 +2234,6 @@ class TestAstEngine(unittest.TestCase):
                 self.children = children or []
                 self.parent = parent
                 self.text = text.encode('utf-8') if isinstance(text, str) else text
-                self.id = id(self)
                 for child in self.children:
                     child.parent = self
             def child_by_field_name(self, name):
@@ -2261,10 +2260,9 @@ class TestAstEngine(unittest.TestCase):
                 self.text = text.encode('utf-8') if isinstance(text, str) else text
                 self.children = children or []
                 self.parent = parent
-                self.id = id(self)
                 for child in self.children:
                     child.parent = self
-            def child_by_field_name(self, name):
+            def child_by_field_name(self, _name):
                 return None
 
         x_node = FakeNode("identifier", 2, "my_var")
@@ -2285,7 +2283,7 @@ class TestAstEngine(unittest.TestCase):
 
         with patch("context_builder.ast_engine.extract_function_bounds") as mock_bounds:
             mock_bounds.return_value = (0, 3)
-            
+
             line, code = resolve_local_variable_ast("file.py", "my_var", 3, file_cache=cache)
             self.assertEqual(line, 2)
             self.assertEqual(code, "my_var = 42")
@@ -2302,7 +2300,7 @@ class TestAstEngine(unittest.TestCase):
         self.assertEqual(res["definitions"][0]["line"], 2)
 
         mock_local.return_value = (None, None)
-        
+
         mock_def.return_value = [{
             "uri": "file:///c:/path/to/global.py",
             "range": {
@@ -2320,10 +2318,10 @@ class TestAstEngine(unittest.TestCase):
 
         with patch("os.path.exists") as mock_exists:
             mock_exists.return_value = True
-            
+
             cache = MagicMock()
             cache.get_lines.side_effect = lambda path: ["code 1", "code 2", "code 3", "code 4", "global_var = 10", "code 6", "code 7", "code 8", "code 9", "class User {}"]
-            
+
             res = resolve_variable_definition("file.py", "my_var", 3, 10, file_cache=cache)
             self.assertEqual(res["resolved_type"], "global_and_type")
             self.assertEqual(len(res["definitions"]), 2)
@@ -2497,5 +2495,68 @@ class TestAstEngine(unittest.TestCase):
             res_fail = resolve_variable_definition(main_file, "non_global", 3, 10, file_cache=cache)
             self.assertEqual(res_fail["resolved_type"], "none")
 
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_extract_identifiers_with_positions_ast_unicode(self, mock_engine):
+        from context_builder.ast_engine import extract_identifiers_with_positions_ast
 
+        class FakeNode:
+            def __init__(self, node_type, start_line, byte_col, text=None, children=None):
+                self.type = node_type
+                self.start_point = (start_line - 1, byte_col)
+                self.text = text.encode('utf-8') if isinstance(text, str) else text
+                self.children = children or []
+                self.parent = None
+                for child in self.children:
+                    child.parent = self
 
+        # 🌟 is 4 bytes in UTF-8, but 2 character units in UTF-16 surrogate pairs.
+        # "🌟_x" at byte offset 4 is "_x" at UTF-16 character offset 2.
+        x_node = FakeNode("identifier", 2, 4, "_x")
+        op_node = FakeNode("=", 2, 8, "=")
+        assign_node = FakeNode("assignment_expression", 2, 0, children=[x_node, op_node])
+
+        root = FakeNode("module", 1, 0, children=[assign_node])
+        parser = MagicMock()
+        parser.parse.return_value = SimpleNamespace(root_node=root)
+        mock_engine.parsers = {".py": parser}
+        mock_engine.is_supported.return_value = True
+
+        cache = MagicMock()
+        cache.get_bytes.return_value = "line 1\n🌟_x = 1".encode("utf-8")
+        cache.get_lines.return_value = ["line 1", "🌟_x = 1"]
+
+        res = extract_identifiers_with_positions_ast("file.py", [2], file_cache=cache)
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0][0], "_x")
+        self.assertEqual(res[0][1], 2)
+        self.assertEqual(res[0][2], 2)  # Column character offset in UTF-16
+
+    def test_get_directly_included_files_relative_imports(self):
+        from context_builder.ast_engine import get_directly_included_files
+        from context_builder.languages.python import PYTHON
+        from context_builder.cache import LRUFileCache
+
+        cache = LRUFileCache(capacity=5)
+        # Python relative imports with dots
+        py_code = (
+            "from .sys_utils import something\n"
+            "from ..other_module import something_else\n"
+        )
+        py_file = os.path.join(self.temp_dir.name, "relative_test.py")
+        with open(py_file, "w", encoding="utf-8") as f:
+            f.write(py_code)
+
+        # Mock get_git_tracked_files
+        with patch("context_builder.sys_utils.get_git_tracked_files") as mock_tracked:
+            # We want tracked files to include sys_utils.py and other_module.py
+            sys_utils_path = os.path.join(self.temp_dir.name, "sys_utils.py")
+            other_module_path = os.path.join(self.temp_dir.name, "other_module.py")
+            with open(sys_utils_path, "w", encoding="utf-8") as f:
+                f.write("")
+            with open(other_module_path, "w", encoding="utf-8") as f:
+                f.write("")
+            mock_tracked.return_value = [sys_utils_path, other_module_path]
+
+            res = get_directly_included_files(py_file, PYTHON, cache)
+            self.assertIn(os.path.abspath(sys_utils_path), res)
+            self.assertIn(os.path.abspath(other_module_path), res)

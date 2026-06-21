@@ -278,10 +278,18 @@ class CallGraphTracer:
             if depth >= data_depth:
                 continue
 
-            res = resolve_variable_definition(
-                file_path, var_name, line_num, char_offset,
-                file_cache=self.file_cache, timeout=lsp_timeout
-            )
+            try:
+                res = resolve_variable_definition(
+                    file_path, var_name, line_num, char_offset,
+                    file_cache=self.file_cache, timeout=lsp_timeout
+                )
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                print(
+                    f"\n[SmartDiffContextBuilder Warning] Failed to resolve "
+                    f"variable definition for {var_name}: {e}"
+                )
+                continue
+
             for d in res.get("definitions", []):
                 def_path = d["path"]
                 def_line = d["line"]

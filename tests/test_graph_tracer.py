@@ -654,3 +654,26 @@ class TestCallGraphTracer(unittest.TestCase):
 
         mock_extract.assert_not_called()
         mock_resolve.assert_not_called()
+
+    @patch("context_builder.graph_tracer.extract_identifiers_with_positions")
+    @patch("context_builder.graph_tracer.resolve_variable_definition")
+    def test_trace_data_flow_exception_handling(self, mock_resolve, mock_extract):
+        mock_extract.return_value = [("var_a", 10, 5), ("var_b", 12, 5)]
+
+        # First call raises an exception, second call succeeds
+        mock_resolve.side_effect = [
+            Exception("Simulated LSP crash"),
+            {"definitions": [{"path": "file_b.py", "line": 20, "code": "var_b = 2"}]}
+        ]
+
+        vm = MagicMock()
+        vm.data_states = []
+
+        args = SimpleNamespace(data_depth=1, lsp_timeout=5.0)
+        tracer = CallGraphTracer(MagicMock(), [], set(), {}, vm, args)
+
+        diff_files_lines = {"file_a.py": [10]}
+        tracer.trace_data_flow(diff_files_lines)
+
+        # var_b should still be resolved and added
+        vm.add_data_state.assert_called_once_with("file_b.py", 20, "var_b = 2")

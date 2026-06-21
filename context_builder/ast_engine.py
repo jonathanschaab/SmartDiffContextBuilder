@@ -739,6 +739,7 @@ def extract_identifiers_with_positions_ast(file_path, line_numbers, file_cache=N
 
     results = []
     line_set = set(line_numbers)
+    lines = file_cache.get_lines(file_path)
 
     def walk(node):
         if node.type == 'identifier':
@@ -756,7 +757,13 @@ def extract_identifiers_with_positions_ast(file_path, line_numbers, file_cache=N
                     if isinstance(text, bytes):
                         text = text.decode('utf-8', errors='ignore')
                     if text:
-                        results.append((text, node_line, node.start_point[1]))
+                        char_offset = node.start_point[1]
+                        if lines and 1 <= node_line <= len(lines):
+                            line_str = lines[node_line - 1]
+                            prefix_bytes = line_str.encode("utf-8")[:node.start_point[1]]
+                            prefix_str = prefix_bytes.decode("utf-8", errors="ignore")
+                            char_offset = len(prefix_str.encode("utf-16-le")) // 2
+                        results.append((text, node_line, char_offset))
 
         for child in node.children:
             walk(child)
@@ -869,16 +876,16 @@ def get_lhs_identifiers(node):
 
         # Check for skip fields
         right_fields = {'right', 'init', 'value'}
-        skip_nodes = set()
+        skip_nodes = []
         for field in right_fields:
             child = curr.child_by_field_name(field)
             if child:
-                skip_nodes.add(child.id)
+                skip_nodes.append(child)
 
         for idx, child in enumerate(curr.children):
             if operator_idx != -1 and idx >= operator_idx:
                 break
-            if child.id not in skip_nodes:
+            if child not in skip_nodes:
                 walk_lhs(child)
 
     walk_lhs(node)
@@ -1381,8 +1388,9 @@ def get_directly_included_files(file_path, profile, file_cache):  # pylint: disa
                     includes.append(parts)
             m2 = re.match(r'^from\s+([A-Za-z0-9_.]+)\s+import', cleaned)
             if m2:
-                parts = m2.group(1).split('.')[0]
-                includes.append(parts)
+                parts_list = [p for p in m2.group(1).split('.') if p]
+                if parts_list:
+                    includes.append(parts_list[0])
         elif profile.name == 'java':
             m = re.match(r'^import\s+([A-Za-z0-9_.]+)\s*;', cleaned)
             if m:
