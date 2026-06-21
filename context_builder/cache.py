@@ -157,6 +157,37 @@ class LRUFileCache:
         """
         return self._load(file_path)["bytes"]
 
+    def get_stripped_content(self, file_path, profile):
+        """Retrieve block-comment-stripped content of the file, caching the result.
+
+        Args:
+            file_path (str): Path to the file.
+            profile (LanguageProfile): The language profile of the file.
+
+        Returns:
+            str: Block-comment-stripped string content.
+        """
+        entry = self._load(file_path)
+        if "stripped_content" not in entry:
+            entry["stripped_content"] = profile.strip_block_comments(entry["content"])
+        return entry["stripped_content"]
+
+    def get_stripped_lines(self, file_path, profile):
+        """Retrieve block-comment-stripped lines of the file, caching the result.
+
+        Args:
+            file_path (str): Path to the file.
+            profile (LanguageProfile): The language profile of the file.
+
+        Returns:
+            list: List of stripped lines in the file.
+        """
+        entry = self._load(file_path)
+        if "stripped_lines" not in entry:
+            stripped_content = self.get_stripped_content(file_path, profile)
+            entry["stripped_lines"] = stripped_content.splitlines(keepends=True)
+        return entry["stripped_lines"]
+
 
 # Global dictionary holder to avoid 'global' keyword warning in get_global_cache
 _CACHE_HOLDER = {}
