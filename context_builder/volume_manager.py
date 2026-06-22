@@ -173,7 +173,7 @@ class VolumeManager:
 
         # Level 1: Core Logic
         def format_object(obj):
-            lang = LANG_MAP.get(os.path.splitext(obj["file"])[1], "text")
+            lang = LANG_MAP.get(os.path.splitext(obj["file"])[1].lower(), "text")
             return (
                 f"### `{obj['file']}` -> `{obj['function_name']}()`\n"
                 f"```{lang}\n{obj['source_block']}\n```\n"
@@ -183,14 +183,14 @@ class VolumeManager:
 
         # Level 1.25: Data & State Context
         def format_data_state(d):
-            lang = LANG_MAP.get(os.path.splitext(d["path"])[1], "text")
+            lang = LANG_MAP.get(os.path.splitext(d["path"])[1].lower(), "text")
             return f"### `{d['path']}` (Line {d['line']})\n```{lang}\n{d['code']}\n```\n"
 
         try_append("## 3. Data & State Context\n", self.data_states, format_data_state)
 
         # Level 1.5: Downstream Callees
         def format_callee(c):
-            lang = LANG_MAP.get(os.path.splitext(c["file"])[1], "text")
+            lang = LANG_MAP.get(os.path.splitext(c["file"])[1].lower(), "text")
             return (
                 f"### `{c['file']}` -> `{c['function_name']}()` "
                 f"(Distance {c['distance']})\n```{lang}\n{c['code']}\n```\n"
@@ -200,7 +200,7 @@ class VolumeManager:
 
         # Level 2: Unit Tests
         def format_test(t):
-            lang = LANG_MAP.get(os.path.splitext(t["file"])[1], "text")
+            lang = LANG_MAP.get(os.path.splitext(t["file"])[1].lower(), "text")
             return f"### `{t['file']}` (Line {t['line']})\n```{lang}\n{t['code']}\n```\n"
 
         try_append("## 5. Validating Unit Tests\n", self.unit_tests, format_test)

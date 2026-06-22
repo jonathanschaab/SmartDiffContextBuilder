@@ -13,26 +13,6 @@ from context_builder.ast_engine import (
 
 class TestAstCaching(unittest.TestCase):
 
-    def setUp(self):
-        # Clear caches before each test to ensure isolation
-        for fn in (
-            find_class_definition,
-            get_directly_included_files,
-            resolve_global_definition,
-        ):
-            if hasattr(fn, "cache"):
-                delattr(fn, "cache")
-
-    def tearDown(self):
-        # Clear caches after each test
-        for fn in (
-            find_class_definition,
-            get_directly_included_files,
-            resolve_global_definition,
-        ):
-            if hasattr(fn, "cache"):
-                delattr(fn, "cache")
-
     @patch("context_builder.ast_engine.ripgrep_filter")
     @patch("context_builder.sys_utils.get_git_tracked_files")
     @patch("context_builder.ast_engine.get_directly_included_files")
@@ -70,9 +50,9 @@ class TestAstCaching(unittest.TestCase):
         file_cache.get_lines.assert_not_called()
 
         # 2. Positive result caching check
-        # Reset cache
-        if hasattr(find_class_definition, "cache"):
-            delattr(find_class_definition, "cache")
+        # Reset cache on file_cache instance
+        if hasattr(file_cache, "find_class_definition_cache"):
+            delattr(file_cache, "find_class_definition_cache")
 
         file_cache.get_lines.return_value = ["class TargetClass:", "    pass"]
 
@@ -171,8 +151,8 @@ class TestAstCaching(unittest.TestCase):
             file_cache.get_lines.assert_not_called()
 
             # 2. Positive result caching check
-            if hasattr(resolve_global_definition, "cache"):
-                delattr(resolve_global_definition, "cache")
+            if hasattr(file_cache, "resolve_global_definition_cache"):
+                delattr(file_cache, "resolve_global_definition_cache")
 
             mock_is_def.return_value = True
 
@@ -193,3 +173,36 @@ class TestAstCaching(unittest.TestCase):
             self.assertEqual(res3, res4)
             file_cache.get_lines.assert_not_called()
             mock_is_def.assert_not_called()
+
+    @patch("context_builder.ast_engine.ripgrep_filter")
+    @patch("context_builder.sys_utils.get_git_tracked_files")
+    @patch("context_builder.ast_engine.get_directly_included_files")
+    def test_cache_instance_isolation(
+        self, mock_get_includes, mock_get_git_tracked, mock_ripgrep
+    ):
+        mock_get_includes.return_value = []
+        mock_get_git_tracked.return_value = []
+        mock_ripgrep.return_value = []
+
+        profile = MagicMock()
+        profile.strip_strings_and_comments = lambda x: x
+
+        file_cache_1 = MagicMock()
+        file_cache_1.get_lines.return_value = ["class Other:", "    pass"]
+
+        file_cache_2 = MagicMock()
+        file_cache_2.get_lines.return_value = ["class TargetClass:", "    pass"]
+
+        # Call find_class_definition on file_cache_1 (negative result cached on file_cache_1)
+        res1 = find_class_definition("start.py", "TargetClass", profile, file_cache_1)
+        self.assertEqual(res1, (None, None))
+
+        # Reset mock_get_includes so we can check if it gets called for file_cache_2
+        mock_get_includes.reset_mock()
+
+        # Call find_class_definition on file_cache_2
+        # (should NOT use the negative cache from file_cache_1)
+        res2 = find_class_definition("start.py", "TargetClass", profile, file_cache_2)
+        self.assertEqual(res2, ("start.py", 1))
+        # Since it was not cached on file_cache_2, it should have done the lookup and read the lines
+        file_cache_2.get_lines.assert_called_once_with("start.py")

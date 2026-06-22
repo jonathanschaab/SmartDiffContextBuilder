@@ -146,7 +146,7 @@ def _mine_single_file(
         return
 
     lines = file_cache.get_lines(file_path)
-    ext = os.path.splitext(file_path)[1]
+    ext = os.path.splitext(file_path)[1].lower()
 
     ast_success = False
     if AST_ENGINE.is_supported(ext):

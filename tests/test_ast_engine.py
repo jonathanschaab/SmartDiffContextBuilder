@@ -3039,3 +3039,64 @@ class TestAstEngine(unittest.TestCase):
             res = get_directly_included_files(file_path, PYTHON, cache)
             self.assertIn(os.path.abspath(real_module_path), res)
             self.assertNotIn(os.path.abspath(commented_module_path), res)
+
+    def test_get_stripped_lines_defensive_null_cache(self):
+        from context_builder.ast_engine import _get_stripped_lines
+        from context_builder.languages.c_family import C_FAMILY
+        from context_builder.cache import get_global_cache
+
+        # Setup C++ file in temp dir
+        cpp_file = os.path.join(self.temp_dir.name, "test_null_cache.cpp")
+        with open(cpp_file, "w", encoding="utf-8") as f:
+            f.write("/* comment */\nx = 1;")
+
+        # When file_cache is None, it should default to get_global_cache()
+        global_cache = get_global_cache()
+        global_cache.get_lines(cpp_file)
+
+        # Call with file_cache=None
+        lines = _get_stripped_lines(None, cpp_file, C_FAMILY)
+        # The block comment is stripped, leaving only the line ending
+        self.assertIn(lines[0], ("\n", "\r\n"))
+        self.assertEqual(lines[1], "x = 1;")
+
+    def test_deeply_nested_ast_traversal_no_recursion_error(self):
+        from context_builder.ast_engine import extract_identifiers_with_positions_ast, get_lhs_identifiers
+
+        class FakeNode:
+            def __init__(self, node_type, start_line, byte_col, text=None, children=None):
+                self.type = node_type
+                self.start_point = (start_line - 1, byte_col)
+                self.text = text.encode('utf-8') if isinstance(text, str) else text
+                self.children = children or []
+                self.parent = None
+                for child in self.children:
+                    child.parent = self
+
+            def child_by_field_name(self, _name):
+                return None
+
+        # Build a deeply nested structure of depth 2000
+        # If it were recursive, it would throw RecursionError
+        curr = FakeNode("identifier", 1, 0, "target_var")
+        for _ in range(2000):
+            curr = FakeNode("nested_block", 1, 0, children=[curr])
+
+        # Test get_lhs_identifiers
+        res_lhs = get_lhs_identifiers(curr)
+        self.assertEqual(res_lhs, ["target_var"])
+
+        # Test extract_identifiers_with_positions_ast with mocked parser
+        with patch("context_builder.ast_engine.AST_ENGINE") as mock_engine:
+            parser = MagicMock()
+            parser.parse.return_value = SimpleNamespace(root_node=curr)
+            mock_engine.parsers = {".py": parser}
+            mock_engine.is_supported.return_value = True
+
+            cache = MagicMock()
+            cache.get_bytes.return_value = b"target_var"
+            cache.get_lines.return_value = ["target_var"]
+
+            res_pos = extract_identifiers_with_positions_ast("file.py", [1], file_cache=cache)
+            self.assertEqual(len(res_pos), 1)
+            self.assertEqual(res_pos[0][0], "target_var")

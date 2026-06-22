@@ -26,8 +26,22 @@ LANG_MAP = ConfigDictProxy('lang_map')
 
 
 
+def _fallback_strip(lines, profile):
+    """Fallback utility to strip comments from line lists without trailing newlines."""
+    lines_with_nl = [
+        (l if l.endswith('\n') or l.endswith('\r') else l + '\n')
+        for l in lines
+    ]
+    content = "".join(lines_with_nl)
+    stripped = profile.strip_block_comments(content)
+    return stripped.splitlines(keepends=True)
+
+
 def _get_stripped_lines(file_cache, file_path, profile):  # pylint: disable=too-many-return-statements
     """Retrieve stripped lines from cache, with fallback compatibility for mocks."""
+    if file_cache is None:
+        file_cache = get_global_cache()
+
     mock_types = ('MagicMock', 'Mock', 'NonCallableMagicMock', 'NonCallableMock')
     profile_is_mock = type(profile).__name__ in mock_types
     strip_is_mock = (
@@ -42,13 +56,7 @@ def _get_stripped_lines(file_cache, file_path, profile):  # pylint: disable=too-
             if type(lines).__name__ not in mock_types:
                 if profile_is_mock or strip_is_mock:
                     return lines
-                lines_with_nl = [
-                    (l if l.endswith('\n') or l.endswith('\r') else l + '\n')
-                    for l in lines
-                ]
-                content = "".join(lines_with_nl)
-                stripped = profile.strip_block_comments(content)
-                return stripped.splitlines(keepends=True)
+                return _fallback_strip(lines, profile)
             return lines
         return res
 
@@ -56,13 +64,7 @@ def _get_stripped_lines(file_cache, file_path, profile):  # pylint: disable=too-
     if type(lines).__name__ not in mock_types:
         if profile_is_mock or strip_is_mock:
             return lines
-        lines_with_nl = [
-            (l if l.endswith('\n') or l.endswith('\r') else l + '\n')
-            for l in lines
-        ]
-        content = "".join(lines_with_nl)
-        stripped = profile.strip_block_comments(content)
-        return stripped.splitlines(keepends=True)
+        return _fallback_strip(lines, profile)
     return lines
 
 
@@ -143,7 +145,7 @@ class AstEngine:
     def is_supported(self, ext):
         """Check if tree-sitter parsing is supported for a given file extension."""
         self.initialize()
-        return ext in self.parsers
+        return ext.lower() in self.parsers
 
 
 AST_ENGINE = AstEngine()
@@ -163,14 +165,20 @@ def extract_function_bounds_ast(file_path, line_num, ext, file_cache=None):
     tree = AST_ENGINE.parsers[ext].parse(source_bytes)
     target_row = line_num - 1
 
-    def walk(node):
-        found = None
-        for child in node.children:
+    target_node = None
+    current = tree.root_node
+    while current:
+        found_child = None
+        for child in current.children:
             if child.start_point[0] <= target_row <= child.end_point[0]:
-                found = walk(child) or child
-        return found
+                found_child = child
+                break
+        if found_child:
+            target_node = found_child
+            current = found_child
+        else:
+            break
 
-    target_node = walk(tree.root_node)
     if not target_node:
         return None, None
 
@@ -630,15 +638,18 @@ def extract_callees_ast(file_path, start_line, end_line, ext, file_cache):
     source_bytes = file_cache.get_bytes(file_path)
     tree = AST_ENGINE.parsers[ext].parse(source_bytes)
 
-    def walk(node):
-        for child in node.children:
-            if child.start_point[0] == start_line:
-                return child
-            found = walk(child)
-            if found:
-                return found
-        return None
-    func_node = walk(tree.root_node) or tree.root_node
+    func_node = None
+    stack = list(reversed(tree.root_node.children))
+    while stack:
+        curr = stack.pop()
+        if curr.start_point[0] == start_line:
+            func_node = curr
+            break
+        for child in reversed(curr.children):
+            stack.append(child)
+
+    if func_node is None:
+        func_node = tree.root_node
 
     query_strings = CONFIG['callee_query_strings']
     q_str = query_strings.get(ext)
@@ -763,7 +774,7 @@ def find_callee_definition(callee_name, all_repo_files, file_cache=None):
     return None, None
 
 
-def extract_identifiers_with_positions_ast(file_path, line_numbers, file_cache=None):
+def extract_identifiers_with_positions_ast(file_path, line_numbers, file_cache=None):  # pylint: disable=too-many-branches,too-many-nested-blocks
     """Query Tree-sitter for raw (identifier) nodes with their positions within modified lines."""
     if file_cache is None:
         file_cache = get_global_cache()
@@ -784,7 +795,9 @@ def extract_identifiers_with_positions_ast(file_path, line_numbers, file_cache=N
     line_set = set(line_numbers)
     lines = file_cache.get_lines(file_path)
 
-    def walk(node):
+    stack = [tree.root_node]
+    while stack:  # pylint: disable=too-many-nested-blocks
+        node = stack.pop()
         if node.type == 'identifier':
             node_line = node.start_point[0] + 1
             if node_line in line_set:
@@ -808,10 +821,8 @@ def extract_identifiers_with_positions_ast(file_path, line_numbers, file_cache=N
                             char_offset = len(prefix_str.encode("utf-16-le")) // 2
                         results.append((text, node_line, char_offset))
 
-        for child in node.children:
-            walk(child)
-
-    walk(tree.root_node)
+        for child in reversed(node.children):
+            stack.append(child)
     return results
 
 
@@ -926,14 +937,16 @@ def get_lhs_identifiers(node):
     """
     ids = []
 
-    def walk_lhs(curr):
+    stack = [node]
+    while stack:
+        curr = stack.pop()
         if curr.type == 'identifier':
             text = curr.text
             if isinstance(text, bytes):
                 text = text.decode('utf-8', errors='ignore')
             if text:
                 ids.append(text)
-            return
+            continue
 
         # Check for operator child
         operator_idx = -1
@@ -950,13 +963,16 @@ def get_lhs_identifiers(node):
             if child:
                 skip_nodes.append(child)
 
+        children_to_push = []
         for idx, child in enumerate(curr.children):
             if operator_idx != -1 and idx >= operator_idx:
                 break
             if child not in skip_nodes:
-                walk_lhs(child)
+                children_to_push.append(child)
 
-    walk_lhs(node)
+        for child in reversed(children_to_push):
+            stack.append(child)
+
     return ids
 
 
@@ -1239,17 +1255,17 @@ def is_line_definition_of_var(cleaned_line, var_name, profile):
     return False
 
 
-_CLASS_MEMBERS_CACHE = {}
-
-
-
-
-
 def get_class_members(file_path, class_name, profile, file_cache):  # pylint: disable=too-many-branches,too-many-statements
     """Extract and cache member variables defined in a class."""
+    if file_cache is None:
+        file_cache = get_global_cache()
+
+    if not isinstance(getattr(file_cache, "class_members_cache", None), dict):
+        file_cache.class_members_cache = {}
+
     cache_key = (file_path, class_name)
-    if cache_key in _CLASS_MEMBERS_CACHE:
-        return _CLASS_MEMBERS_CACHE[cache_key]
+    if cache_key in file_cache.class_members_cache:
+        return file_cache.class_members_cache[cache_key]
 
     lines = _get_stripped_lines(file_cache, file_path, profile)
     class_line_num = None
@@ -1314,11 +1330,11 @@ def get_class_members(file_path, class_name, profile, file_cache):  # pylint: di
             unique_members.append((name, ln))
 
     # Bounded cache to avoid leaks
-    if len(_CLASS_MEMBERS_CACHE) >= 1024:
-        first_key = next(iter(_CLASS_MEMBERS_CACHE))
-        _CLASS_MEMBERS_CACHE.pop(first_key, None)
+    if len(file_cache.class_members_cache) >= 1024:
+        first_key = next(iter(file_cache.class_members_cache))
+        file_cache.class_members_cache.pop(first_key, None)
 
-    _CLASS_MEMBERS_CACHE[cache_key] = unique_members
+    file_cache.class_members_cache[cache_key] = unique_members
     return unique_members
 
 
@@ -1361,11 +1377,15 @@ def get_parent_classes(file_path, class_name, profile, file_cache):
 
 def find_class_definition(start_file, class_name, profile, file_cache):
     """Locate the file and line number where class_name is defined."""
-    if not hasattr(find_class_definition, "cache"):
-        find_class_definition.cache = {}
+    if file_cache is None:
+        file_cache = get_global_cache()
+
+    if not isinstance(getattr(file_cache, "find_class_definition_cache", None), dict):
+        file_cache.find_class_definition_cache = {}
+
     cache_key = (start_file, class_name)
-    if cache_key in find_class_definition.cache:
-        return find_class_definition.cache[cache_key]
+    if cache_key in file_cache.find_class_definition_cache:
+        return file_cache.find_class_definition_cache[cache_key]
 
     def _find():
         lines = _get_stripped_lines(file_cache, start_file, profile)
@@ -1408,7 +1428,7 @@ def find_class_definition(start_file, class_name, profile, file_cache):
         return None, None
 
     res = _find()
-    find_class_definition.cache[cache_key] = res
+    file_cache.find_class_definition_cache[cache_key] = res
     return res
 
 
@@ -1498,11 +1518,15 @@ def _parse_python_imports(cleaned, includes):
 
 def get_directly_included_files(file_path, profile, file_cache):  # pylint: disable=too-many-branches,too-many-statements
     """Find files directly imported or included in the source file."""
-    if not hasattr(get_directly_included_files, "cache"):
-        get_directly_included_files.cache = {}
+    if file_cache is None:
+        file_cache = get_global_cache()
+
+    if not isinstance(getattr(file_cache, "get_directly_included_files_cache", None), dict):
+        file_cache.get_directly_included_files_cache = {}
+
     cache_key = file_path
-    if cache_key in get_directly_included_files.cache:
-        return get_directly_included_files.cache[cache_key]
+    if cache_key in file_cache.get_directly_included_files_cache:
+        return file_cache.get_directly_included_files_cache[cache_key]
 
     def _get_files():  # pylint: disable=too-many-branches,too-many-statements
         lines = _get_stripped_lines(file_cache, file_path, profile)
@@ -1576,17 +1600,21 @@ def get_directly_included_files(file_path, profile, file_cache):  # pylint: disa
         return resolved_paths
 
     res = _get_files()
-    get_directly_included_files.cache[cache_key] = res
+    file_cache.get_directly_included_files_cache[cache_key] = res
     return res
 
 
 def resolve_global_definition(file_path, var_name, profile, file_cache, searched_files=None):
     """Search globally for var_name in current file, imports, and repo files."""
-    if not hasattr(resolve_global_definition, "cache"):
-        resolve_global_definition.cache = {}
+    if file_cache is None:
+        file_cache = get_global_cache()
+
+    if not isinstance(getattr(file_cache, "resolve_global_definition_cache", None), dict):
+        file_cache.resolve_global_definition_cache = {}
+
     cache_key = (file_path, var_name)
-    if cache_key in resolve_global_definition.cache:
-        return resolve_global_definition.cache[cache_key]
+    if cache_key in file_cache.resolve_global_definition_cache:
+        return file_cache.resolve_global_definition_cache[cache_key]
 
     def _resolve():
         if searched_files is None:
@@ -1651,7 +1679,7 @@ def resolve_global_definition(file_path, var_name, profile, file_cache, searched
         return []
 
     res = _resolve()
-    resolve_global_definition.cache[cache_key] = res
+    file_cache.resolve_global_definition_cache[cache_key] = res
     return res
 
 
