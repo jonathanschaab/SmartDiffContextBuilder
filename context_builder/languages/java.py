@@ -19,6 +19,18 @@ class JavaProfile(LanguageProfile):
     uses_indentation_blocks = False
     lsp_command = ("jdtls",)
     multiline_string_delimiters = ('"""',)
+    keywords = frozenset({
+        'abstract', 'continue', 'for', 'new', 'switch', 'assert', 'default',
+        'goto', 'package', 'synchronized', 'boolean', 'do', 'if', 'private',
+        'this', 'break', 'double', 'implements', 'protected', 'throw',
+        'byte', 'else', 'import', 'public', 'throws', 'case', 'enum',
+        'instanceof', 'return', 'transient', 'catch', 'extends', 'int', 'short',
+        'try', 'char', 'final', 'interface', 'static', 'void', 'class',
+        'finally', 'long', 'strictfp', 'volatile', 'const', 'float', 'native',
+        'super', 'while', 'record', 'yield', 'non-sealed', 'permits', 'sealed',
+        'var'
+    })
+    declaration_query = "[(local_variable_declaration) @decl (assignment_expression) @assign]"
 
     def get_definition_patterns(self, func_name):
         lead_b, trail_b = self._get_boundaries(func_name)

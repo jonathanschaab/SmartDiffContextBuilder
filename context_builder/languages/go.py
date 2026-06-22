@@ -11,6 +11,17 @@ class GoProfile(LanguageProfile):
     name = "go"
     extensions = frozenset({".go"})
     multiline_string_delimiters = ("`",)
+    keywords = frozenset({
+        'break', 'default', 'func', 'interface', 'select', 'case', 'defer',
+        'go', 'map', 'struct', 'chan', 'else', 'goto', 'package', 'switch',
+        'const', 'fallthrough', 'if', 'range', 'type', 'continue', 'for',
+        'import', 'return', 'var'
+    })
+    declaration_query = (
+        "[(var_declaration) @decl "
+        "(short_var_declaration) @decl "
+        "(assignment_statement) @assign]"
+    )
 
     def get_definition_patterns(self, func_name):
         lead_b, trail_b = self._get_boundaries(func_name)

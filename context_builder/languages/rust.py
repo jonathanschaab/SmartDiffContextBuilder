@@ -18,6 +18,14 @@ class RustProfile(LanguageProfile):
     supports_rust_raw_strings = True
     uses_rust_character_literals = True
     supports_nested_block_comments = True
+    keywords = frozenset({
+        'as', 'async', 'await', 'break', 'const', 'continue', 'crate', 'dyn',
+        'else', 'enum', 'extern', 'false', 'fn', 'for', 'if', 'impl', 'in',
+        'let', 'loop', 'match', 'mod', 'move', 'mut', 'pub', 'ref', 'return',
+        'self', 'Self', 'static', 'struct', 'super', 'trait', 'true', 'type',
+        'union', 'unsafe', 'use', 'where', 'while', 'yield', 'macro_rules'
+    })
+    declaration_query = "[(let_declaration) @decl (assignment_expression) @assign]"
 
     def get_definition_patterns(self, func_name):
         lead_b, trail_b = self._get_boundaries(func_name)

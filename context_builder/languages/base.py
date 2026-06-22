@@ -35,6 +35,8 @@ class LanguageProfile:
     lsp_command = None
     test_query = None
     tests_can_share_source_file = False
+    keywords = frozenset()
+    declaration_query = "[(variable_declaration) @decl (assignment_expression) @assign]"
     multiline_string_delimiters = ()
     supports_cpp_raw_strings = False
     supports_rust_raw_strings = False

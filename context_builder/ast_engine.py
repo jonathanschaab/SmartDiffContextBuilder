@@ -801,7 +801,7 @@ def extract_identifiers_with_positions_regex(file_path, line_numbers, file_cache
 
     profile = get_language_profile(file_path)
     results = []
-    keywords = {'if', 'return', 'while', 'auto', 'int'}
+    keywords = profile.keywords
     line_set = set(line_numbers)
 
     word_pattern = re.compile(r'\b[A-Za-z_][A-Za-z0-9_]*\b')
@@ -946,11 +946,12 @@ def resolve_local_variable_ast(file_path, var_name, ref_line, file_cache=None):
     except Exception:  # pylint: disable=broad-exception-caught
         return None, None
 
+    profile = get_language_profile(ext)
     captures = []
     try:
         query = tree_sitter.Query(
             AST_ENGINE.languages[ext],
-            "[(variable_declaration) @decl (assignment_expression) @assign]"
+            profile.declaration_query
         )
         captures = query.captures(tree.root_node)
     except Exception:  # pylint: disable=broad-exception-caught
@@ -1201,10 +1202,7 @@ def is_line_definition_of_var(cleaned_line, var_name, profile):
 _CLASS_MEMBERS_CACHE = {}
 
 
-_RESERVED_KEYWORDS = {
-    'if', 'for', 'while', 'switch', 'catch', 'return', 'sizeof', 'class',
-    'struct', 'def', 'fn', 'function', 'let', 'const', 'var', 'mut', 'self', 'this'
-}
+
 
 
 def get_class_members(file_path, class_name, profile, file_cache):  # pylint: disable=too-many-branches,too-many-statements
@@ -1245,7 +1243,7 @@ def get_class_members(file_path, class_name, profile, file_cache):  # pylint: di
             lhs = cleaned[:assign_match.start()]
             for m in re.finditer(r'\b[A-Za-z_][A-Za-z0-9_]*\b', lhs):
                 name = m.group(0)
-                if name not in _RESERVED_KEYWORDS:
+                if name not in profile.keywords:
                     members.append((name, ln))
         else:
             decl_match = re.search(
@@ -1253,7 +1251,7 @@ def get_class_members(file_path, class_name, profile, file_cache):  # pylint: di
             )
             if decl_match:
                 name = decl_match.group(1)
-                if name not in _RESERVED_KEYWORDS:
+                if name not in profile.keywords:
                     members.append((name, ln))
 
     if profile.name == 'python':
