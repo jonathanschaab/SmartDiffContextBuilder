@@ -776,7 +776,7 @@ def _find_lsp_func_start_character_ast(
     lines, line_num, func_name, ext, file_path, file_cache, decorator_lookahead
 ):
     """Attempt to locate function identifier starting character index using AST parsing."""
-    # pylint: disable=import-outside-toplevel
+    # pylint: disable=import-outside-toplevel,import-error
     from .ast_engine import AST_ENGINE, HAS_TREESITTER
     import tree_sitter
 

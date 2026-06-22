@@ -80,7 +80,7 @@ def _mine_ast_tests(
         return False
 
     try:
-        import tree_sitter  # pylint: disable=import-outside-toplevel
+        import tree_sitter  # pylint: disable=import-outside-toplevel,import-error
         query = tree_sitter.Query(AST_ENGINE.languages[ext], test_query)
         captures = query.captures(tree.root_node)
         for node, _ in captures:
