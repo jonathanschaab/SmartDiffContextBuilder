@@ -1321,42 +1321,53 @@ def get_parent_classes(file_path, class_name, profile, file_cache):
 
 def find_class_definition(start_file, class_name, profile, file_cache):
     """Locate the file and line number where class_name is defined."""
-    lines = file_cache.get_lines(start_file)
-    class_pattern = re.compile(r'\b(?:class|struct)\s+' + re.escape(class_name) + r'\b')
-    for idx, line in enumerate(lines):
-        cleaned = profile.strip_strings_and_comments(line)
-        if class_pattern.search(cleaned):
-            return start_file, idx + 1
+    if not hasattr(find_class_definition, "cache"):
+        find_class_definition.cache = {}
+    cache_key = (start_file, class_name)
+    if cache_key in find_class_definition.cache:
+        return find_class_definition.cache[cache_key]
 
-    included_files = get_directly_included_files(start_file, profile, file_cache)
-    for inc_file in included_files:
-        if os.path.exists(inc_file):
-            lines = file_cache.get_lines(inc_file)
-            for idx, line in enumerate(lines):
-                cleaned = profile.strip_strings_and_comments(line)
-                if class_pattern.search(cleaned):
-                    return inc_file, idx + 1
+    def _find():
+        lines = file_cache.get_lines(start_file)
+        class_pattern = re.compile(r'\b(?:class|struct)\s+' + re.escape(class_name) + r'\b')
+        for idx, line in enumerate(lines):
+            cleaned = profile.strip_strings_and_comments(line)
+            if class_pattern.search(cleaned):
+                return start_file, idx + 1
 
-    from .sys_utils import get_git_tracked_files  # pylint: disable=import-outside-toplevel
-    ext = os.path.splitext(start_file)[1].lower()
-    tracked_files = get_git_tracked_files()
-    same_ext_files = [
-        f for f in tracked_files
-        if os.path.splitext(f)[1].lower() == ext and f != start_file
-    ]
-    candidate_files = ripgrep_filter(
-        same_ext_files, class_name,
-        fallback_hint=f"class/struct definition of '{class_name}'"
-    )
-    for f in candidate_files:
-        if os.path.exists(f):
-            lines = file_cache.get_lines(f)
-            for idx, line in enumerate(lines):
-                cleaned = profile.strip_strings_and_comments(line)
-                if class_pattern.search(cleaned):
-                    return f, idx + 1
+        included_files = get_directly_included_files(start_file, profile, file_cache)
+        for inc_file in included_files:
+            if os.path.exists(inc_file):
+                lines = file_cache.get_lines(inc_file)
+                for idx, line in enumerate(lines):
+                    cleaned = profile.strip_strings_and_comments(line)
+                    if class_pattern.search(cleaned):
+                        return inc_file, idx + 1
 
-    return None, None
+        from .sys_utils import get_git_tracked_files  # pylint: disable=import-outside-toplevel
+        ext = os.path.splitext(start_file)[1].lower()
+        tracked_files = get_git_tracked_files()
+        same_ext_files = [
+            f for f in tracked_files
+            if os.path.splitext(f)[1].lower() == ext and f != start_file
+        ]
+        candidate_files = ripgrep_filter(
+            same_ext_files, class_name,
+            fallback_hint=f"class/struct definition of '{class_name}'"
+        )
+        for f in candidate_files:
+            if os.path.exists(f):
+                lines = file_cache.get_lines(f)
+                for idx, line in enumerate(lines):
+                    cleaned = profile.strip_strings_and_comments(line)
+                    if class_pattern.search(cleaned):
+                        return f, idx + 1
+
+        return None, None
+
+    res = _find()
+    find_class_definition.cache[cache_key] = res
+    return res
 
 
 def resolve_class_member_definition(
@@ -1445,137 +1456,161 @@ def _parse_python_imports(cleaned, includes):
 
 def get_directly_included_files(file_path, profile, file_cache):  # pylint: disable=too-many-branches,too-many-statements
     """Find files directly imported or included in the source file."""
-    lines = file_cache.get_lines(file_path)
-    includes = []
-    curr_dir = os.path.dirname(file_path)
+    if not hasattr(get_directly_included_files, "cache"):
+        get_directly_included_files.cache = {}
+    cache_key = file_path
+    if cache_key in get_directly_included_files.cache:
+        return get_directly_included_files.cache[cache_key]
 
-    for line in lines:
-        cleaned = line.strip()
-        if not cleaned:
-            continue
+    def _get_files():  # pylint: disable=too-many-branches,too-many-statements
+        lines = file_cache.get_lines(file_path)
+        includes = []
+        curr_dir = os.path.dirname(file_path)
 
-        if profile.name == 'c_family':
-            m = re.match(r'#\s*include\s*["<]([^">]+)[">]', cleaned)
-            if m:
-                includes.append(m.group(1))
-        elif profile.name == 'python':
-            _parse_python_imports(cleaned, includes)
-        elif profile.name == 'java':
-            m = re.match(r'^import\s+([A-Za-z0-9_.]+)\s*;', cleaned)
-            if m:
-                parts = m.group(1).split('.')
-                if parts:
-                    includes.append('/'.join(parts))
-        elif profile.name in ('javascript', 'typescript'):
-            m1 = re.match(r'^import\s+.*\s+from\s+["\']([^"\']+)["\']', cleaned)
-            if m1:
-                includes.append(m1.group(1))
-            m2 = re.search(r'\brequire\s*\(\s*["\']([^"\']+)["\']\s*\)', cleaned)
-            if m2:
-                includes.append(m2.group(1))
-        elif profile.name == 'go':
-            m = re.match(r'^import\s+(?:[A-Za-z0-9_.]+\s+)?["\']([^"\']+)["\']', cleaned)
-            if m:
-                includes.append(m.group(1))
-        elif profile.name == 'rust':
-            m = re.match(r'^use\s+([A-Za-z0-9_:]+)', cleaned)
-            if m:
-                parts = m.group(1).split('::')[0]
-                includes.append(parts)
-
-    from .sys_utils import get_git_tracked_files  # pylint: disable=import-outside-toplevel
-    resolved_paths = []
-    ext = os.path.splitext(file_path)[1].lower()
-    tracked_files = get_git_tracked_files()
-
-    for inc in includes:
-        rel_candidate = os.path.abspath(os.path.join(curr_dir, inc))
-        if os.path.exists(rel_candidate) and os.path.isfile(rel_candidate):
-            resolved_paths.append(rel_candidate)
-            continue
-        if not inc.endswith(ext):
-            rel_candidate_ext = rel_candidate + ext
-            if os.path.exists(rel_candidate_ext) and os.path.isfile(rel_candidate_ext):
-                resolved_paths.append(rel_candidate_ext)
+        for line in lines:
+            cleaned = line.strip()
+            if not cleaned:
                 continue
 
-        inc_norm = inc.replace('\\', '/').rstrip('/')
-        for tf in tracked_files:
-            tf_norm = tf.replace('\\', '/')
-            if (
-                tf_norm.endswith(inc_norm)
-                or tf_norm.endswith(inc_norm + ext)
-                or tf_norm.endswith('/' + inc_norm + '/' + os.path.basename(tf_norm))
-                or tf_norm == inc_norm + '/' + os.path.basename(tf_norm)
-            ):
-                full_tf = os.path.abspath(tf)
-                if os.path.exists(full_tf):
-                    resolved_paths.append(full_tf)
-                    break
+            if profile.name == 'c_family':
+                m = re.match(r'#\s*include\s*["<]([^">]+)[">]', cleaned)
+                if m:
+                    includes.append(m.group(1))
+            elif profile.name == 'python':
+                _parse_python_imports(cleaned, includes)
+            elif profile.name == 'java':
+                m = re.match(r'^import\s+([A-Za-z0-9_.]+)\s*;', cleaned)
+                if m:
+                    parts = m.group(1).split('.')
+                    if parts:
+                        includes.append('/'.join(parts))
+            elif profile.name in ('javascript', 'typescript'):
+                m1 = re.match(r'^import\s+.*\s+from\s+["\']([^"\']+)["\']', cleaned)
+                if m1:
+                    includes.append(m1.group(1))
+                m2 = re.search(r'\brequire\s*\(\s*["\']([^"\']+)["\']\s*\)', cleaned)
+                if m2:
+                    includes.append(m2.group(1))
+            elif profile.name == 'go':
+                m = re.match(r'^import\s+(?:[A-Za-z0-9_.]+\s+)?["\']([^"\']+)["\']', cleaned)
+                if m:
+                    includes.append(m.group(1))
+            elif profile.name == 'rust':
+                m = re.match(r'^use\s+([A-Za-z0-9_:]+)', cleaned)
+                if m:
+                    parts = m.group(1).split('::')[0]
+                    includes.append(parts)
 
-    return resolved_paths
+        from .sys_utils import get_git_tracked_files  # pylint: disable=import-outside-toplevel
+        resolved_paths = []
+        ext = os.path.splitext(file_path)[1].lower()
+        tracked_files = get_git_tracked_files()
+
+        for inc in includes:
+            rel_candidate = os.path.abspath(os.path.join(curr_dir, inc))
+            if os.path.exists(rel_candidate) and os.path.isfile(rel_candidate):
+                resolved_paths.append(rel_candidate)
+                continue
+            if not inc.endswith(ext):
+                rel_candidate_ext = rel_candidate + ext
+                if os.path.exists(rel_candidate_ext) and os.path.isfile(rel_candidate_ext):
+                    resolved_paths.append(rel_candidate_ext)
+                    continue
+
+            inc_norm = inc.replace('\\', '/').rstrip('/')
+            for tf in tracked_files:
+                tf_norm = tf.replace('\\', '/')
+                if (
+                    tf_norm.endswith(inc_norm)
+                    or tf_norm.endswith(inc_norm + ext)
+                    or tf_norm.endswith('/' + inc_norm + '/' + os.path.basename(tf_norm))
+                    or tf_norm == inc_norm + '/' + os.path.basename(tf_norm)
+                ):
+                    full_tf = os.path.abspath(tf)
+                    if os.path.exists(full_tf):
+                        resolved_paths.append(full_tf)
+                        break
+
+        return resolved_paths
+
+    res = _get_files()
+    get_directly_included_files.cache[cache_key] = res
+    return res
 
 
 def resolve_global_definition(file_path, var_name, profile, file_cache, searched_files=None):
     """Search globally for var_name in current file, imports, and repo files."""
-    if searched_files is None:
-        searched_files = set()
+    if not hasattr(resolve_global_definition, "cache"):
+        resolve_global_definition.cache = {}
+    cache_key = (file_path, var_name)
+    if cache_key in resolve_global_definition.cache:
+        return resolve_global_definition.cache[cache_key]
 
-    file_abs = os.path.abspath(file_path)
-    if file_abs in searched_files:
-        return []
-    searched_files.add(file_abs)
+    def _resolve():
+        if searched_files is None:
+            searched_files_local = set()
+        else:
+            searched_files_local = searched_files
 
-    def search_file_globals(f):
-        if not os.path.exists(f):
+        file_abs = os.path.abspath(file_path)
+        if file_abs in searched_files_local:
+            return []
+        searched_files_local.add(file_abs)
+
+        def search_file_globals(f):
+            if not os.path.exists(f):
+                return None
+            lines = file_cache.get_lines(f)
+            if not lines:
+                return None
+            f_profile = get_language_profile(f)
+            global_scope, _ = build_scopes(f, f_profile, file_cache)
+            global_lines = get_lines_directly_in_scope(global_scope, lines)
+            for ln in global_lines:
+                line = lines[ln - 1]
+                cleaned = f_profile.strip_strings_and_comments(line)
+                if is_line_definition_of_var(cleaned, var_name, f_profile):
+                    try:
+                        rel_path = os.path.relpath(f, os.getcwd())
+                    except ValueError:
+                        rel_path = f
+                    return {
+                        "path": rel_path,
+                        "line": ln,
+                        "code": line.strip()
+                    }
             return None
-        lines = file_cache.get_lines(f)
-        if not lines:
-            return None
-        f_profile = get_language_profile(f)
-        global_scope, _ = build_scopes(f, f_profile, file_cache)
-        global_lines = get_lines_directly_in_scope(global_scope, lines)
-        for ln in global_lines:
-            line = lines[ln - 1]
-            cleaned = f_profile.strip_strings_and_comments(line)
-            if is_line_definition_of_var(cleaned, var_name, f_profile):
-                try:
-                    rel_path = os.path.relpath(f, os.getcwd())
-                except ValueError:
-                    rel_path = f
-                return {
-                    "path": rel_path,
-                    "line": ln,
-                    "code": line.strip()
-                }
-        return None
 
-    res = search_file_globals(file_path)
-    if res:
-        return [res]
-
-    included_files = get_directly_included_files(file_path, profile, file_cache)
-    for inc_file in included_files:
-        res = search_file_globals(inc_file)
+        res = search_file_globals(file_path)
         if res:
             return [res]
 
-    from .sys_utils import get_git_tracked_files  # pylint: disable=import-outside-toplevel
-    ext = os.path.splitext(file_path)[1].lower()
-    tracked_files = get_git_tracked_files()
-    same_ext_files = [f for f in tracked_files if os.path.splitext(f)[1].lower() == ext]
-    candidate_files = ripgrep_filter(
-        same_ext_files, var_name,
-        fallback_hint=f"global definition of '{var_name}'"
-    )
-    for f in candidate_files:
-        f_abs = os.path.abspath(f)
-        if f_abs not in searched_files:
-            res = search_file_globals(f_abs)
+        included_files = get_directly_included_files(file_path, profile, file_cache)
+        for inc_file in included_files:
+            res = search_file_globals(inc_file)
             if res:
                 return [res]
 
-    return []
+        from .sys_utils import get_git_tracked_files  # pylint: disable=import-outside-toplevel
+        ext = os.path.splitext(file_path)[1].lower()
+        tracked_files = get_git_tracked_files()
+        same_ext_files = [f for f in tracked_files if os.path.splitext(f)[1].lower() == ext]
+        candidate_files = ripgrep_filter(
+            same_ext_files, var_name,
+            fallback_hint=f"global definition of '{var_name}'"
+        )
+        for f in candidate_files:
+            f_abs = os.path.abspath(f)
+            if f_abs not in searched_files_local:
+                res = search_file_globals(f_abs)
+                if res:
+                    return [res]
+
+        return []
+
+    res = _resolve()
+    resolve_global_definition.cache[cache_key] = res
+    return res
 
 
 def resolve_variable_definition_regex_fallback(
