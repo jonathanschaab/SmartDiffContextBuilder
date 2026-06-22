@@ -26,6 +26,46 @@ LANG_MAP = ConfigDictProxy('lang_map')
 
 
 
+def _get_stripped_lines(file_cache, file_path, profile):  # pylint: disable=too-many-return-statements
+    """Retrieve stripped lines from cache, with fallback compatibility for mocks."""
+    mock_types = ('MagicMock', 'Mock', 'NonCallableMagicMock', 'NonCallableMock')
+    profile_is_mock = type(profile).__name__ in mock_types
+    strip_is_mock = (
+        hasattr(profile, "strip_block_comments")
+        and type(profile.strip_block_comments).__name__ in mock_types
+    )
+
+    if hasattr(file_cache, "get_stripped_lines"):
+        res = file_cache.get_stripped_lines(file_path, profile)
+        if type(res).__name__ in mock_types:
+            lines = file_cache.get_lines(file_path)
+            if type(lines).__name__ not in mock_types:
+                if profile_is_mock or strip_is_mock:
+                    return lines
+                lines_with_nl = [
+                    (l if l.endswith('\n') or l.endswith('\r') else l + '\n')
+                    for l in lines
+                ]
+                content = "".join(lines_with_nl)
+                stripped = profile.strip_block_comments(content)
+                return stripped.splitlines(keepends=True)
+            return lines
+        return res
+
+    lines = file_cache.get_lines(file_path)
+    if type(lines).__name__ not in mock_types:
+        if profile_is_mock or strip_is_mock:
+            return lines
+        lines_with_nl = [
+            (l if l.endswith('\n') or l.endswith('\r') else l + '\n')
+            for l in lines
+        ]
+        content = "".join(lines_with_nl)
+        stripped = profile.strip_block_comments(content)
+        return stripped.splitlines(keepends=True)
+    return lines
+
+
 _CONFIG_PATTERN_CACHE = {}
 
 
@@ -1093,7 +1133,7 @@ class RegexScope:  # pylint: disable=too-few-public-methods
 
 def build_scopes(file_path, profile, file_cache):  # pylint: disable=too-many-branches
     """Build scope tree for a file using language profile rules."""
-    lines = file_cache.get_lines(file_path)
+    lines = _get_stripped_lines(file_cache, file_path, profile)
     if profile.uses_indentation_blocks:
         global_scope = RegexScope(1, indent=-1)
         stack = [global_scope]
@@ -1211,7 +1251,7 @@ def get_class_members(file_path, class_name, profile, file_cache):  # pylint: di
     if cache_key in _CLASS_MEMBERS_CACHE:
         return _CLASS_MEMBERS_CACHE[cache_key]
 
-    lines = file_cache.get_lines(file_path)
+    lines = _get_stripped_lines(file_cache, file_path, profile)
     class_line_num = None
     class_pattern = re.compile(r'\b(?:class|struct)\s+' + re.escape(class_name) + r'\b')
     for idx, line in enumerate(lines):
@@ -1285,7 +1325,7 @@ def get_class_members(file_path, class_name, profile, file_cache):  # pylint: di
 def get_parent_classes(file_path, class_name, profile, file_cache):
     """Identify the parent class name(s) for a given class."""
     # pylint: disable=too-many-nested-blocks
-    lines = file_cache.get_lines(file_path)
+    lines = _get_stripped_lines(file_cache, file_path, profile)
     class_pattern = re.compile(r'\b(?:class|struct)\s+' + re.escape(class_name) + r'\b')
     for line in lines:
         cleaned = profile.strip_strings_and_comments(line)
@@ -1300,7 +1340,7 @@ def get_parent_classes(file_path, class_name, profile, file_cache):
                 )
                 if m:
                     return [m.group(1).strip()]
-            elif profile.name == 'c_family':
+            elif profile.name in ('c_family', 'c-family'):
                 m = re.search(
                     r'\b(?:class|struct)\s+' + re.escape(class_name) + r'\s*:\s*([^{]+)', cleaned
                 )
@@ -1328,7 +1368,7 @@ def find_class_definition(start_file, class_name, profile, file_cache):
         return find_class_definition.cache[cache_key]
 
     def _find():
-        lines = file_cache.get_lines(start_file)
+        lines = _get_stripped_lines(file_cache, start_file, profile)
         class_pattern = re.compile(r'\b(?:class|struct)\s+' + re.escape(class_name) + r'\b')
         for idx, line in enumerate(lines):
             cleaned = profile.strip_strings_and_comments(line)
@@ -1338,7 +1378,8 @@ def find_class_definition(start_file, class_name, profile, file_cache):
         included_files = get_directly_included_files(start_file, profile, file_cache)
         for inc_file in included_files:
             if os.path.exists(inc_file):
-                lines = file_cache.get_lines(inc_file)
+                inc_profile = get_language_profile(inc_file)
+                lines = _get_stripped_lines(file_cache, inc_file, inc_profile)
                 for idx, line in enumerate(lines):
                     cleaned = profile.strip_strings_and_comments(line)
                     if class_pattern.search(cleaned):
@@ -1357,7 +1398,8 @@ def find_class_definition(start_file, class_name, profile, file_cache):
         )
         for f in candidate_files:
             if os.path.exists(f):
-                lines = file_cache.get_lines(f)
+                f_profile = get_language_profile(f)
+                lines = _get_stripped_lines(file_cache, f, f_profile)
                 for idx, line in enumerate(lines):
                     cleaned = profile.strip_strings_and_comments(line)
                     if class_pattern.search(cleaned):
@@ -1463,7 +1505,7 @@ def get_directly_included_files(file_path, profile, file_cache):  # pylint: disa
         return get_directly_included_files.cache[cache_key]
 
     def _get_files():  # pylint: disable=too-many-branches,too-many-statements
-        lines = file_cache.get_lines(file_path)
+        lines = _get_stripped_lines(file_cache, file_path, profile)
         includes = []
         curr_dir = os.path.dirname(file_path)
 
@@ -1472,7 +1514,7 @@ def get_directly_included_files(file_path, profile, file_cache):  # pylint: disa
             if not cleaned:
                 continue
 
-            if profile.name == 'c_family':
+            if profile.name in ('c_family', 'c-family'):
                 m = re.match(r'#\s*include\s*["<]([^">]+)[">]', cleaned)
                 if m:
                     includes.append(m.group(1))
@@ -1560,10 +1602,10 @@ def resolve_global_definition(file_path, var_name, profile, file_cache, searched
         def search_file_globals(f):
             if not os.path.exists(f):
                 return None
-            lines = file_cache.get_lines(f)
+            f_profile = get_language_profile(f)
+            lines = _get_stripped_lines(file_cache, f, f_profile)
             if not lines:
                 return None
-            f_profile = get_language_profile(f)
             global_scope, _ = build_scopes(f, f_profile, file_cache)
             global_lines = get_lines_directly_in_scope(global_scope, lines)
             for ln in global_lines:

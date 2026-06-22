@@ -2901,3 +2901,141 @@ class TestAstEngine(unittest.TestCase):
         self.assertIn(os.path.abspath(sibling_path), res)
         self.assertIn(os.path.abspath(submodule_path), res)
         self.assertIn(os.path.abspath(nested_submodule_path), res)
+
+    def test_build_scopes_ignores_braces_in_block_comments(self):
+        from context_builder.ast_engine import build_scopes
+        from context_builder.languages.c_family import C_FAMILY
+
+        # C++ code with braces inside a multiline block comment
+        code = (
+            "class MyClass {\n"
+            "/*\n"
+            "    void dummy() {\n"
+            "        if (true) {\n"
+            "        }\n"
+            "    }\n"
+            "*/\n"
+            "    int realVar;\n"
+            "};\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "scopes_comments.cpp")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        cache = LRUFileCache(capacity=5)
+        _, all_scopes = build_scopes(file_path, C_FAMILY, cache)
+
+        # The block comment is stripped, so we should only have:
+        # 1. Global scope
+        # 2. MyClass scope
+        # If the block comment wasn't stripped, we would have 3 or more nested scopes.
+        self.assertEqual(len(all_scopes), 2)
+
+    def test_get_class_members_ignores_commented_out_members(self):
+        from context_builder.ast_engine import get_class_members
+        from context_builder.languages.c_family import C_FAMILY
+
+        code = (
+            "class MyClass {\n"
+            "/*\n"
+            "    int commentedVar;\n"
+            "*/\n"
+            "    int realVar;\n"
+            "};\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "members_comments.cpp")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        cache = LRUFileCache(capacity=5)
+        members = get_class_members(file_path, "MyClass", C_FAMILY, cache)
+        names = [m[0] for m in members]
+        self.assertIn("realVar", names)
+        self.assertNotIn("commentedVar", names)
+
+    def test_get_parent_classes_ignores_commented_out_inheritance(self):
+        from context_builder.ast_engine import get_parent_classes
+        from context_builder.languages.c_family import C_FAMILY
+
+        code = (
+            "/*\n"
+            "class MyClass : public CommentedParent {};\n"
+            "*/\n"
+            "class MyClass : public RealParent {};\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "parent_comments.cpp")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        cache = LRUFileCache(capacity=5)
+        parents = get_parent_classes(file_path, "MyClass", C_FAMILY, cache)
+        self.assertEqual(parents, ["RealParent"])
+
+    def test_find_class_definition_ignores_commented_out_class(self):
+        from context_builder.ast_engine import find_class_definition
+        from context_builder.languages.c_family import C_FAMILY
+
+        code = (
+            "/*\n"
+            "class MyClass {};\n"
+            "*/\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "find_comments.cpp")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        cache = LRUFileCache(capacity=5)
+        # Suppress global git search
+        with patch("context_builder.sys_utils.get_git_tracked_files", return_value=[file_path]):
+            f_path, line = find_class_definition(file_path, "MyClass", C_FAMILY, cache)
+            self.assertIsNone(f_path)
+            self.assertIsNone(line)
+
+    def test_resolve_global_definition_ignores_commented_out_globals(self):
+        from context_builder.ast_engine import resolve_global_definition
+        from context_builder.languages.c_family import C_FAMILY
+
+        code = (
+            "/*\n"
+            "int commentedGlobal = 42;\n"
+            "*/\n"
+            "int realGlobal = 100;\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "global_comments.cpp")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        cache = LRUFileCache(capacity=5)
+        with patch("context_builder.sys_utils.get_git_tracked_files", return_value=[file_path]):
+            defs1 = resolve_global_definition(file_path, "commentedGlobal", C_FAMILY, cache)
+            self.assertEqual(defs1, [])
+
+            defs2 = resolve_global_definition(file_path, "realGlobal", C_FAMILY, cache)
+            self.assertEqual(len(defs2), 1)
+            self.assertEqual(defs2[0]["code"], "int realGlobal = 100;")
+
+    def test_get_directly_included_files_ignores_commented_out_imports(self):
+        from context_builder.ast_engine import get_directly_included_files
+        from context_builder.languages.python import PYTHON
+
+        code = (
+            "\"\"\"\n"
+            "import commented_module\n"
+            "\"\"\"\n"
+            "import real_module\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "import_comments.py")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        real_module_path = os.path.join(self.temp_dir.name, "real_module.py")
+        commented_module_path = os.path.join(self.temp_dir.name, "commented_module.py")
+        for p in (real_module_path, commented_module_path):
+            with open(p, "w", encoding="utf-8") as f:
+                f.write("")
+
+        cache = LRUFileCache(capacity=5)
+        with patch("context_builder.sys_utils.get_git_tracked_files", return_value=[real_module_path, commented_module_path]):
+            res = get_directly_included_files(file_path, PYTHON, cache)
+            self.assertIn(os.path.abspath(real_module_path), res)
+            self.assertNotIn(os.path.abspath(commented_module_path), res)
