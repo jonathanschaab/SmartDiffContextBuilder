@@ -2774,3 +2774,88 @@ class TestAstEngine(unittest.TestCase):
         res = resolve_variable_definition("file.cpp", "myVar", 6, 8, file_cache=cache)
         self.assertEqual(res["resolved_type"], "member_regex")
         self.assertEqual(res["definitions"][0]["line"], 3)
+
+    def test_resolve_variable_definition_regex_fallback_parameter(self):
+        from context_builder.ast_engine import resolve_variable_definition
+
+        cache = MagicMock()
+        # Function header with parameter in brace-based language (brace on new line)
+        lines = [
+            "void myFunc(",
+            "    int myParam",
+            ")",
+            "{",
+            "    int x = myParam;",
+            "}"
+        ]
+        cache.get_lines.return_value = lines
+        cache.get_stripped_lines.return_value = lines
+        cache.get_bytes.return_value = "\n".join(lines).encode('utf-8')
+
+        # We try to resolve "myParam" from line 5 (inside myFunc)
+        res = resolve_variable_definition("file.cpp", "myParam", 5, 6, file_cache=cache)
+        self.assertEqual(res["resolved_type"], "local_regex")
+        self.assertEqual(res["definitions"][0]["line"], 2)
+
+    def test_get_directly_included_files_python_as_alias(self):
+        from context_builder.ast_engine import get_directly_included_files
+        from context_builder.languages.python import PYTHON
+        from context_builder.cache import LRUFileCache
+
+        cache = LRUFileCache(capacity=5)
+        py_code = (
+            "import my_module as alias\n"
+            "import package.nested_module as nested_alias, other_module\n"
+        )
+        py_file = os.path.join(self.temp_dir.name, "python_alias_test.py")
+        with open(py_file, "w", encoding="utf-8") as f:
+            f.write(py_code)
+
+        my_module_path = os.path.join(self.temp_dir.name, "my_module.py")
+        other_module_path = os.path.join(self.temp_dir.name, "other_module.py")
+        package_dir = os.path.join(self.temp_dir.name, "package")
+        os.makedirs(package_dir, exist_ok=True)
+        nested_module_path = os.path.join(package_dir, "nested_module.py")
+
+        for path in (my_module_path, other_module_path, nested_module_path):
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("")
+
+        with patch("context_builder.sys_utils.get_git_tracked_files") as mock_tracked:
+            mock_tracked.return_value = [my_module_path, other_module_path, nested_module_path]
+            res = get_directly_included_files(py_file, PYTHON, cache)
+
+        self.assertIn(os.path.abspath(my_module_path), res)
+        self.assertIn(os.path.abspath(other_module_path), res)
+        self.assertIn(os.path.abspath(nested_module_path), res)
+
+    def test_get_directly_included_files_go_alias(self):
+        from context_builder.ast_engine import get_directly_included_files
+        from context_builder.languages.go import GO
+        from context_builder.cache import LRUFileCache
+
+        cache = LRUFileCache(capacity=5)
+        go_code = (
+            "package main\n"
+            "import m \"math\"\n"
+            "import . \"other/pkg\"\n"
+        )
+        go_file = os.path.join(self.temp_dir.name, "go_alias_test.go")
+        with open(go_file, "w", encoding="utf-8") as f:
+            f.write(go_code)
+
+        math_path = os.path.join(self.temp_dir.name, "math.go")
+        pkg_dir = os.path.join(self.temp_dir.name, "other", "pkg")
+        os.makedirs(pkg_dir, exist_ok=True)
+        pkg_path = os.path.join(pkg_dir, "pkg.go")
+
+        for path in (math_path, pkg_path):
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("")
+
+        with patch("context_builder.sys_utils.get_git_tracked_files") as mock_tracked:
+            mock_tracked.return_value = [math_path, pkg_path]
+            res = get_directly_included_files(go_file, GO, cache)
+
+        self.assertIn(os.path.abspath(math_path), res)
+        self.assertIn(os.path.abspath(pkg_path), res)

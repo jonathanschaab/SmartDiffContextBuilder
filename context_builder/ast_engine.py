@@ -1415,7 +1415,9 @@ def get_directly_included_files(file_path, profile, file_cache):  # pylint: disa
             m1 = re.match(r'^import\s+([A-Za-z0-9_.,\s]+)', cleaned)
             if m1:
                 for parts in m1.group(1).split(','):
-                    parts = parts.strip().replace('.', '/')
+                    parts = parts.strip()
+                    parts = re.split(r'\s+as\s+', parts)[0].strip()
+                    parts = parts.replace('.', '/')
                     includes.append(parts)
             m2 = re.match(r'^from\s+([A-Za-z0-9_.]+)\s+import', cleaned)
             if m2:
@@ -1446,7 +1448,7 @@ def get_directly_included_files(file_path, profile, file_cache):  # pylint: disa
             if m2:
                 includes.append(m2.group(1))
         elif profile.name == 'go':
-            m = re.match(r'^import\s+["\']([^"\']+)["\']', cleaned)
+            m = re.match(r'^import\s+(?:[A-Za-z0-9_.]+\s+)?["\']([^"\']+)["\']', cleaned)
             if m:
                 includes.append(m.group(1))
         elif profile.name == 'rust':
@@ -1474,7 +1476,12 @@ def get_directly_included_files(file_path, profile, file_cache):  # pylint: disa
         inc_norm = inc.replace('\\', '/').rstrip('/')
         for tf in tracked_files:
             tf_norm = tf.replace('\\', '/')
-            if tf_norm.endswith(inc_norm) or tf_norm.endswith(inc_norm + ext):
+            if (
+                tf_norm.endswith(inc_norm)
+                or tf_norm.endswith(inc_norm + ext)
+                or tf_norm.endswith('/' + inc_norm + '/' + os.path.basename(tf_norm))
+                or tf_norm == inc_norm + '/' + os.path.basename(tf_norm)
+            ):
                 full_tf = os.path.abspath(tf)
                 if os.path.exists(full_tf):
                     resolved_paths.append(full_tf)
@@ -1559,6 +1566,12 @@ def resolve_variable_definition_regex_fallback(
 
     innermost = find_innermost_scope(global_scope, line_num)
 
+    outermost_func_scope = None
+    for s in all_scopes:
+        if s.start_line >= func_start_line and s.parent is not None:
+            outermost_func_scope = s
+            break
+
     scope_chain = []
     curr = innermost
     while curr is not None and curr.start_line >= func_start_line:
@@ -1568,6 +1581,11 @@ def resolve_variable_definition_regex_fallback(
     for scope in scope_chain:
         direct_lines = get_lines_directly_in_scope(scope, lines)
         valid_lines = [ln for ln in direct_lines if ln < line_num]
+        if scope == outermost_func_scope and not profile.uses_indentation_blocks:
+            valid_lines.extend(
+                ln for ln in range(func_start_line, outermost_func_scope.start_line)
+                if ln < line_num
+            )
         for ln in sorted(valid_lines, reverse=True):
             line = lines[ln - 1]
             cleaned = profile.strip_strings_and_comments(line)
@@ -1591,11 +1609,6 @@ def resolve_variable_definition_regex_fallback(
     if cpp_match:
         class_name = cpp_match.group(1)
     else:
-        outermost_func_scope = None
-        for s in all_scopes:
-            if s.start_line >= func_start_line and s.parent is not None:
-                outermost_func_scope = s
-                break
         if outermost_func_scope and outermost_func_scope.parent:
             parent_scope = outermost_func_scope.parent
             limit = parent_scope.parent.start_line if parent_scope.parent else 1
