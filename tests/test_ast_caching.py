@@ -206,3 +206,86 @@ class TestAstCaching(unittest.TestCase):
         self.assertEqual(res2, ("start.py", 1))
         # Since it was not cached on file_cache_2, it should have done the lookup and read the lines
         file_cache_2.get_lines.assert_called_once_with("start.py")
+
+    @patch("context_builder.ast_engine.ripgrep_filter")
+    @patch("context_builder.sys_utils.get_git_tracked_files")
+    @patch("context_builder.ast_engine.get_directly_included_files")
+    def test_find_class_definition_cache_bounding(
+        self, mock_get_includes, mock_get_git_tracked, mock_ripgrep
+    ):
+        mock_get_includes.return_value = []
+        mock_get_git_tracked.return_value = []
+        mock_ripgrep.return_value = []
+
+        profile = MagicMock()
+        profile.strip_strings_and_comments = lambda x: x
+
+        file_cache = MagicMock()
+        initial_cache = {f"file_{i}.py": ("somewhere.py", i) for i in range(1024)}
+        file_cache.find_class_definition_cache = initial_cache
+        file_cache.get_lines.return_value = ["class TargetClass:", "    pass"]
+
+        res = find_class_definition("start.py", "TargetClass", profile, file_cache)
+        self.assertEqual(res, ("start.py", 1))
+
+        self.assertEqual(len(file_cache.find_class_definition_cache), 1024)
+        self.assertNotIn("file_0.py", file_cache.find_class_definition_cache)
+        self.assertIn(("start.py", "TargetClass"), file_cache.find_class_definition_cache)
+
+    @patch("context_builder.sys_utils.get_git_tracked_files")
+    def test_get_directly_included_files_cache_bounding(self, mock_get_git_tracked):
+        mock_get_git_tracked.return_value = []
+        profile = MagicMock()
+        profile.name = "python"
+
+        file_cache = MagicMock()
+        initial_cache = {f"file_{i}.py": [] for i in range(1024)}
+        file_cache.get_directly_included_files_cache = initial_cache
+        file_cache.get_lines.return_value = []
+
+        res = get_directly_included_files("start.py", profile, file_cache)
+        self.assertEqual(res, [])
+
+        self.assertEqual(len(file_cache.get_directly_included_files_cache), 1024)
+        self.assertNotIn("file_0.py", file_cache.get_directly_included_files_cache)
+        self.assertIn("start.py", file_cache.get_directly_included_files_cache)
+
+    @patch("context_builder.ast_engine.ripgrep_filter")
+    @patch("context_builder.sys_utils.get_git_tracked_files")
+    @patch("context_builder.ast_engine.get_directly_included_files")
+    @patch("context_builder.ast_engine.build_scopes")
+    @patch("context_builder.ast_engine.get_lines_directly_in_scope")
+    @patch("context_builder.ast_engine.is_line_definition_of_var")
+    def test_resolve_global_definition_cache_bounding(
+        self,
+        mock_is_def,
+        mock_lines_in_scope,
+        mock_build_scopes,
+        mock_get_includes,
+        mock_get_git_tracked,
+        mock_ripgrep,
+    ):
+        mock_get_includes.return_value = []
+        mock_get_git_tracked.return_value = []
+        mock_ripgrep.return_value = []
+        mock_build_scopes.return_value = (MagicMock(), [MagicMock()])
+        mock_lines_in_scope.return_value = [1]
+        mock_is_def.return_value = True
+
+        profile = MagicMock()
+        profile.strip_strings_and_comments = lambda x: x
+
+        file_cache = MagicMock()
+        initial_cache = {f"file_{i}.py": [] for i in range(1024)}
+        file_cache.resolve_global_definition_cache = initial_cache
+        file_cache.get_lines.return_value = ["x = 42"]
+
+        with patch("os.path.exists", return_value=True), patch(
+            "context_builder.ast_engine.get_language_profile", return_value=profile
+        ):
+            res = resolve_global_definition("start.py", "x", profile, file_cache)
+            self.assertEqual(len(res), 1)
+
+            self.assertEqual(len(file_cache.resolve_global_definition_cache), 1024)
+            self.assertNotIn("file_0.py", file_cache.resolve_global_definition_cache)
+            self.assertIn(("start.py", "x"), file_cache.resolve_global_definition_cache)

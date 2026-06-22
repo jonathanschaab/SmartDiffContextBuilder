@@ -988,7 +988,7 @@ def get_lhs_identifiers(node):
     return ids
 
 
-def resolve_local_variable_ast(file_path, var_name, ref_line, file_cache=None):  # pylint: disable=too-many-return-statements
+def resolve_local_variable_ast(file_path, var_name, ref_line, file_cache=None):  # pylint: disable=too-many-return-statements,too-many-branches
     """Search locally within the enclosing function for the variable definition.
 
     Returns:
@@ -1027,17 +1027,18 @@ def resolve_local_variable_ast(file_path, var_name, ref_line, file_cache=None): 
         captures = query.captures(tree.root_node)
     except Exception:  # pylint: disable=broad-exception-caught
         # Fallback to manual AST traversal
-        def collect(n, lst):
+        nodes = []
+        stack = [tree.root_node]
+        while stack:
+            n = stack.pop()
             if n.type in (
                 'variable_declaration', 'assignment_expression', 'assignment',
                 'short_var_declaration', 'assignment_statement',
                 'local_variable_declaration', 'lexical_declaration', 'declaration'
             ):
-                lst.append(n)
-            for c in n.children:
-                collect(c, lst)
-        nodes = []
-        collect(tree.root_node, nodes)
+                nodes.append(n)
+            for c in reversed(n.children):
+                stack.append(c)
         captures = [(n, None) for n in nodes]
 
     instantiations = []
@@ -1416,7 +1417,7 @@ def find_class_definition(start_file, class_name, profile, file_cache):
                 inc_profile = get_language_profile(inc_file)
                 lines = _get_stripped_lines(file_cache, inc_file, inc_profile)
                 for idx, line in enumerate(lines):
-                    cleaned = profile.strip_strings_and_comments(line)
+                    cleaned = inc_profile.strip_strings_and_comments(line)
                     if class_pattern.search(cleaned):
                         return inc_file, idx + 1
 
@@ -1436,13 +1437,16 @@ def find_class_definition(start_file, class_name, profile, file_cache):
                 f_profile = get_language_profile(f)
                 lines = _get_stripped_lines(file_cache, f, f_profile)
                 for idx, line in enumerate(lines):
-                    cleaned = profile.strip_strings_and_comments(line)
+                    cleaned = f_profile.strip_strings_and_comments(line)
                     if class_pattern.search(cleaned):
                         return f, idx + 1
 
         return None, None
 
     res = _find()
+    if len(file_cache.find_class_definition_cache) >= 1024:
+        first_key = next(iter(file_cache.find_class_definition_cache))
+        file_cache.find_class_definition_cache.pop(first_key, None)
     file_cache.find_class_definition_cache[cache_key] = res
     return res
 
@@ -1615,6 +1619,9 @@ def get_directly_included_files(file_path, profile, file_cache):  # pylint: disa
         return resolved_paths
 
     res = _get_files()
+    if len(file_cache.get_directly_included_files_cache) >= 1024:
+        first_key = next(iter(file_cache.get_directly_included_files_cache))
+        file_cache.get_directly_included_files_cache.pop(first_key, None)
     file_cache.get_directly_included_files_cache[cache_key] = res
     return res
 
@@ -1694,6 +1701,9 @@ def resolve_global_definition(file_path, var_name, profile, file_cache, searched
         return []
 
     res = _resolve()
+    if len(file_cache.resolve_global_definition_cache) >= 1024:
+        first_key = next(iter(file_cache.resolve_global_definition_cache))
+        file_cache.resolve_global_definition_cache.pop(first_key, None)
     file_cache.resolve_global_definition_cache[cache_key] = res
     return res
 
