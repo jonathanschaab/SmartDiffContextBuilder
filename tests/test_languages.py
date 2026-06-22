@@ -783,8 +783,8 @@ class TestLanguageProfiles(unittest.TestCase):
             callee_query = CONFIG['callee_query_strings']['.java']
 
             # These should compile without raising QuerySyntaxError or other exceptions
-            lang.query(dep_query)
-            lang.query(callee_query)
+            tree_sitter.Query(lang, dep_query)
+            tree_sitter.Query(lang, callee_query)
         except ImportError:
             # Fallback if libraries are not present, but they are installed in this environment
             pass

@@ -23,6 +23,9 @@ from .config import CONFIG, ConfigDictProxy
 
 LANG_MAP = ConfigDictProxy('lang_map')
 
+
+
+
 _CONFIG_PATTERN_CACHE = {}
 
 
@@ -242,7 +245,7 @@ def _trace_file_ast_dependencies(file_path, func_name, file_cache, callers):
     q_str = q_str.replace("{escaped_func_name}", escaped_func_name)
 
     try:
-        query = AST_ENGINE.languages[ext].query(q_str)
+        query = tree_sitter.Query(AST_ENGINE.languages[ext], q_str)
         captures = query.captures(tree.root_node)
         lines = file_cache.get_lines(file_path)
 
@@ -604,7 +607,7 @@ def extract_callees_ast(file_path, start_line, end_line, ext, file_cache):
 
     callees = set()
     try:
-        query = AST_ENGINE.languages[ext].query(q_str)
+        query = tree_sitter.Query(AST_ENGINE.languages[ext], q_str)
         captures = query.captures(func_node)
         for node, _ in captures:
             if start_line <= node.start_point[0] < end_line:
@@ -945,7 +948,8 @@ def resolve_local_variable_ast(file_path, var_name, ref_line, file_cache=None):
 
     captures = []
     try:
-        query = AST_ENGINE.languages[ext].query(
+        query = tree_sitter.Query(
+            AST_ENGINE.languages[ext],
             "[(variable_declaration) @decl (assignment_expression) @assign]"
         )
         captures = query.captures(tree.root_node)
@@ -1396,6 +1400,51 @@ def resolve_class_member_definition(
     return None
 
 
+def _parse_python_imports(cleaned, includes):
+    """Parse python import statements from cleaned line and add to includes."""
+    m1 = re.match(r'^import\s+([A-Za-z0-9_.,\s]+)', cleaned)
+    if m1:
+        for parts in m1.group(1).split(','):
+            parts = parts.strip()
+            parts = re.split(r'\s+as\s+', parts)[0].strip()
+            parts = parts.replace('.', '/')
+            includes.append(parts)
+        return
+
+    m2 = re.match(r'^from\s+([A-Za-z0-9_.]+)\s+import\s+(.+)', cleaned)
+    if not m2:
+        return
+
+    raw_module = m2.group(1)
+    names_part = m2.group(2).strip().replace('(', '').replace(')', '')
+    imported_names = []
+    for name in names_part.split(','):
+        name = re.split(r'\s+as\s+', name.strip())[0].strip()
+        if name and re.match(r'^[A-Za-z0-9_.]+$', name):
+            imported_names.append(name.replace('.', '/'))
+
+    dots_match = re.match(r'^(\.+)', raw_module)
+    if dots_match:
+        dots = dots_match.group(1)
+        remainder_raw = raw_module[len(dots):]
+        remainder = remainder_raw.replace('.', '/') if remainder_raw else ''
+        climb = "../" * (len(dots) - 1) if len(dots) > 1 else ""
+        base = climb + remainder
+        is_relative = True
+    else:
+        remainder = raw_module.replace('.', '/')
+        base = remainder
+        is_relative = False
+
+    has_suffix = bool(remainder or not is_relative)
+    if base and has_suffix:
+        includes.append(base)
+
+    suffix = "/" if has_suffix else ""
+    for name in imported_names:
+        includes.append(base + suffix + name)
+
+
 def get_directly_included_files(file_path, profile, file_cache):  # pylint: disable=too-many-branches,too-many-statements
     """Find files directly imported or included in the source file."""
     lines = file_cache.get_lines(file_path)
@@ -1412,28 +1461,7 @@ def get_directly_included_files(file_path, profile, file_cache):  # pylint: disa
             if m:
                 includes.append(m.group(1))
         elif profile.name == 'python':
-            m1 = re.match(r'^import\s+([A-Za-z0-9_.,\s]+)', cleaned)
-            if m1:
-                for parts in m1.group(1).split(','):
-                    parts = parts.strip()
-                    parts = re.split(r'\s+as\s+', parts)[0].strip()
-                    parts = parts.replace('.', '/')
-                    includes.append(parts)
-            m2 = re.match(r'^from\s+([A-Za-z0-9_.]+)\s+import', cleaned)
-            if m2:
-                raw_module = m2.group(1)
-                dots_match = re.match(r'^(\.+)', raw_module)
-                if dots_match:
-                    dots = dots_match.group(1)
-                    remainder_raw = raw_module[len(dots):]
-                    remainder = remainder_raw.replace('.', '/') if remainder_raw else ''
-                    if remainder:
-                        climb = "../" * (len(dots) - 1) if len(dots) > 1 else ""
-                        includes.append(climb + remainder)
-                else:
-                    parts = raw_module.replace('.', '/')
-                    if parts:
-                        includes.append(parts)
+            _parse_python_imports(cleaned, includes)
         elif profile.name == 'java':
             m = re.match(r'^import\s+([A-Za-z0-9_.]+)\s*;', cleaned)
             if m:

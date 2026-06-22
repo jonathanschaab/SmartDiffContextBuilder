@@ -1293,14 +1293,15 @@ class TestLspClient(unittest.TestCase):
             file_cache = MagicMock()
             file_cache.get_bytes.return_value = b"Widget* WidgetFactory::Widget()"
 
-            actual_line, char_idx = _find_lsp_func_start_character(
-                lines,
-                line_num=1,
-                func_name="Widget",
-                ext=".cpp",
-                file_path="dummy.cpp",
-                file_cache=file_cache,
-            )
+            with patch("tree_sitter.Query", return_value=mock_query):
+                actual_line, char_idx = _find_lsp_func_start_character(
+                    lines,
+                    line_num=1,
+                    func_name="Widget",
+                    ext=".cpp",
+                    file_path="dummy.cpp",
+                    file_cache=file_cache,
+                )
 
             self.assertEqual(actual_line, 1)
             self.assertEqual(char_idx, 23)
@@ -1341,14 +1342,15 @@ class TestLspClient(unittest.TestCase):
             file_cache = MagicMock()
             file_cache.get_bytes.return_value = b"MyClass::~MyClass()"
 
-            actual_line, char_idx = _find_lsp_func_start_character(
-                lines,
-                line_num=1,
-                func_name="~MyClass",
-                ext=".cpp",
-                file_path="dummy.cpp",
-                file_cache=file_cache,
-            )
+            with patch("tree_sitter.Query", return_value=mock_query):
+                actual_line, char_idx = _find_lsp_func_start_character(
+                    lines,
+                    line_num=1,
+                    func_name="~MyClass",
+                    ext=".cpp",
+                    file_path="dummy.cpp",
+                    file_cache=file_cache,
+                )
 
             self.assertEqual(actual_line, 1)
             self.assertEqual(char_idx, 9)
@@ -1388,14 +1390,15 @@ class TestLspClient(unittest.TestCase):
             file_cache = MagicMock()
             file_cache.get_bytes.return_value = b"fn test() {}"
 
-            actual_line, char_idx = _find_lsp_func_start_character(
-                lines,
-                line_num=1,
-                func_name="test",
-                ext=".rs",
-                file_path="dummy.rs",
-                file_cache=file_cache,
-            )
+            with patch("tree_sitter.Query", return_value=mock_query):
+                actual_line, char_idx = _find_lsp_func_start_character(
+                    lines,
+                    line_num=1,
+                    func_name="test",
+                    ext=".rs",
+                    file_path="dummy.rs",
+                    file_cache=file_cache,
+                )
 
             self.assertEqual(actual_line, 1)
             self.assertEqual(char_idx, 3)
@@ -1449,14 +1452,15 @@ class TestLspClient(unittest.TestCase):
             file_cache = MagicMock()
             file_cache.get_bytes.return_value = "🦊_foo()".encode("utf-8")
 
-            actual_line, char_idx = _find_lsp_func_start_character(
-                lines,
-                line_num=1,
-                func_name="foo",
-                ext=".cpp",
-                file_path="dummy.cpp",
-                file_cache=file_cache,
-            )
+            with patch("tree_sitter.Query", return_value=mock_query):
+                actual_line, char_idx = _find_lsp_func_start_character(
+                    lines,
+                    line_num=1,
+                    func_name="foo",
+                    ext=".cpp",
+                    file_path="dummy.cpp",
+                    file_cache=file_cache,
+                )
 
             self.assertEqual(actual_line, 1)
             self.assertEqual(char_idx, 3)

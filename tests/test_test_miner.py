@@ -279,7 +279,8 @@ class TestTestMiner(unittest.TestCase):
         parser.parse.return_value = SimpleNamespace(root_node=object())
         mock_profile.return_value.test_query = "(function_item) @test"
 
-        with patch.dict(test_miner.AST_ENGINE.parsers, {".rs": parser}), \
+        with patch("tree_sitter.Query", return_value=query) as mock_query_class, \
+                patch.dict(test_miner.AST_ENGINE.parsers, {".rs": parser}), \
                 patch.dict(test_miner.AST_ENGINE.languages, {".rs": language}):
             discovered = []
             success = test_miner._mine_ast_tests(
@@ -294,7 +295,7 @@ class TestTestMiner(unittest.TestCase):
 
         self.assertTrue(success)
         self.assertEqual(discovered[0]["line"], 1)
-        language.query.assert_called_once_with("(function_item) @test")
+        mock_query_class.assert_called_once_with(language, "(function_item) @test")
 
     @patch("context_builder.test_miner.warn_once")
     @patch("context_builder.test_miner.get_language_profile")
@@ -302,10 +303,10 @@ class TestTestMiner(unittest.TestCase):
         parser = Mock()
         parser.parse.return_value = SimpleNamespace(root_node=object())
         language = Mock()
-        language.query.side_effect = RuntimeError("bad query")
         mock_profile.return_value.test_query = "(broken"
 
-        with patch.dict(test_miner.AST_ENGINE.parsers, {".py": parser}), \
+        with patch("tree_sitter.Query", side_effect=RuntimeError("bad query")), \
+                patch.dict(test_miner.AST_ENGINE.parsers, {".py": parser}), \
                 patch.dict(test_miner.AST_ENGINE.languages, {".py": language}):
             success = test_miner._mine_ast_tests(
                 "test_bad.py", ".py", Mock(), b"", [], set(), []

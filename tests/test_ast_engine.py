@@ -664,8 +664,9 @@ class TestAstEngine(unittest.TestCase):
         mock_cache = MagicMock()
         mock_cache.get_bytes.return_value = b"def foo():\n    bar()\n"
 
-        with self.assertRaises(AttributeError) as ctx:
-            extract_callees_ast("dummy.py", 1, 3, ".py", mock_cache)
+        with patch("tree_sitter.Query", return_value=mock_query):
+            with self.assertRaises(AttributeError) as ctx:
+                extract_callees_ast("dummy.py", 1, 3, ".py", mock_cache)
 
         self.assertIn("Node object lacks '.text' attribute", str(ctx.exception))
 
@@ -1057,12 +1058,15 @@ class TestAstEngine(unittest.TestCase):
         with patch(
             "context_builder.ast_engine.ripgrep_filter",
             return_value=["file.cpp"],
-        ):
+        ), patch(
+            "tree_sitter.Query",
+            return_value=mock_query,
+        ) as mock_query_class:
             trace_lexical_dependencies_ast("operator+", ["file.cpp"], file_cache=mock_cache)
 
-        # Verify that AST_ENGINE.languages[".cpp"].query was called with double-escaped operator\\+
-        mock_lang.query.assert_called_once()
-        query_str = mock_lang.query.call_args[0][0]
+        # Verify that tree_sitter.Query was called with double-escaped operator\\+
+        mock_query_class.assert_called_once()
+        query_str = mock_query_class.call_args[0][1]
         self.assertIn("operator\\\\+", query_str)
 
     def test_trace_lexical_dependencies_regex_operators(self):
@@ -1283,12 +1287,13 @@ class TestAstEngine(unittest.TestCase):
         mock_parser = MagicMock()
 
         from context_builder.ast_engine import AST_ENGINE
-        with patch.dict(AST_ENGINE.languages, {".cpp": mock_lang}), \
+        with patch("tree_sitter.Query", return_value=mock_query) as mock_query_class, \
+             patch.dict(AST_ENGINE.languages, {".cpp": mock_lang}), \
              patch.dict(AST_ENGINE.parsers, {".cpp": mock_parser}), \
              patch.object(AST_ENGINE, "is_supported", return_value=True):
             trace_lexical_dependencies_ast("foo", [file_path], file_cache=self.cache)
-            mock_lang.query.assert_called_once()
-            query_arg = mock_lang.query.call_args[0][0]
+            mock_query_class.assert_called_once()
+            query_arg = mock_query_class.call_args[0][1]
             self.assertIn("foo", query_arg)
             self.assertIn("[a-z]{1,3}", query_arg)
 
@@ -2537,33 +2542,33 @@ class TestAstEngine(unittest.TestCase):
         from context_builder.cache import LRUFileCache
 
         cache = LRUFileCache(capacity=5)
+        # Create a subdirectory for containment safety
+        subdir = os.path.join(self.temp_dir.name, "subdir")
+        os.makedirs(subdir, exist_ok=True)
+
         # Python relative imports with dots
         py_code = (
             "from .sys_utils import something\n"
             "from ..other_module import something_else\n"
         )
-        py_file = os.path.join(self.temp_dir.name, "relative_test.py")
+        py_file = os.path.join(subdir, "relative_test.py")
         with open(py_file, "w", encoding="utf-8") as f:
             f.write(py_code)
 
         # Mock get_git_tracked_files
         with patch("context_builder.sys_utils.get_git_tracked_files") as mock_tracked:
             # We want tracked files to include sys_utils.py and other_module.py
-            sys_utils_path = os.path.join(self.temp_dir.name, "sys_utils.py")
-            other_module_path = os.path.join(os.path.dirname(self.temp_dir.name), "other_module.py")
+            sys_utils_path = os.path.join(subdir, "sys_utils.py")
+            other_module_path = os.path.join(self.temp_dir.name, "other_module.py")
             with open(sys_utils_path, "w", encoding="utf-8") as f:
                 f.write("")
             with open(other_module_path, "w", encoding="utf-8") as f:
                 f.write("")
             mock_tracked.return_value = [sys_utils_path, other_module_path]
 
-            try:
-                res = get_directly_included_files(py_file, PYTHON, cache)
-                self.assertIn(os.path.abspath(sys_utils_path), res)
-                self.assertIn(os.path.abspath(other_module_path), res)
-            finally:
-                if os.path.exists(other_module_path):
-                    os.remove(other_module_path)
+            res = get_directly_included_files(py_file, PYTHON, cache)
+            self.assertIn(os.path.abspath(sys_utils_path), res)
+            self.assertIn(os.path.abspath(other_module_path), res)
 
     def test_get_directly_included_files_nested_python_imports(self):
         from context_builder.ast_engine import get_directly_included_files
@@ -2859,3 +2864,40 @@ class TestAstEngine(unittest.TestCase):
 
         self.assertIn(os.path.abspath(math_path), res)
         self.assertIn(os.path.abspath(pkg_path), res)
+
+    def test_get_directly_included_files_python_relative_sibling_and_submodule(self):
+        from context_builder.ast_engine import get_directly_included_files
+        from context_builder.languages.python import PYTHON
+        from context_builder.cache import LRUFileCache
+
+        cache = LRUFileCache(capacity=5)
+        # Create a subdirectory for containment safety
+        subdir = os.path.join(self.temp_dir.name, "subdir")
+        os.makedirs(subdir, exist_ok=True)
+
+        py_code = (
+            "from . import sibling_module\n"
+            "from package import submodule\n"
+            "from .package import nested_submodule\n"
+        )
+        py_file = os.path.join(subdir, "import_test.py")
+        with open(py_file, "w", encoding="utf-8") as f:
+            f.write(py_code)
+
+        sibling_path = os.path.join(subdir, "sibling_module.py")
+        package_dir = os.path.join(subdir, "package")
+        os.makedirs(package_dir, exist_ok=True)
+        submodule_path = os.path.join(subdir, "package", "submodule.py")
+        nested_submodule_path = os.path.join(package_dir, "nested_submodule.py")
+
+        for path in (sibling_path, submodule_path, nested_submodule_path):
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("")
+
+        with patch("context_builder.sys_utils.get_git_tracked_files") as mock_tracked:
+            mock_tracked.return_value = [sibling_path, submodule_path, nested_submodule_path]
+            res = get_directly_included_files(py_file, PYTHON, cache)
+
+        self.assertIn(os.path.abspath(sibling_path), res)
+        self.assertIn(os.path.abspath(submodule_path), res)
+        self.assertIn(os.path.abspath(nested_submodule_path), res)
