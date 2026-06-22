@@ -163,6 +163,8 @@ def extract_function_bounds_ast(file_path, line_num, ext, file_cache=None):
         file_cache = get_global_cache()
     source_bytes = file_cache.get_bytes(file_path)
     tree = AST_ENGINE.parsers[ext].parse(source_bytes)
+    if tree is None or tree.root_node is None:
+        return None, None
     target_row = line_num - 1
 
     target_node = None
@@ -282,6 +284,8 @@ def _trace_file_ast_dependencies(file_path, func_name, file_cache, callers):
         return
     source_bytes = file_cache.get_bytes(file_path)
     tree = AST_ENGINE.parsers[ext].parse(source_bytes)
+    if tree is None or tree.root_node is None:
+        return
 
     escaped_func_name = re.escape(func_name).replace("\\", "\\\\")
 
@@ -623,6 +627,9 @@ def split_massive_block_ast(source_text, file_path, max_lines):
         return [{"suffix": " (Truncated)", "text": fallback_text}]
 
     tree = AST_ENGINE.parsers[ext].parse(source_text.encode('utf-8'))
+    if tree is None or tree.root_node is None:
+        fallback_text = _get_fallback_truncated_text(lines, max_lines, profile)
+        return [{"suffix": " (Truncated)", "text": fallback_text}]
     children_info = _collect_children_info(tree, lines, profile)
     if not children_info:
         fallback_text = _get_fallback_truncated_text(lines, max_lines, profile)
@@ -637,6 +644,8 @@ def extract_callees_ast(file_path, start_line, end_line, ext, file_cache):
     """Extract all functions/methods called inside a specific line range using tree-sitter AST."""
     source_bytes = file_cache.get_bytes(file_path)
     tree = AST_ENGINE.parsers[ext].parse(source_bytes)
+    if tree is None or tree.root_node is None:
+        return set()
 
     func_node = None
     stack = list(reversed(tree.root_node.children))
@@ -789,6 +798,9 @@ def extract_identifiers_with_positions_ast(file_path, line_numbers, file_cache=N
     try:
         tree = AST_ENGINE.parsers[ext].parse(source_bytes)
     except Exception:  # pylint: disable=broad-exception-caught
+        return []
+
+    if tree is None or tree.root_node is None:
         return []
 
     results = []
@@ -976,7 +988,7 @@ def get_lhs_identifiers(node):
     return ids
 
 
-def resolve_local_variable_ast(file_path, var_name, ref_line, file_cache=None):
+def resolve_local_variable_ast(file_path, var_name, ref_line, file_cache=None):  # pylint: disable=too-many-return-statements
     """Search locally within the enclosing function for the variable definition.
 
     Returns:
@@ -1000,6 +1012,9 @@ def resolve_local_variable_ast(file_path, var_name, ref_line, file_cache=None):
     try:
         tree = AST_ENGINE.parsers[ext].parse(source_bytes)
     except Exception:  # pylint: disable=broad-exception-caught
+        return None, None
+
+    if tree is None or tree.root_node is None:
         return None, None
 
     profile = get_language_profile(ext)

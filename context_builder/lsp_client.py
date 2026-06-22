@@ -778,10 +778,11 @@ def _find_lsp_func_start_character_ast(
     """Attempt to locate function identifier starting character index using AST parsing."""
     # pylint: disable=import-outside-toplevel,import-error
     from .ast_engine import AST_ENGINE, HAS_TREESITTER
-    import tree_sitter
 
     if not (HAS_TREESITTER and AST_ENGINE.is_supported(ext)):
         return -1, line_num
+
+    import tree_sitter
 
     try:
         source_bytes = file_cache.get_bytes(file_path)

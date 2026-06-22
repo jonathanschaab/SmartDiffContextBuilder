@@ -1703,3 +1703,19 @@ class TestLspClient(unittest.TestCase):
         res2 = _serialize_locations(link)
         self.assertEqual(len(res2), 1)
         self.assertEqual(res2[0]["targetUri"], "file:///b.py")
+
+    @patch("context_builder.ast_engine.HAS_TREESITTER", False)
+    def test_find_lsp_func_start_character_ast_no_treesitter(self):
+        from context_builder.lsp_client import _find_lsp_func_start_character_ast
+
+        with patch.dict("sys.modules", {"tree_sitter": None}):
+            res = _find_lsp_func_start_character_ast(
+                lines=["def foo():"],
+                line_num=10,
+                func_name="foo",
+                ext=".py",
+                file_path="dummy.py",
+                file_cache=MagicMock(),
+                decorator_lookahead=0
+            )
+            self.assertEqual(res, (-1, 10))

@@ -3100,3 +3100,54 @@ class TestAstEngine(unittest.TestCase):
             res_pos = extract_identifiers_with_positions_ast("file.py", [1], file_cache=cache)
             self.assertEqual(len(res_pos), 1)
             self.assertEqual(res_pos[0][0], "target_var")
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_ast_engine_functions_graceful_null_root_node(self, mock_engine):
+        from context_builder.ast_engine import (
+            extract_function_bounds_ast,
+            _trace_file_ast_dependencies,
+            split_massive_block_ast,
+            extract_callees_ast,
+            extract_identifiers_with_positions_ast,
+            resolve_local_variable_ast,
+        )
+
+        # Mock the parser to return a tree where root_node is None
+        mock_tree = MagicMock()
+        mock_tree.root_node = None
+
+        mock_parser = MagicMock()
+        mock_parser.parse.return_value = mock_tree
+
+        mock_engine.parsers = {".py": mock_parser}
+        mock_engine.is_supported.return_value = True
+
+        cache = MagicMock()
+        cache.get_bytes.return_value = b"some code"
+        cache.get_lines.return_value = ["some code"]
+
+        # 1. extract_function_bounds_ast
+        bounds = extract_function_bounds_ast("file.py", 1, ".py", file_cache=cache)
+        self.assertEqual(bounds, (None, None))
+
+        # 2. _trace_file_ast_dependencies
+        callers = []
+        _trace_file_ast_dependencies("file.py", "my_func", cache, callers)
+        # Should return early without modifying callers list
+        self.assertEqual(callers, [])
+
+        # 3. split_massive_block_ast
+        res_split = split_massive_block_ast("some lines\n" * 10, "file.py", 5)
+        self.assertEqual(res_split[0]["suffix"], " (Truncated)")
+
+        # 4. extract_callees_ast
+        callees = extract_callees_ast("file.py", 1, 5, ".py", cache)
+        self.assertEqual(callees, set())
+
+        # 5. extract_identifiers_with_positions_ast
+        ids = extract_identifiers_with_positions_ast("file.py", [1], file_cache=cache)
+        self.assertEqual(ids, [])
+
+        # 6. resolve_local_variable_ast
+        loc_res = resolve_local_variable_ast("file.py", "x", 5, cache)
+        self.assertEqual(loc_res, (None, None))
