@@ -28,17 +28,23 @@ LANG_MAP = ConfigDictProxy('lang_map')
 
 def _strip_comments_only(line, profile):
     """Strip same-line comments while leaving string literals intact."""
-    if not profile or not profile.line_comment:
+    if not profile or not isinstance(profile.line_comment, str):
         return line
-    if type(profile).__name__ in ('MagicMock', 'Mock', 'NonCallableMagicMock', 'NonCallableMock'):
+    if not hasattr(profile, "strip_string_literals") or not callable(profile.strip_string_literals):
         return line
     if getattr(profile, "_cached_string_literal_pattern", None) is None:
-        profile.strip_string_literals("")
+        try:
+            profile.strip_string_literals("")
+        except Exception:  # pylint: disable=broad-exception-caught
+            pass
     string_pattern = getattr(profile, "_cached_string_literal_pattern", None)
-    if not string_pattern:
+    if not string_pattern or not hasattr(string_pattern, "pattern") or not hasattr(string_pattern, "flags"):
         return line
     comment_pattern_str = re.escape(profile.line_comment) + r'.*'
-    combined = re.compile(f"({string_pattern.pattern})|({comment_pattern_str})")
+    combined = re.compile(
+        f"({string_pattern.pattern})|({comment_pattern_str})",
+        flags=string_pattern.flags
+    )
 
     def replace(match):
         if match.group(2):
@@ -58,44 +64,34 @@ def _fallback_strip(lines, profile):
     ]
     content = "".join(lines_with_nl)
     stripped = profile.strip_block_comments(content)
+    if not isinstance(stripped, str):
+        return lines
     return stripped.splitlines(keepends=True)
 
 
-def _get_stripped_lines(file_cache, file_path, profile):  # pylint: disable=too-many-return-statements
-    """Retrieve stripped lines from cache, with fallback compatibility for mocks."""
+def _get_stripped_lines(file_cache, file_path, profile):
+    """Retrieve stripped lines from cache."""
     if file_cache is None:
         file_cache = get_global_cache()
 
     if profile is None:
-        return file_cache.get_lines(file_path) or []
-
-    mock_types = ('MagicMock', 'Mock', 'NonCallableMagicMock', 'NonCallableMock')
-    profile_is_mock = type(profile).__name__ in mock_types
-    strip_is_mock = (
-        hasattr(profile, "strip_block_comments")
-        and type(profile.strip_block_comments).__name__ in mock_types
-    )
+        lines = file_cache.get_lines(file_path)
+        return lines if isinstance(lines, (list, tuple)) else []
 
     if hasattr(file_cache, "get_stripped_lines"):
         res = file_cache.get_stripped_lines(file_path, profile)
-        if type(res).__name__ in mock_types:
-            lines = file_cache.get_lines(file_path)
-            if lines is None:
-                return []
-            if type(lines).__name__ not in mock_types:
-                if profile_is_mock or strip_is_mock:
-                    return lines
-                return _fallback_strip(lines, profile)
-            return lines
-        return res if res is not None else []
+        if isinstance(res, (list, tuple)):
+            return res
 
     lines = file_cache.get_lines(file_path)
-    if lines is None:
+    if not isinstance(lines, (list, tuple)):
         return []
-    if type(lines).__name__ not in mock_types:
-        if profile_is_mock or strip_is_mock:
+
+    if hasattr(profile, "strip_block_comments") and callable(profile.strip_block_comments):
+        try:
+            return _fallback_strip(lines, profile)
+        except Exception:  # pylint: disable=broad-exception-caught
             return lines
-        return _fallback_strip(lines, profile)
     return lines
 
 
@@ -693,8 +689,13 @@ def extract_callees_ast(file_path, start_line, end_line, ext, file_cache):
         if curr.start_point[0] == start_line:
             func_node = curr
             break
-        for child in reversed(curr.children):
-            stack.append(child)
+        try:
+            should_traverse = curr.start_point[0] <= start_line <= curr.end_point[0]
+        except (TypeError, IndexError, AttributeError):
+            should_traverse = True
+        if should_traverse:
+            for child in reversed(curr.children):
+                stack.append(child)
 
     if func_node is None:
         func_node = tree.root_node
@@ -824,6 +825,8 @@ def find_callee_definition(callee_name, all_repo_files, file_cache=None):
 
 def extract_identifiers_with_positions_ast(file_path, line_numbers, file_cache=None):  # pylint: disable=too-many-branches,too-many-nested-blocks
     """Query Tree-sitter for raw (identifier) nodes with their positions within modified lines."""
+    if not line_numbers:
+        return []
     if file_cache is None:
         file_cache = get_global_cache()
     ext = os.path.splitext(file_path)[1].lower()
@@ -844,13 +847,25 @@ def extract_identifiers_with_positions_ast(file_path, line_numbers, file_cache=N
 
     results = []
     line_set = set(line_numbers)
+    min_line = min(line_set)
+    max_line = max(line_set)
     lines = file_cache.get_lines(file_path)
 
     stack = [tree.root_node]
-    while stack:  # pylint: disable=too-many-nested-blocks
+    while stack:
         node = stack.pop()
+        try:
+            node_start = node.start_point[0] + 1
+            try:
+                node_end = node.end_point[0] + 1
+            except (TypeError, IndexError, AttributeError):
+                node_end = node_start
+        except (TypeError, IndexError, AttributeError):
+            node_start = 1
+            node_end = 1
+
         if node.type == 'identifier':
-            node_line = node.start_point[0] + 1
+            node_line = node_start
             if node_line in line_set:
                 is_invalid = False
                 p = node.parent
@@ -883,7 +898,22 @@ def extract_identifiers_with_positions_ast(file_path, line_numbers, file_cache=N
                             char_offset = len(prefix_str.encode("utf-16-le")) // 2
                         results.append((text, node_line, char_offset))
 
+        # Always traverse children to ensure identifiers are discovered, even if node range is unknown.
+        # Prune traversal to only children whose line range intersects the target lines
         for child in reversed(node.children):
+            try:
+                child_start = child.start_point[0] + 1
+                child_end = child.end_point[0] + 1
+            except (TypeError, IndexError, AttributeError):
+                stack.append(child)
+                continue
+            # If the start/end are not concrete integers (e.g., MagicMock in tests),
+            # fall back to traversing the child.
+            if not isinstance(child_start, int) or not isinstance(child_end, int):
+                stack.append(child)
+                continue
+            if child_end < min_line or child_start > max_line:
+                continue
             stack.append(child)
     return results
 
