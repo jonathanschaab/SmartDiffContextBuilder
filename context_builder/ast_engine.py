@@ -1481,8 +1481,9 @@ def resolve_class_member_definition(
     for parent in parents:
         parent_file, _ = find_class_definition(file_path, parent, profile, file_cache)
         if parent_file:
+            parent_profile = get_language_profile(parent_file)
             res = resolve_class_member_definition(
-                parent_file, parent, var_name, profile, file_cache, searched_classes
+                parent_file, parent, var_name, parent_profile, file_cache, searched_classes
             )
             if res:
                 return res

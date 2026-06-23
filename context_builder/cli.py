@@ -221,12 +221,11 @@ def _process_single_diff_line(
 
 
 def _process_diff_files(
-    diff_files, start_ref, end_ref, file_cache, coverage_data,
+    diff_files_lines, file_cache, coverage_data,
     processed_spans, vm, queue, callee_queue, all_repo_files
 ):
-    """Process modified files from git diff and initialize tracking queues."""
-    for file_path in diff_files:
-        line_numbers = _extract_line_numbers_from_diff(file_path, start_ref, end_ref)
+    """Process modified files and initialize queues using pre-extracted diff lines."""
+    for file_path, line_numbers in diff_files_lines.items():
         if not line_numbers or not os.path.exists(file_path):
             continue
 
@@ -348,16 +347,16 @@ def run_scan(args, start_ref=None, end_ref=None, output_dir=".", repo_root=None)
     queue = deque()
     callee_queue = deque()
 
-    _process_diff_files(
-        diff_files, start_ref, end_ref, file_cache, coverage_data,
-        processed_spans, vm, queue, callee_queue, all_repo_files
-    )
-
     diff_files_lines = {}
     for file_path in diff_files:
         line_numbers = _extract_line_numbers_from_diff(file_path, start_ref, end_ref)
         if line_numbers and os.path.exists(file_path):
             diff_files_lines[file_path] = line_numbers
+
+    _process_diff_files(
+        diff_files_lines, file_cache, coverage_data,
+        processed_spans, vm, queue, callee_queue, all_repo_files
+    )
 
     tracer = CallGraphTracer(
         file_cache=file_cache,

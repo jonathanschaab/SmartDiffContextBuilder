@@ -1000,17 +1000,13 @@ class TestCLI(unittest.TestCase):
 
     @patch("context_builder.cli._process_single_diff_line")
     @patch("context_builder.cli.os.path.exists", return_value=False)
-    @patch("context_builder.cli._extract_line_numbers_from_diff")
     def test_process_diff_files_skips_unmodified_and_missing_files(
-        self, mock_line_numbers, _mock_exists, mock_process
+        self, _mock_exists, mock_process
     ):
         from context_builder.cli import _process_diff_files
 
-        mock_line_numbers.side_effect = [[], [3]]
         _process_diff_files(
-            ["unchanged.py", "missing.py"],
-            None,
-            None,
+            {"unchanged.py": [], "missing.py": [3]},
             MagicMock(),
             {},
             set(),

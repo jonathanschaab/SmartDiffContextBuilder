@@ -3151,3 +3151,40 @@ class TestAstEngine(unittest.TestCase):
         # 6. resolve_local_variable_ast
         loc_res = resolve_local_variable_ast("file.py", "x", 5, cache)
         self.assertEqual(loc_res, (None, None))
+
+    def test_resolve_class_member_definition_dynamic_parent_profile(self):
+        from context_builder.ast_engine import resolve_class_member_definition
+        from context_builder.languages.python import PYTHON
+        from context_builder.cache import LRUFileCache
+
+        child_code = (
+            "class Child(Base):\n"
+            "    def method(self):\n"
+            "        pass\n"
+        )
+        parent_code = (
+            "class Base {\n"
+            "    int parent_val;\n"
+            "};\n"
+        )
+
+        child_file = os.path.join(self.temp_dir.name, "child.py")
+        parent_file = os.path.join(self.temp_dir.name, "parent.cpp")
+        with open(child_file, "w", encoding="utf-8") as f:
+            f.write(child_code)
+        with open(parent_file, "w", encoding="utf-8") as f:
+            f.write(parent_code)
+
+        cache = LRUFileCache(capacity=5)
+
+        with patch("context_builder.ast_engine.find_class_definition") as mock_find:
+            # When looking up "Base" starting from child_file, return parent_file (line 1)
+            mock_find.return_value = (parent_file, 1)
+
+            res = resolve_class_member_definition(
+                child_file, "Child", "parent_val", PYTHON, cache
+            )
+            self.assertIsNotNone(res)
+            self.assertEqual(res["path"], os.path.relpath(parent_file, os.getcwd()))
+            self.assertEqual(res["line"], 2)
+            self.assertEqual(res["code"], "int parent_val;")
