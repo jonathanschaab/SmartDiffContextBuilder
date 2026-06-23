@@ -40,15 +40,21 @@ def _strip_comments_only(line, profile):
     string_pattern = getattr(profile, "_cached_string_literal_pattern", None)
     if not string_pattern or not hasattr(string_pattern, "pattern") or not hasattr(string_pattern, "flags"):
         return line
-    comment_pattern_str = re.escape(profile.line_comment) + r'.*'
-    combined = re.compile(
-        f"({string_pattern.pattern})|({comment_pattern_str})",
-        flags=string_pattern.flags
-    )
+    combined = getattr(profile, "_cached_comment_pattern", None)
+    if combined is None:
+        # Compile regex that captures string literals and comments, preserving original length for comments.
+        comment_pattern_str = re.escape(profile.line_comment) + r'.*'
+        combined = re.compile(
+            f"({string_pattern.pattern})|({comment_pattern_str})",
+            flags=string_pattern.flags,
+        )
+        # Cache on the profile for future calls.
+        setattr(profile, "_cached_comment_pattern", combined)
 
     def replace(match):
+        # If the match is a comment (group 2), replace it with spaces of equal length to preserve offsets.
         if match.group(2):
-            return ""
+            return " " * len(match.group(2))
         return match.group(0)
 
     return combined.sub(replace, line)
@@ -920,17 +926,18 @@ def extract_identifiers_with_positions_ast(file_path, line_numbers, file_cache=N
 
 def _align_clean_to_original(original, clean):
     """Map indices of 'clean' back to their corresponding indices in 'original'."""
+    import difflib
+    matcher = difflib.SequenceMatcher(None, original, clean)
     mapping = []
-    o_idx = 0
-    o_len = len(original)
-    for c in clean:
-        while o_idx < o_len and original[o_idx] != c:
-            o_idx += 1
-        if o_idx < o_len:
-            mapping.append(o_idx)
-            o_idx += 1
-        else:
-            mapping.append(o_len)
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            for offset in range(i2 - i1):
+                mapping.append(i1 + offset)
+        elif tag in ("replace", "delete"):
+            continue
+        elif tag == "insert":
+            for _ in range(j2 - j1):
+                mapping.append(i1)
     return mapping
 
 
