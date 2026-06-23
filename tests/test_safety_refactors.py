@@ -281,3 +281,110 @@ class TestSafetyRefactors(unittest.TestCase):
             "dummy.py", "my_func", file_cache, callers
         )
         self.assertEqual(callers, {})
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_ext_lowercase_normalization(self, mock_engine):
+        """Verify ext is normalized to lowercase in bounds and callee extraction."""
+        from context_builder.ast_engine import (
+            extract_function_bounds_ast,
+            extract_callees_ast,
+        )
+
+        file_cache = MagicMock()
+        file_cache.get_bytes.return_value = b"def foo():\n    pass"
+
+        mock_parser = MagicMock()
+        mock_parser.parse.return_value = None
+        mock_engine.parsers = {".py": mock_parser}
+
+        res_line, _ = extract_function_bounds_ast(
+            "dummy.py", 1, ".PY", file_cache=file_cache
+        )
+        self.assertIsNone(res_line)
+
+        res_callees = extract_callees_ast(
+            "dummy.py", 1, 2, ".PY", file_cache=file_cache
+        )
+        self.assertEqual(res_callees, set())
+
+    @patch("context_builder.ast_engine.get_language_profile", return_value=None)
+    def test_profile_none_guards(self, _mock_profile):
+        """Verify functions handle None language profile gracefully."""
+        from context_builder.ast_engine import (
+            extract_identifiers_with_positions_regex,
+            resolve_local_variable_ast,
+            find_class_definition,
+            resolve_class_member_definition,
+            resolve_global_definition,
+        )
+        from context_builder.lsp_client import (
+            get_lsp_references,
+            get_lsp_definition,
+            get_lsp_type_definition,
+        )
+
+        file_cache = MagicMock()
+        file_cache.get_lines.return_value = ["line1"]
+        file_cache.get_bytes.return_value = b"x = 5"
+
+        self.assertEqual(
+            extract_identifiers_with_positions_regex(
+                "dummy.py", [1], file_cache=file_cache
+            ),
+            [],
+        )
+        self.assertEqual(
+            resolve_local_variable_ast("dummy.py", "x", 1, file_cache=file_cache),
+            (None, None),
+        )
+
+        with patch(
+            "context_builder.ast_engine.ripgrep_filter", return_value=["candidate.py"]
+        ):
+            with patch("os.path.exists", return_value=True):
+                self.assertEqual(
+                    find_class_definition(
+                        "dummy.py", "MyClass", None, file_cache=file_cache
+                    ),
+                    (None, None),
+                )
+
+        with patch(
+            "context_builder.ast_engine.get_parent_classes", return_value=["ParentClass"]
+        ):
+            with patch(
+                "context_builder.ast_engine.find_class_definition",
+                return_value=("parent.py", 1),
+            ):
+                self.assertIsNone(
+                    resolve_class_member_definition(
+                        "dummy.py", "MyClass", "var", None, file_cache=file_cache
+                    )
+                )
+
+        with patch("os.path.exists", return_value=True):
+            self.assertEqual(
+                resolve_global_definition(
+                    "dummy.py", "var", None, file_cache=file_cache
+                ),
+                [],
+            )
+
+        with patch("context_builder.lsp_client.USE_LSP", True):
+            self.assertIsNone(
+                get_lsp_references(
+                    "dummy.py",
+                    1,
+                    "x",
+                    timeout=1,
+                    max_depth=1,
+                    disable_pruning=False,
+                    file_cache=file_cache,
+                )
+            )
+
+        with patch("context_builder.lsp_client.USE_LSP", True):
+            self.assertEqual(get_lsp_definition("dummy.py", 1, 0, timeout=1), [])
+
+        with patch("context_builder.lsp_client.USE_LSP", True):
+            self.assertEqual(get_lsp_type_definition("dummy.py", 1, 0, timeout=1), [])

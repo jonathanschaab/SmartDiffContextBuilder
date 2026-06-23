@@ -44,6 +44,9 @@ def _get_stripped_lines(file_cache, file_path, profile):  # pylint: disable=too-
     if file_cache is None:
         file_cache = get_global_cache()
 
+    if profile is None:
+        return file_cache.get_lines(file_path) or []
+
     mock_types = ('MagicMock', 'Mock', 'NonCallableMagicMock', 'NonCallableMock')
     profile_is_mock = type(profile).__name__ in mock_types
     strip_is_mock = (
@@ -165,6 +168,7 @@ def strip_strings_and_comments(line, file_path_or_extension=None):
 
 def extract_function_bounds_ast(file_path, line_num, ext, file_cache=None):
     """Extract 0-indexed start and end line bounds using tree-sitter AST nodes."""
+    ext = ext.lower()
     if file_cache is None:
         file_cache = get_global_cache()
     source_bytes = file_cache.get_bytes(file_path)
@@ -650,6 +654,7 @@ def split_massive_block_ast(source_text, file_path, max_lines):
 
 def extract_callees_ast(file_path, start_line, end_line, ext, file_cache):
     """Extract all functions/methods called inside a specific line range using tree-sitter AST."""
+    ext = ext.lower()
     source_bytes = file_cache.get_bytes(file_path)
     tree = AST_ENGINE.parsers[ext].parse(source_bytes)
     if tree is None or tree.root_node is None:
@@ -876,6 +881,8 @@ def extract_identifiers_with_positions_regex(file_path, line_numbers, file_cache
         return []
 
     profile = get_language_profile(file_path)
+    if profile is None:
+        return []
     results = []
     keywords = profile.keywords
     line_set = set(line_numbers)
@@ -1031,6 +1038,8 @@ def resolve_local_variable_ast(file_path, var_name, ref_line, file_cache=None): 
         return None, None
 
     profile = get_language_profile(ext)
+    if profile is None:
+        return None, None
     captures = []
     try:
         query = tree_sitter.Query(
@@ -1179,6 +1188,10 @@ class RegexScope:  # pylint: disable=too-few-public-methods
 def build_scopes(file_path, profile, file_cache):  # pylint: disable=too-many-branches
     """Build scope tree for a file using language profile rules."""
     lines = _get_stripped_lines(file_cache, file_path, profile)
+    if profile is None:
+        global_scope = RegexScope(1)
+        global_scope.end_line = len(lines)
+        return global_scope, [global_scope]
     if profile.uses_indentation_blocks:
         global_scope = RegexScope(1, indent=-1)
         stack = [global_scope]
@@ -1289,6 +1302,9 @@ def get_class_members(file_path, class_name, profile, file_cache):  # pylint: di
     if file_cache is None:
         file_cache = get_global_cache()
 
+    if profile is None:
+        return []
+
     if not isinstance(getattr(file_cache, "class_members_cache", None), dict):
         file_cache.class_members_cache = {}
 
@@ -1370,6 +1386,8 @@ def get_class_members(file_path, class_name, profile, file_cache):  # pylint: di
 def get_parent_classes(file_path, class_name, profile, file_cache):
     """Identify the parent class name(s) for a given class."""
     # pylint: disable=too-many-nested-blocks
+    if profile is None:
+        return []
     lines = _get_stripped_lines(file_cache, file_path, profile)
     class_pattern = re.compile(r'\b(?:class|struct)\s+' + re.escape(class_name) + r'\b')
     for line in lines:
@@ -1416,7 +1434,9 @@ def find_class_definition(start_file, class_name, profile, file_cache):
     if cache_key in file_cache.find_class_definition_cache:
         return file_cache.find_class_definition_cache[cache_key]
 
-    def _find():
+    def _find():  # pylint: disable=too-many-branches
+        if profile is None:
+            return None, None
         lines = _get_stripped_lines(file_cache, start_file, profile)
         class_pattern = re.compile(r'\b(?:class|struct)\s+' + re.escape(class_name) + r'\b')
         for idx, line in enumerate(lines):
@@ -1428,6 +1448,8 @@ def find_class_definition(start_file, class_name, profile, file_cache):
         for inc_file in included_files:
             if os.path.exists(inc_file):
                 inc_profile = get_language_profile(inc_file)
+                if inc_profile is None:
+                    continue
                 lines = _get_stripped_lines(file_cache, inc_file, inc_profile)
                 for idx, line in enumerate(lines):
                     cleaned = inc_profile.strip_strings_and_comments(line)
@@ -1448,6 +1470,8 @@ def find_class_definition(start_file, class_name, profile, file_cache):
         for f in candidate_files:
             if os.path.exists(f):
                 f_profile = get_language_profile(f)
+                if f_profile is None:
+                    continue
                 lines = _get_stripped_lines(file_cache, f, f_profile)
                 for idx, line in enumerate(lines):
                     cleaned = f_profile.strip_strings_and_comments(line)
@@ -1498,6 +1522,8 @@ def resolve_class_member_definition(
         parent_file, _ = find_class_definition(file_path, parent, profile, file_cache)
         if parent_file:
             parent_profile = get_language_profile(parent_file)
+            if parent_profile is None:
+                continue
             res = resolve_class_member_definition(
                 parent_file, parent, var_name, parent_profile, file_cache, searched_classes
             )
@@ -1563,6 +1589,9 @@ def get_directly_included_files(file_path, profile, file_cache):  # pylint: disa
     cache_key = file_path
     if cache_key in file_cache.get_directly_included_files_cache:
         return file_cache.get_directly_included_files_cache[cache_key]
+
+    if profile is None:
+        return []
 
     def _get_files():  # pylint: disable=too-many-branches,too-many-statements
         lines = _get_stripped_lines(file_cache, file_path, profile)
@@ -1670,6 +1699,8 @@ def resolve_global_definition(file_path, var_name, profile, file_cache, searched
             if not os.path.exists(f):
                 return None
             f_profile = get_language_profile(f)
+            if f_profile is None:
+                return None
             lines = _get_stripped_lines(file_cache, f, f_profile)
             if not lines:
                 return None
