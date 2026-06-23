@@ -28,6 +28,8 @@ LANG_MAP = ConfigDictProxy('lang_map')
 
 def _fallback_strip(lines, profile):
     """Fallback utility to strip comments from line lists without trailing newlines."""
+    if not lines:
+        return []
     lines_with_nl = [
         (l if l.endswith(('\n', '\r')) else l + '\n')
         for l in lines
@@ -53,6 +55,8 @@ def _get_stripped_lines(file_cache, file_path, profile):  # pylint: disable=too-
         res = file_cache.get_stripped_lines(file_path, profile)
         if type(res).__name__ in mock_types:
             lines = file_cache.get_lines(file_path)
+            if lines is None:
+                return []
             if type(lines).__name__ not in mock_types:
                 if profile_is_mock or strip_is_mock:
                     return lines
@@ -61,6 +65,8 @@ def _get_stripped_lines(file_cache, file_path, profile):  # pylint: disable=too-
         return res
 
     lines = file_cache.get_lines(file_path)
+    if lines is None:
+        return []
     if type(lines).__name__ not in mock_types:
         if profile_is_mock or strip_is_mock:
             return lines

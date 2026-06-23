@@ -291,6 +291,9 @@ class CallGraphTracer:
                 )
                 continue
 
+            if not res:
+                continue
+
             for d in res.get("definitions", []):
                 def_path = d["path"]
                 def_line = d["line"]

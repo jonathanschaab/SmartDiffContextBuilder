@@ -156,3 +156,49 @@ class TestSafetyRefactors(unittest.TestCase):
             finally:
                 if orig_patterns is not None:
                     CONFIG["ffi_patterns"] = orig_patterns
+
+    def test_fallback_strip_guards(self):
+        """Verify that _fallback_strip returns [] when lines is None or empty."""
+        from context_builder.ast_engine import _fallback_strip
+
+        profile = MagicMock()
+        self.assertEqual(_fallback_strip(None, profile), [])
+        self.assertEqual(_fallback_strip([], profile), [])
+
+    def test_get_stripped_lines_guards(self):
+        """Verify that _get_stripped_lines returns [] when file_cache returns None."""
+        from context_builder.ast_engine import _get_stripped_lines
+
+        file_cache = MagicMock()
+        file_cache.get_lines.return_value = None
+        # Remove get_stripped_lines attribute if present to test get_lines fallback path
+        if hasattr(file_cache, "get_stripped_lines"):
+            del file_cache.get_stripped_lines
+
+        profile = MagicMock()
+        self.assertEqual(_get_stripped_lines(file_cache, "dummy.py", profile), [])
+
+        # Test path where get_stripped_lines is present but returns Mock/MagicMock
+        file_cache_with_stripped = MagicMock()
+        file_cache_with_stripped.get_stripped_lines.return_value = MagicMock()
+        file_cache_with_stripped.get_lines.return_value = None
+        self.assertEqual(_get_stripped_lines(file_cache_with_stripped, "dummy.py", profile), [])
+
+    @patch("context_builder.graph_tracer.resolve_variable_definition", return_value=None)
+    def test_graph_tracer_resolve_definition_none_guard(self, _mock_resolve):
+        """Verify that graph tracer trace_data_flow does not crash when
+        variable definition resolves to None.
+        """
+        from context_builder.graph_tracer import CallGraphTracer
+
+        vm = MagicMock()
+        tracer = CallGraphTracer(
+            file_cache=MagicMock(),
+            all_repo_files=["dummy.py"],
+            ffi_exports=set(),
+            cpp_linkages={},
+            vm=vm,
+            args=None
+        )
+        # Should not crash with AttributeError
+        tracer.trace_data_flow({"dummy.py": [10]})
