@@ -76,6 +76,7 @@ class LRUFileCache:
         Returns:
             dict: Cache entry dictionary with 'lines', 'content', and 'bytes'.
         """
+        file_path = os.path.abspath(file_path)
         if file_path in self.cache:
             self.cache.move_to_end(file_path)
             return self.cache[file_path]
@@ -167,6 +168,7 @@ class LRUFileCache:
         Returns:
             str: Block-comment-stripped string content.
         """
+        file_path = os.path.abspath(file_path)
         entry = self._load(file_path)
         if "stripped_content" not in entry:
             stripped = profile.strip_block_comments(entry["content"])
@@ -194,6 +196,7 @@ class LRUFileCache:
         Returns:
             list: List of stripped lines in the file.
         """
+        file_path = os.path.abspath(file_path)
         entry = self._load(file_path)
         if "stripped_lines" not in entry:
             stripped_content = self.get_stripped_content(file_path, profile)

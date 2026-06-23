@@ -1308,7 +1308,7 @@ def get_class_members(file_path, class_name, profile, file_cache):  # pylint: di
     if not isinstance(getattr(file_cache, "class_members_cache", None), dict):
         file_cache.class_members_cache = {}
 
-    cache_key = (file_path, class_name)
+    cache_key = (os.path.abspath(file_path), class_name)
     if cache_key in file_cache.class_members_cache:
         return file_cache.class_members_cache[cache_key]
 
@@ -1430,7 +1430,7 @@ def find_class_definition(start_file, class_name, profile, file_cache):
     if not isinstance(getattr(file_cache, "find_class_definition_cache", None), dict):
         file_cache.find_class_definition_cache = {}
 
-    cache_key = (start_file, class_name)
+    cache_key = (os.path.abspath(start_file), class_name)
     if cache_key in file_cache.find_class_definition_cache:
         return file_cache.find_class_definition_cache[cache_key]
 
@@ -1586,7 +1586,7 @@ def get_directly_included_files(file_path, profile, file_cache):  # pylint: disa
     if not isinstance(getattr(file_cache, "get_directly_included_files_cache", None), dict):
         file_cache.get_directly_included_files_cache = {}
 
-    cache_key = file_path
+    cache_key = os.path.abspath(file_path)
     if cache_key in file_cache.get_directly_included_files_cache:
         return file_cache.get_directly_included_files_cache[cache_key]
 
@@ -1651,12 +1651,18 @@ def get_directly_included_files(file_path, profile, file_cache):  # pylint: disa
             inc_norm = inc.replace('\\', '/').rstrip('/')
             for tf in tracked_files:
                 tf_norm = tf.replace('\\', '/')
-                if (
-                    tf_norm.endswith(inc_norm)
-                    or tf_norm.endswith(inc_norm + ext)
-                    or tf_norm.endswith('/' + inc_norm + '/' + os.path.basename(tf_norm))
-                    or tf_norm == inc_norm + '/' + os.path.basename(tf_norm)
-                ):
+                is_match = (
+                    tf_norm == inc_norm
+                    or tf_norm.endswith('/' + inc_norm)
+                    or tf_norm == inc_norm + ext
+                    or tf_norm.endswith('/' + inc_norm + ext)
+                )
+                if not is_match:
+                    is_match = (
+                        tf_norm.endswith('/' + inc_norm + '/' + os.path.basename(tf_norm))
+                        or tf_norm == inc_norm + '/' + os.path.basename(tf_norm)
+                    )
+                if is_match:
                     full_tf = os.path.abspath(tf)
                     if os.path.exists(full_tf):
                         resolved_paths.append(full_tf)
@@ -1680,7 +1686,7 @@ def resolve_global_definition(file_path, var_name, profile, file_cache, searched
     if not isinstance(getattr(file_cache, "resolve_global_definition_cache", None), dict):
         file_cache.resolve_global_definition_cache = {}
 
-    cache_key = (file_path, var_name)
+    cache_key = (os.path.abspath(file_path), var_name)
     if cache_key in file_cache.resolve_global_definition_cache:
         return file_cache.resolve_global_definition_cache[cache_key]
 

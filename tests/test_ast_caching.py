@@ -1,6 +1,7 @@
 # pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
 # pylint: disable=protected-access,import-outside-toplevel,unused-argument
 
+import os
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -221,7 +222,10 @@ class TestAstCaching(unittest.TestCase):
         profile.strip_strings_and_comments = lambda x: x
 
         file_cache = MagicMock()
-        initial_cache = {f"file_{i}.py": ("somewhere.py", i) for i in range(1024)}
+        initial_cache = {
+            os.path.abspath(f"file_{i}.py"): ("somewhere.py", i)
+            for i in range(1024)
+        }
         file_cache.find_class_definition_cache = initial_cache
         file_cache.get_lines.return_value = ["class TargetClass:", "    pass"]
 
@@ -229,8 +233,13 @@ class TestAstCaching(unittest.TestCase):
         self.assertEqual(res, ("start.py", 1))
 
         self.assertEqual(len(file_cache.find_class_definition_cache), 1024)
-        self.assertNotIn("file_0.py", file_cache.find_class_definition_cache)
-        self.assertIn(("start.py", "TargetClass"), file_cache.find_class_definition_cache)
+        self.assertNotIn(
+            os.path.abspath("file_0.py"), file_cache.find_class_definition_cache
+        )
+        self.assertIn(
+            (os.path.abspath("start.py"), "TargetClass"),
+            file_cache.find_class_definition_cache,
+        )
 
     @patch("context_builder.sys_utils.get_git_tracked_files")
     def test_get_directly_included_files_cache_bounding(self, mock_get_git_tracked):
@@ -239,7 +248,7 @@ class TestAstCaching(unittest.TestCase):
         profile.name = "python"
 
         file_cache = MagicMock()
-        initial_cache = {f"file_{i}.py": [] for i in range(1024)}
+        initial_cache = {os.path.abspath(f"file_{i}.py"): [] for i in range(1024)}
         file_cache.get_directly_included_files_cache = initial_cache
         file_cache.get_lines.return_value = []
 
@@ -247,8 +256,8 @@ class TestAstCaching(unittest.TestCase):
         self.assertEqual(res, [])
 
         self.assertEqual(len(file_cache.get_directly_included_files_cache), 1024)
-        self.assertNotIn("file_0.py", file_cache.get_directly_included_files_cache)
-        self.assertIn("start.py", file_cache.get_directly_included_files_cache)
+        self.assertNotIn(os.path.abspath("file_0.py"), file_cache.get_directly_included_files_cache)
+        self.assertIn(os.path.abspath("start.py"), file_cache.get_directly_included_files_cache)
 
     @patch("context_builder.ast_engine.ripgrep_filter")
     @patch("context_builder.sys_utils.get_git_tracked_files")
@@ -276,7 +285,9 @@ class TestAstCaching(unittest.TestCase):
         profile.strip_strings_and_comments = lambda x: x
 
         file_cache = MagicMock()
-        initial_cache = {f"file_{i}.py": [] for i in range(1024)}
+        initial_cache = {
+            os.path.abspath(f"file_{i}.py"): [] for i in range(1024)
+        }
         file_cache.resolve_global_definition_cache = initial_cache
         file_cache.get_lines.return_value = ["x = 42"]
 
@@ -287,5 +298,11 @@ class TestAstCaching(unittest.TestCase):
             self.assertEqual(len(res), 1)
 
             self.assertEqual(len(file_cache.resolve_global_definition_cache), 1024)
-            self.assertNotIn("file_0.py", file_cache.resolve_global_definition_cache)
-            self.assertIn(("start.py", "x"), file_cache.resolve_global_definition_cache)
+            self.assertNotIn(
+                os.path.abspath("file_0.py"),
+                file_cache.resolve_global_definition_cache,
+            )
+            self.assertIn(
+                (os.path.abspath("start.py"), "x"),
+                file_cache.resolve_global_definition_cache,
+            )
