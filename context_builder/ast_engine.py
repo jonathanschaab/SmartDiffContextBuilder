@@ -65,7 +65,7 @@ def _get_stripped_lines(file_cache, file_path, profile):  # pylint: disable=too-
                     return lines
                 return _fallback_strip(lines, profile)
             return lines
-        return res
+        return res if res is not None else []
 
     lines = file_cache.get_lines(file_path)
     if lines is None:

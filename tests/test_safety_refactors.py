@@ -388,3 +388,14 @@ class TestSafetyRefactors(unittest.TestCase):
 
         with patch("context_builder.lsp_client.USE_LSP", True):
             self.assertEqual(get_lsp_type_definition("dummy.py", 1, 0, timeout=1), [])
+
+    def test_get_stripped_lines_returns_empty_list_when_none(self):
+        """Verify _get_stripped_lines returns [] if file_cache.get_stripped_lines returns None."""
+        from context_builder.ast_engine import _get_stripped_lines
+
+        file_cache = MagicMock()
+        file_cache.get_stripped_lines.return_value = None
+        profile = MagicMock()
+
+        res = _get_stripped_lines(file_cache, "dummy.py", profile)
+        self.assertEqual(res, [])
