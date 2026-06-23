@@ -8,6 +8,7 @@ and callee analysis.
 
 import os
 import re
+import difflib
 import importlib
 from .sys_utils import iter_scan_progress, warn_once, ripgrep_filter
 from .cache import get_global_cache
@@ -829,6 +830,55 @@ def find_callee_definition(callee_name, all_repo_files, file_cache=None):
     return None, None
 
 
+def _process_identifier_node(node, lines, line_set, results):
+    """Extract identifier info if it lies on a target line and is not a function call.
+
+    Args:
+        node: Tree-sitter identifier node.
+        lines: List of source lines.
+        line_set: Set of line numbers of interest.
+        results: List to append (text, line, char_offset) tuples.
+    """
+    try:
+        node_line = node.start_point[0] + 1
+    except (TypeError, IndexError, AttributeError):
+        return
+    if node_line not in line_set:
+        return
+    # Determine if identifier is part of a call expression or member access that should be ignored
+    is_invalid = False
+    parent = node.parent
+    if parent and hasattr(parent, 'child_by_field_name'):
+        if parent.type == 'call_expression' and parent.child_by_field_name('function') == node:
+            is_invalid = True
+        elif parent.type in (
+            'member_expression', 'attribute', 'selector_expression',
+            'field_access', 'field_expression'
+        ):
+            field_name = 'property' if parent.type == 'member_expression' else (
+                'attribute' if parent.type == 'attribute' else 'field'
+            )
+            if parent.child_by_field_name(field_name) == node:
+                is_invalid = True
+        elif parent.type == 'function_declarator' and parent.child_by_field_name('declarator') == node:
+            is_invalid = True
+    if is_invalid:
+        return
+    text = node.text
+    if isinstance(text, bytes):
+        text = text.decode('utf-8', errors='ignore')
+    if not text:
+        return
+    # Calculate character offset respecting UTF-16 code units (as used by many editors)
+    char_offset = node.start_point[1]
+    if lines and 1 <= node_line <= len(lines):
+        line_str = lines[node_line - 1]
+        prefix_bytes = line_str.encode('utf-8')[:node.start_point[1]]
+        prefix_str = prefix_bytes.decode('utf-8', errors='ignore')
+        char_offset = len(prefix_str.encode('utf-16-le')) // 2
+    results.append((text, node_line, char_offset))
+
+
 def extract_identifiers_with_positions_ast(file_path, line_numbers, file_cache=None):  # pylint: disable=too-many-branches,too-many-nested-blocks
     """Query Tree-sitter for raw (identifier) nodes with their positions within modified lines."""
     if not line_numbers:
@@ -860,52 +910,10 @@ def extract_identifiers_with_positions_ast(file_path, line_numbers, file_cache=N
     stack = [tree.root_node]
     while stack:
         node = stack.pop()
-        try:
-            node_start = node.start_point[0] + 1
-            try:
-                node_end = node.end_point[0] + 1
-            except (TypeError, IndexError, AttributeError):
-                node_end = node_start
-        except (TypeError, IndexError, AttributeError):
-            node_start = 1
-            node_end = 1
+        # Process identifier nodes
+        _process_identifier_node(node, lines, line_set, results)
 
-        if node.type == 'identifier':
-            node_line = node_start
-            if node_line in line_set:
-                is_invalid = False
-                p = node.parent
-                if p and hasattr(p, 'child_by_field_name'):
-                    if p.type == 'call_expression':
-                        if p.child_by_field_name('function') == node:
-                            is_invalid = True
-                    elif p.type in (
-                        'member_expression', 'attribute', 'selector_expression',
-                        'field_access', 'field_expression'
-                    ):
-                        field_name = 'property' if p.type == 'member_expression' else (
-                            'attribute' if p.type == 'attribute' else 'field'
-                        )
-                        if p.child_by_field_name(field_name) == node:
-                            is_invalid = True
-                    elif p.type == 'function_declarator':
-                        if p.child_by_field_name('declarator') == node:
-                            is_invalid = True
-                if not is_invalid:
-                    text = node.text
-                    if isinstance(text, bytes):
-                        text = text.decode('utf-8', errors='ignore')
-                    if text:
-                        char_offset = node.start_point[1]
-                        if lines and 1 <= node_line <= len(lines):
-                            line_str = lines[node_line - 1]
-                            prefix_bytes = line_str.encode("utf-8")[:node.start_point[1]]
-                            prefix_str = prefix_bytes.decode("utf-8", errors="ignore")
-                            char_offset = len(prefix_str.encode("utf-16-le")) // 2
-                        results.append((text, node_line, char_offset))
-
-        # Always traverse children to ensure identifiers are discovered, even if node range is unknown.
-        # Prune traversal to only children whose line range intersects the target lines
+        # Traverse children whose line ranges intersect the target lines
         for child in reversed(node.children):
             try:
                 child_start = child.start_point[0] + 1
