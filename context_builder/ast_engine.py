@@ -31,31 +31,39 @@ def _strip_comments_only(line, profile):
     """Strip same-line comments while leaving string literals intact."""
     if not profile or not isinstance(profile.line_comment, str):
         return line
-    if not hasattr(profile, "strip_string_literals") or not callable(profile.strip_string_literals):
+    if not hasattr(profile, 'strip_string_literals') or not callable(
+        profile.strip_string_literals
+    ):
         return line
-    if getattr(profile, "_cached_string_literal_pattern", None) is None:
+    if getattr(profile, '_cached_string_literal_pattern', None) is None:
         try:
-            profile.strip_string_literals("")
+            profile.strip_string_literals('')
         except Exception:  # pylint: disable=broad-exception-caught
             pass
-    string_pattern = getattr(profile, "_cached_string_literal_pattern", None)
-    if not string_pattern or not hasattr(string_pattern, "pattern") or not hasattr(string_pattern, "flags"):
+    string_pattern = getattr(profile, '_cached_string_literal_pattern', None)
+    if not string_pattern or not hasattr(string_pattern, 'pattern') or not hasattr(
+        string_pattern, 'flags'
+    ):
         return line
-    combined = getattr(profile, "_cached_comment_pattern", None)
+    combined = getattr(profile, '_cached_comment_pattern', None)
     if combined is None:
-        # Compile regex that captures string literals and comments, preserving original length for comments.
+        # Use a non-capturing group for the string pattern so that internal
+        # backreferences (e.g. \1 for matching quotes) are not broken by an
+        # extra capturing group.  Use a named group for the comment so we can
+        # reference it robustly regardless of how many groups the string
+        # pattern contains.
         comment_pattern_str = re.escape(profile.line_comment) + r'.*'
         combined = re.compile(
-            f"({string_pattern.pattern})|({comment_pattern_str})",
+            f'(?:{string_pattern.pattern})|(?P<comment>{comment_pattern_str})',
             flags=string_pattern.flags,
         )
-        # Cache on the profile for future calls.
-        setattr(profile, "_cached_comment_pattern", combined)
+        setattr(profile, '_cached_comment_pattern', combined)
 
     def replace(match):
-        # If the match is a comment (group 2), replace it with spaces of equal length to preserve offsets.
-        if match.group(2):
-            return " " * len(match.group(2))
+        # If the match is a comment, replace it with spaces to preserve offsets.
+        comment = match.group('comment')
+        if comment:
+            return ' ' * len(comment)
         return match.group(0)
 
     return combined.sub(replace, line)
@@ -209,7 +217,12 @@ def extract_function_bounds_ast(file_path, line_num, ext, file_cache=None):
     while current:
         found_child = None
         for child in current.children:
-            if child.start_point[0] <= target_row <= child.end_point[0]:
+            try:
+                child_start = child.start_point[0]
+                child_end = child.end_point[0]
+            except (TypeError, IndexError, AttributeError):
+                continue
+            if child_start <= target_row <= child_end:
                 found_child = child
                 break
         if found_child:
@@ -679,7 +692,7 @@ def split_massive_block_ast(source_text, file_path, max_lines):
     return [{"suffix": " (AST Semantically Pruned)", "text": "\n".join(output_lines)}]
 
 
-def extract_callees_ast(file_path, start_line, end_line, ext, file_cache):
+def extract_callees_ast(file_path, start_line, end_line, ext, file_cache):  # pylint: disable=too-many-branches
     """Extract all functions/methods called inside a specific line range using tree-sitter AST."""
     ext = ext.lower()
     if not AST_ENGINE.is_supported(ext):
@@ -833,23 +846,35 @@ def find_callee_definition(callee_name, all_repo_files, file_cache=None):
 def _process_identifier_node(node, lines, line_set, results):
     """Extract identifier info if it lies on a target line and is not a function call.
 
+    Only processes nodes of type ``'identifier'`` – non-leaf nodes (expressions,
+    statements, blocks) also carry a non-empty ``text`` attribute containing their
+    entire source substring, which must not be treated as a single identifier.
+
     Args:
-        node: Tree-sitter identifier node.
+        node: Tree-sitter AST node.
         lines: List of source lines.
         line_set: Set of line numbers of interest.
         results: List to append (text, line, char_offset) tuples.
     """
+    # Guard: only process leaf identifier nodes.
+    if node.type != 'identifier':
+        return
     try:
         node_line = node.start_point[0] + 1
+        node_start_char = node.start_point[1]
     except (TypeError, IndexError, AttributeError):
         return
     if node_line not in line_set:
         return
-    # Determine if identifier is part of a call expression or member access that should be ignored
+    # Determine if identifier is part of a call expression or member access
+    # that should be ignored.
     is_invalid = False
     parent = node.parent
     if parent and hasattr(parent, 'child_by_field_name'):
-        if parent.type == 'call_expression' and parent.child_by_field_name('function') == node:
+        if (
+            parent.type == 'call_expression'
+            and parent.child_by_field_name('function') == node
+        ):
             is_invalid = True
         elif parent.type in (
             'member_expression', 'attribute', 'selector_expression',
@@ -860,7 +885,10 @@ def _process_identifier_node(node, lines, line_set, results):
             )
             if parent.child_by_field_name(field_name) == node:
                 is_invalid = True
-        elif parent.type == 'function_declarator' and parent.child_by_field_name('declarator') == node:
+        elif (
+            parent.type == 'function_declarator'
+            and parent.child_by_field_name('declarator') == node
+        ):
             is_invalid = True
     if is_invalid:
         return
@@ -870,10 +898,10 @@ def _process_identifier_node(node, lines, line_set, results):
     if not text:
         return
     # Calculate character offset respecting UTF-16 code units (as used by many editors)
-    char_offset = node.start_point[1]
+    char_offset = node_start_char
     if lines and 1 <= node_line <= len(lines):
         line_str = lines[node_line - 1]
-        prefix_bytes = line_str.encode('utf-8')[:node.start_point[1]]
+        prefix_bytes = line_str.encode('utf-8')[:node_start_char]
         prefix_str = prefix_bytes.decode('utf-8', errors='ignore')
         char_offset = len(prefix_str.encode('utf-16-le')) // 2
     results.append((text, node_line, char_offset))
@@ -933,17 +961,30 @@ def extract_identifiers_with_positions_ast(file_path, line_numbers, file_cache=N
 
 
 def _align_clean_to_original(original, clean):
-    """Map indices of 'clean' back to their corresponding indices in 'original'."""
-    import difflib
+    """Map indices of 'clean' back to their corresponding indices in 'original'.
+
+    Returns a list of the same length as *clean* where each element is the
+    index of the corresponding character in *original*.  Skipping the
+    ``'replace'`` opcode (as was done previously) leaves the mapping list
+    shorter than *clean*, causing subsequent index lookups to be shifted or
+    to raise ``IndexError``.
+    """
     matcher = difflib.SequenceMatcher(None, original, clean)
     mapping = []
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-        if tag == "equal":
+        if tag == 'equal':
             for offset in range(i2 - i1):
                 mapping.append(i1 + offset)
-        elif tag in ("replace", "delete"):
-            continue
-        elif tag == "insert":
+        elif tag == 'replace':
+            # Map each clean character to the closest original character.
+            orig_len = i2 - i1
+            clean_len = j2 - j1
+            for k in range(clean_len):
+                orig_idx = i1 + min(k, orig_len - 1)
+                mapping.append(orig_idx)
+        elif tag == 'delete':
+            pass  # Characters only in original; nothing added to mapping.
+        elif tag == 'insert':
             for _ in range(j2 - j1):
                 mapping.append(i1)
     return mapping
@@ -1356,8 +1397,20 @@ def is_line_definition_of_var(cleaned_line, var_name, profile):
     if re.search(r'\b(?:let|const|var|mut)\s+' + escaped_var + r'\b', cleaned_line):
         return True
 
-    # 3. Type-based declarations (C/C++/Java)
-    if re.search(r'\b[A-Za-z_][A-Za-z0-9_<>:,*&]*\s+' + escaped_var + r'\b', cleaned_line):
+    # 3. Type-based declarations (C/C++/Java/Go/Rust)
+    # Match a leading type name followed by the variable name, but reject
+    # flow-control/statement keywords (e.g. 'return', 'if', 'for') that
+    # cannot be type names and would otherwise cause false positives such as
+    # treating `return x;` as a definition.
+    # We use profile.flow_keywords (not profile.keywords) because the full
+    # keyword set also includes primitive type names ('int', 'char', etc.)
+    # that are perfectly valid as type declaration prefixes.
+    flow_kws = getattr(profile, 'flow_keywords', frozenset())
+    type_decl_match = re.search(
+        r'\b([A-Za-z_][A-Za-z0-9_<>:,*&]*)\s+' + escaped_var + r'\b',
+        cleaned_line,
+    )
+    if type_decl_match and type_decl_match.group(1) not in flow_kws:
         return True
 
     # 4. Parameters in function headers
@@ -1569,6 +1622,10 @@ def resolve_class_member_definition(
     file_path, class_name, var_name, profile, file_cache, searched_classes=None
 ):
     """Recursively search for var_name in class_name and parent inheritance tree."""
+    # Normalize to absolute path so that the recursion guard (searched_classes)
+    # is not bypassed when relative and absolute paths to the same file are mixed.
+    file_path = os.path.abspath(file_path)
+
     if searched_classes is None:
         searched_classes = set()
 

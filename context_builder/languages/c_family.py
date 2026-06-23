@@ -28,7 +28,13 @@ class CFamilyProfile(LanguageProfile):
         'mutable', 'constexpr', 'decltype', 'thread_local', 'consteval', 'constinit',
         'alignas', 'alignof', 'noexcept', 'static_assert', 'try', 'catch', 'throw'
     })
+    flow_keywords = frozenset({
+        'return', 'if', 'else', 'for', 'while', 'do', 'switch', 'case',
+        'break', 'continue', 'goto', 'try', 'catch', 'throw', 'default',
+        'sizeof', 'new', 'delete',
+    })
     declaration_query = "[(variable_declaration) @decl (assignment_expression) @assign]"
+
 
     def _get_boundaries(self, func_name):
         """Return the C-family specific regex boundary patterns (lead_b, trail_b) for func_name."""

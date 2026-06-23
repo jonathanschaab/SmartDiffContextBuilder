@@ -21,6 +21,12 @@ class JavaScriptProfile(LanguageProfile):
         'type', 'namespace', 'declare', 'module', 'keyof', 'readonly', 'as',
         'any', 'number', 'string', 'boolean', 'symbol', 'unknown', 'never'
     })
+    flow_keywords = frozenset({
+        'return', 'if', 'else', 'for', 'while', 'do', 'switch', 'case',
+        'break', 'continue', 'throw', 'try', 'catch', 'finally', 'yield',
+        'await', 'delete', 'typeof', 'instanceof', 'void', 'in', 'default',
+        'debugger',
+    })
     declaration_query = (
         "[(lexical_declaration) @decl "
         "(variable_declaration) @decl "

@@ -25,6 +25,10 @@ class RustProfile(LanguageProfile):
         'self', 'Self', 'static', 'struct', 'super', 'trait', 'true', 'type',
         'union', 'unsafe', 'use', 'where', 'while', 'yield', 'macro_rules'
     })
+    flow_keywords = frozenset({
+        'return', 'if', 'else', 'for', 'while', 'loop', 'match', 'break',
+        'continue', 'await', 'yield',
+    })
     declaration_query = "[(let_declaration) @decl (assignment_expression) @assign]"
 
     def get_definition_patterns(self, func_name):

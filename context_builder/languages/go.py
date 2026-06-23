@@ -17,6 +17,10 @@ class GoProfile(LanguageProfile):
         'const', 'fallthrough', 'if', 'range', 'type', 'continue', 'for',
         'import', 'return', 'var'
     })
+    flow_keywords = frozenset({
+        'return', 'if', 'else', 'for', 'switch', 'case', 'break', 'continue',
+        'goto', 'fallthrough', 'go', 'select', 'defer', 'range',
+    })
     declaration_query = (
         "[(var_declaration) @decl "
         "(short_var_declaration) @decl "

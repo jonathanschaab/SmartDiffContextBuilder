@@ -30,6 +30,11 @@ class JavaProfile(LanguageProfile):
         'super', 'while', 'record', 'yield', 'non-sealed', 'permits', 'sealed',
         'var'
     })
+    flow_keywords = frozenset({
+        'return', 'if', 'else', 'for', 'while', 'do', 'switch', 'case',
+        'break', 'continue', 'throw', 'throws', 'try', 'catch', 'finally',
+        'yield', 'assert', 'instanceof', 'new', 'default',
+    })
     declaration_query = "[(local_variable_declaration) @decl (assignment_expression) @assign]"
 
     def get_definition_patterns(self, func_name):
