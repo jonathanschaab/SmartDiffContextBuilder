@@ -2174,22 +2174,48 @@ class TestAstEngine(unittest.TestCase):
         from context_builder.ast_engine import extract_identifiers_ast
 
         class FakeNode:
-            def __init__(self, node_type, start_line, text=None, children=None, parent=None):
+            def __init__(self, node_type, start_line, text=None, children=None, parent=None, fields=None):
                 self.type = node_type
                 self.start_point = (start_line - 1, 0)
                 self.text = text.encode('utf-8') if isinstance(text, str) else text
                 self.children = children or []
                 self.parent = parent
+                self.fields = fields or {}
                 for child in self.children:
                     child.parent = self
 
-        var_node = FakeNode("identifier", 2, "my_var")
-        call_id = FakeNode("identifier", 3, "func_call")
-        call_expr = FakeNode("call_expression", 3, children=[call_id])
-        decl_id = FakeNode("identifier", 4, "my_func")
-        func_decl = FakeNode("function_declarator", 4, children=[decl_id])
+            def child_by_field_name(self, name):
+                return self.fields.get(name)
 
-        root = FakeNode("module", 1, children=[var_node, call_expr, func_decl])
+        var_node = FakeNode("identifier", 2, "my_var")
+
+        # func_call(x)
+        call_id = FakeNode("identifier", 3, "func_call")
+        arg_id = FakeNode("identifier", 3, "x")
+        call_expr = FakeNode(
+            "call_expression", 3,
+            children=[call_id, arg_id],
+            fields={"function": call_id}
+        )
+
+        # obj.foo
+        obj_id = FakeNode("identifier", 4, "obj")
+        foo_id = FakeNode("identifier", 4, "foo")
+        member_expr = FakeNode(
+            "member_expression", 4,
+            children=[obj_id, foo_id],
+            fields={"object": obj_id, "property": foo_id}
+        )
+
+        # void my_func()
+        decl_id = FakeNode("identifier", 5, "my_func")
+        func_decl = FakeNode(
+            "function_declarator", 5,
+            children=[decl_id],
+            fields={"declarator": decl_id}
+        )
+
+        root = FakeNode("module", 1, children=[var_node, call_expr, member_expr, func_decl])
 
         parser = MagicMock()
         parser.parse.return_value = SimpleNamespace(root_node=root)
@@ -2199,8 +2225,8 @@ class TestAstEngine(unittest.TestCase):
         cache = MagicMock()
         cache.get_bytes.return_value = b"some code"
 
-        res = extract_identifiers_ast("file.py", [2, 3, 4], file_cache=cache)
-        self.assertEqual(res, {"my_var"})
+        res = extract_identifiers_ast("file.py", [2, 3, 4, 5], file_cache=cache)
+        self.assertEqual(res, {"my_var", "x", "obj"})
 
     @patch("context_builder.ast_engine.AST_ENGINE")
     def test_extract_identifiers_unified(self, mock_engine):

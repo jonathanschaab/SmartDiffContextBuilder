@@ -29,7 +29,7 @@ LANG_MAP = ConfigDictProxy('lang_map')
 def _fallback_strip(lines, profile):
     """Fallback utility to strip comments from line lists without trailing newlines."""
     lines_with_nl = [
-        (l if l.endswith('\n') or l.endswith('\r') else l + '\n')
+        (l if l.endswith(('\n', '\r')) else l + '\n')
         for l in lines
     ]
     content = "".join(lines_with_nl)
@@ -813,13 +813,18 @@ def extract_identifiers_with_positions_ast(file_path, line_numbers, file_cache=N
         if node.type == 'identifier':
             node_line = node.start_point[0] + 1
             if node_line in line_set:
-                curr = node.parent
                 is_invalid = False
-                while curr:
-                    if curr.type in ('call_expression', 'function_declarator'):
-                        is_invalid = True
-                        break
-                    curr = curr.parent
+                p = node.parent
+                if p and hasattr(p, 'child_by_field_name'):
+                    if p.type == 'call_expression':
+                        if p.child_by_field_name('function') == node:
+                            is_invalid = True
+                    elif p.type == 'member_expression':
+                        if p.child_by_field_name('property') == node:
+                            is_invalid = True
+                    elif p.type == 'function_declarator':
+                        if p.child_by_field_name('declarator') == node:
+                            is_invalid = True
                 if not is_invalid:
                     text = node.text
                     if isinstance(text, bytes):
