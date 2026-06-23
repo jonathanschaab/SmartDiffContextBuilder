@@ -306,6 +306,8 @@ def _trace_file_ast_dependencies(file_path, func_name, file_cache, callers):
         query = tree_sitter.Query(AST_ENGINE.languages[ext], q_str)
         captures = query.captures(tree.root_node)
         lines = file_cache.get_lines(file_path)
+        if lines is None:
+            return
 
         for capture_node, _ in captures:
             if capture_node.parent is None:
@@ -1066,7 +1068,7 @@ def resolve_local_variable_ast(file_path, var_name, ref_line, file_cache=None): 
     # Find closest instantiation before ref_line
     def_line = max(instantiations)
     lines = file_cache.get_lines(file_path)
-    if 1 <= def_line <= len(lines):
+    if lines is not None and 1 <= def_line <= len(lines):
         return def_line, lines[def_line - 1].strip()
 
     return None, None
@@ -1478,6 +1480,9 @@ def resolve_class_member_definition(
     for name, ln in members:
         if name == var_name:
             lines = file_cache.get_lines(file_path)
+            code_line = ""
+            if lines is not None and 1 <= ln <= len(lines):
+                code_line = lines[ln - 1].strip()
             try:
                 rel_path = os.path.relpath(file_path, os.getcwd())
             except ValueError:
@@ -1485,7 +1490,7 @@ def resolve_class_member_definition(
             return {
                 "path": rel_path,
                 "line": ln,
-                "code": lines[ln - 1].strip()
+                "code": code_line
             }
 
     parents = get_parent_classes(file_path, class_name, profile, file_cache)

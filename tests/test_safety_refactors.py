@@ -202,3 +202,82 @@ class TestSafetyRefactors(unittest.TestCase):
         )
         # Should not crash with AttributeError
         tracer.trace_data_flow({"dummy.py": [10]})
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    @patch("context_builder.ast_engine.extract_function_bounds", return_value=(0, 10))
+    def test_resolve_local_variable_ast_none_lines(self, _mock_bounds, mock_engine):
+        """Verify resolve_local_variable_ast does not crash when lines is None."""
+        from context_builder.ast_engine import resolve_local_variable_ast
+
+        file_cache = MagicMock()
+        file_cache.get_bytes.return_value = b"x = 5"
+        file_cache.get_lines.return_value = None
+
+        node = MagicMock()
+        node.type = 'assignment_expression'
+        node.start_point = (2, 0)
+
+        mock_tree = SimpleNamespace(root_node=node)
+        mock_parser = MagicMock()
+        mock_parser.parse.return_value = mock_tree
+        mock_engine.parsers = {".py": mock_parser}
+        mock_engine.is_supported.return_value = True
+
+        with patch("context_builder.ast_engine.tree_sitter.Query", side_effect=Exception):
+            with patch("context_builder.ast_engine.get_lhs_identifiers", return_value={"x"}):
+                res_line, res_code = resolve_local_variable_ast(
+                    "dummy.py", "x", 5, file_cache=file_cache
+                )
+                self.assertIsNone(res_line)
+                self.assertIsNone(res_code)
+
+    def test_resolve_class_member_definition_none_lines(self):
+        """Verify resolve_class_member_definition handles None lines from cache gracefully."""
+        from context_builder.ast_engine import resolve_class_member_definition
+
+        file_cache = MagicMock()
+        file_cache.get_lines.return_value = None
+        profile = MagicMock()
+
+        with patch("context_builder.ast_engine.get_class_members", return_value=[("my_var", 2)]):
+            res = resolve_class_member_definition(
+                "dummy.py", "MyClass", "my_var", profile, file_cache
+            )
+            self.assertIsNotNone(res)
+            self.assertEqual(res["code"], "")
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    @patch("context_builder.ast_engine.tree_sitter")
+    def test_trace_file_ast_dependencies_none_lines(self, mock_tree_sitter, mock_engine):
+        """Verify _trace_file_ast_dependencies returns early without crashing
+        when get_lines returns None.
+        """
+        from context_builder.ast_engine import _trace_file_ast_dependencies
+
+        file_cache = MagicMock()
+        file_cache.get_bytes.return_value = b"some code"
+        file_cache.get_lines.return_value = None
+
+        node = MagicMock()
+        mock_tree = SimpleNamespace(root_node=node)
+        mock_parser = MagicMock()
+        mock_parser.parse.return_value = mock_tree
+        mock_engine.parsers = {".py": mock_parser}
+        mock_engine.is_supported.return_value = True
+
+        mock_query = MagicMock()
+        # Mock some capture to try getting the lines
+        capture_node = MagicMock()
+        capture_node.parent = MagicMock()
+        capture_node.parent.start_byte = 0
+        capture_node.parent.end_byte = 5
+        mock_query.captures.return_value = [(capture_node, None)]
+        mock_tree_sitter.Query.return_value = mock_query
+
+        mock_engine.languages = {".py": MagicMock()}
+
+        callers = {}
+        _trace_file_ast_dependencies(
+            "dummy.py", "my_func", file_cache, callers
+        )
+        self.assertEqual(callers, {})
