@@ -80,11 +80,14 @@ class TestLanguageKeywords(unittest.TestCase):
             f.write(code)
 
         if AST_ENGINE.is_supported(".go"):
-            res_file, res_line = resolve_variable_definition_regex_fallback(
+            result = resolve_variable_definition_regex_fallback(
                 file_path, "target", 4, self.cache, GO
             )
-            self.assertEqual(res_file, file_path)
-            self.assertEqual(res_line, 3)
+            self.assertEqual(result["resolved_type"], "local_regex")
+            self.assertEqual(len(result["definitions"]), 1)
+            definition = result["definitions"][0]
+            self.assertEqual(definition["path"], os.path.relpath(file_path, os.getcwd()))
+            self.assertEqual(definition["line"], 3)
 
 
 if __name__ == "__main__":

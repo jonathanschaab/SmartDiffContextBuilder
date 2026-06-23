@@ -18,6 +18,7 @@ try:
     import tree_sitter
     HAS_TREESITTER = True
 except ImportError:
+    tree_sitter = None
     HAS_TREESITTER = False
 
 from .config import CONFIG, ConfigDictProxy
@@ -330,7 +331,7 @@ def _trace_file_ast_dependencies(file_path, func_name, file_cache, callers):
                 "Dynamic dispatch tracking relies on type hinting for accuracy."
             )
 
-    if not AST_ENGINE.is_supported(ext):
+    if tree_sitter is None or not AST_ENGINE.is_supported(ext):
         return
     source_bytes = file_cache.get_bytes(file_path)
     tree = AST_ENGINE.parsers[ext].parse(source_bytes)
@@ -695,7 +696,7 @@ def split_massive_block_ast(source_text, file_path, max_lines):
 def extract_callees_ast(file_path, start_line, end_line, ext, file_cache):  # pylint: disable=too-many-branches
     """Extract all functions/methods called inside a specific line range using tree-sitter AST."""
     ext = ext.lower()
-    if not AST_ENGINE.is_supported(ext):
+    if tree_sitter is None or not AST_ENGINE.is_supported(ext):
         return set()
     source_bytes = file_cache.get_bytes(file_path)
     tree = AST_ENGINE.parsers[ext].parse(source_bytes)
@@ -1136,7 +1137,7 @@ def resolve_local_variable_ast(file_path, var_name, ref_line, file_cache=None): 
         file_cache = get_global_cache()
 
     ext = os.path.splitext(file_path)[1].lower()
-    if not AST_ENGINE.is_supported(ext):
+    if tree_sitter is None or not AST_ENGINE.is_supported(ext):
         return None, None
 
     source_bytes = file_cache.get_bytes(file_path)
@@ -1155,7 +1156,7 @@ def resolve_local_variable_ast(file_path, var_name, ref_line, file_cache=None): 
     if tree is None or tree.root_node is None:
         return None, None
 
-    profile = get_language_profile(ext)
+    profile = get_language_profile(file_path)
     if profile is None:
         return None, None
     captures = []
