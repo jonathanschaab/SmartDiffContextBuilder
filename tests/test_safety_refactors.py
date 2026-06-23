@@ -399,3 +399,25 @@ class TestSafetyRefactors(unittest.TestCase):
 
         res = _get_stripped_lines(file_cache, "dummy.py", profile)
         self.assertEqual(res, [])
+
+    def test_unsupported_extensions_ast_graceful(self):
+        """Verify extract_function_bounds_ast and extract_callees_ast handle
+        unsupported file extensions gracefully without raising a KeyError.
+        """
+        from context_builder.ast_engine import (
+            extract_function_bounds_ast,
+            extract_callees_ast,
+        )
+
+        file_cache = MagicMock()
+        file_cache.get_bytes.return_value = b"some content"
+
+        res_bounds = extract_function_bounds_ast(
+            "dummy.unsupported", 1, ".unsupported", file_cache=file_cache
+        )
+        self.assertEqual(res_bounds, (None, None))
+
+        res_callees = extract_callees_ast(
+            "dummy.unsupported", 1, 10, ".unsupported", file_cache=file_cache
+        )
+        self.assertEqual(res_callees, set())

@@ -169,6 +169,8 @@ def strip_strings_and_comments(line, file_path_or_extension=None):
 def extract_function_bounds_ast(file_path, line_num, ext, file_cache=None):
     """Extract 0-indexed start and end line bounds using tree-sitter AST nodes."""
     ext = ext.lower()
+    if not AST_ENGINE.is_supported(ext):
+        return None, None
     if file_cache is None:
         file_cache = get_global_cache()
     source_bytes = file_cache.get_bytes(file_path)
@@ -655,6 +657,8 @@ def split_massive_block_ast(source_text, file_path, max_lines):
 def extract_callees_ast(file_path, start_line, end_line, ext, file_cache):
     """Extract all functions/methods called inside a specific line range using tree-sitter AST."""
     ext = ext.lower()
+    if not AST_ENGINE.is_supported(ext):
+        return set()
     source_bytes = file_cache.get_bytes(file_path)
     tree = AST_ENGINE.parsers[ext].parse(source_bytes)
     if tree is None or tree.root_node is None:
