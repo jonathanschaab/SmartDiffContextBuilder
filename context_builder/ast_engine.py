@@ -26,6 +26,28 @@ LANG_MAP = ConfigDictProxy('lang_map')
 
 
 
+def _strip_comments_only(line, profile):
+    """Strip same-line comments while leaving string literals intact."""
+    if not profile or not profile.line_comment:
+        return line
+    if type(profile).__name__ in ('MagicMock', 'Mock', 'NonCallableMagicMock', 'NonCallableMock'):
+        return line
+    if getattr(profile, "_cached_string_literal_pattern", None) is None:
+        profile.strip_string_literals("")
+    string_pattern = getattr(profile, "_cached_string_literal_pattern", None)
+    if not string_pattern:
+        return line
+    comment_pattern_str = re.escape(profile.line_comment) + r'.*'
+    combined = re.compile(f"({string_pattern.pattern})|({comment_pattern_str})")
+
+    def replace(match):
+        if match.group(2):
+            return ""
+        return match.group(0)
+
+    return combined.sub(replace, line)
+
+
 def _fallback_strip(lines, profile):
     """Fallback utility to strip comments from line lists without trailing newlines."""
     if not lines:
@@ -836,8 +858,14 @@ def extract_identifiers_with_positions_ast(file_path, line_numbers, file_cache=N
                     if p.type == 'call_expression':
                         if p.child_by_field_name('function') == node:
                             is_invalid = True
-                    elif p.type == 'member_expression':
-                        if p.child_by_field_name('property') == node:
+                    elif p.type in (
+                        'member_expression', 'attribute', 'selector_expression',
+                        'field_access', 'field_expression'
+                    ):
+                        field_name = 'property' if p.type == 'member_expression' else (
+                            'attribute' if p.type == 'attribute' else 'field'
+                        )
+                        if p.child_by_field_name(field_name) == node:
                             is_invalid = True
                     elif p.type == 'function_declarator':
                         if p.child_by_field_name('declarator') == node:
@@ -1603,7 +1631,7 @@ def get_directly_included_files(file_path, profile, file_cache):  # pylint: disa
         curr_dir = os.path.dirname(file_path)
 
         for line in lines:
-            cleaned = line.strip()
+            cleaned = _strip_comments_only(line, profile).strip()
             if not cleaned:
                 continue
 
@@ -1682,7 +1710,9 @@ def get_directly_included_files(file_path, profile, file_cache):  # pylint: disa
     return res
 
 
-def resolve_global_definition(file_path, var_name, profile, file_cache, searched_files=None):
+def resolve_global_definition(
+    file_path, var_name, profile, file_cache, searched_files=None
+):  # pylint: disable=too-many-statements
     """Search globally for var_name in current file, imports, and repo files."""
     if file_cache is None:
         file_cache = get_global_cache()
@@ -1724,10 +1754,16 @@ def resolve_global_definition(file_path, var_name, profile, file_cache, searched
                         rel_path = os.path.relpath(f, os.getcwd())
                     except ValueError:
                         rel_path = f
+                    original_lines = file_cache.get_lines(f)
+                    code_snippet = ""
+                    if original_lines and len(original_lines) >= ln:
+                        code_snippet = original_lines[ln - 1].strip()
+                    else:
+                        code_snippet = line.strip()
                     return {
                         "path": rel_path,
                         "line": ln,
-                        "code": line.strip()
+                        "code": code_snippet
                     }
             return None
 
@@ -1770,6 +1806,8 @@ def resolve_variable_definition_regex_fallback(
     file_path, var_name, line_num, file_cache, profile
 ):  # pylint: disable=too-many-branches
     """Fall back to regex resolution scanning local scopes, class members, and globals."""
+    if profile is None:
+        return {"resolved_type": "none", "definitions": []}
     lines = file_cache.get_lines(file_path)
     if not lines:
         return {"resolved_type": "none", "definitions": []}

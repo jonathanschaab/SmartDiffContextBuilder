@@ -1,4 +1,4 @@
-# pylint: disable=import-outside-toplevel,too-few-public-methods
+# pylint: disable=import-outside-toplevel,too-few-public-methods,too-many-public-methods
 # pylint: disable=consider-using-from-import,missing-function-docstring
 
 """Unit tests covering dotted imports, UTF-8 BOM, config dictionary exceptions,
@@ -421,3 +421,127 @@ class TestSafetyRefactors(unittest.TestCase):
             "dummy.unsupported", 1, 10, ".unsupported", file_cache=file_cache
         )
         self.assertEqual(res_callees, set())
+
+    def test_get_directly_included_files_inline_comments(self):
+        """Verify get_directly_included_files strips comments and parses imports correctly."""
+        from context_builder.ast_engine import get_directly_included_files
+        from context_builder.languages.python import PythonProfile
+
+        profile = PythonProfile()
+        file_cache = MagicMock()
+        file_cache.get_directly_included_files_cache = {}
+        file_cache.get_stripped_lines.return_value = [
+            "import os # this is a comment",
+            "from path import name # inline comment",
+            "# import ignored_module",
+        ]
+        file_cache.get_lines.return_value = file_cache.get_stripped_lines.return_value
+
+        expected_files = {
+            os.path.abspath("os.py"),
+            os.path.abspath("path.py"),
+            os.path.abspath("active_module.js"),
+        }
+
+        def mock_exists(p):
+            return os.path.abspath(p) in expected_files
+
+        with patch("context_builder.ast_engine.os.path.exists", side_effect=mock_exists), \
+             patch("context_builder.ast_engine.os.path.isfile", side_effect=mock_exists), \
+             patch(
+                 "context_builder.sys_utils.get_git_tracked_files",
+                 return_value=["os.py", "path.py"]
+             ):
+            res = get_directly_included_files("dummy.py", profile, file_cache)
+            self.assertEqual(len(res), 2)
+            self.assertTrue(any(f.endswith("os.py") for f in res))
+            self.assertTrue(any(f.endswith("path.py") for f in res))
+
+        from context_builder.languages.javascript import JavaScriptProfile
+        js_profile = JavaScriptProfile()
+        file_cache_js = MagicMock()
+        file_cache_js.get_directly_included_files_cache = {}
+        file_cache_js.get_stripped_lines.return_value = [
+            "// const x = require('commented_out')",
+            "const y = require('active_module') // active import",
+        ]
+        file_cache_js.get_lines.return_value = (
+            file_cache_js.get_stripped_lines.return_value
+        )
+        with patch("context_builder.ast_engine.os.path.exists", side_effect=mock_exists), \
+             patch("context_builder.ast_engine.os.path.isfile", side_effect=mock_exists), \
+             patch(
+                 "context_builder.sys_utils.get_git_tracked_files",
+                 return_value=["active_module.js"]
+             ):
+            res_js = get_directly_included_files("dummy.js", js_profile, file_cache_js)
+            self.assertEqual(len(res_js), 1)
+            self.assertTrue(any(f.endswith("active_module.js") for f in res_js))
+
+    def test_resolve_variable_definition_regex_fallback_none_profile(self):
+        """Verify resolve_variable_definition_regex_fallback handles None profile gracefully."""
+        from context_builder.ast_engine import resolve_variable_definition_regex_fallback
+        file_cache = MagicMock()
+        file_cache.get_lines.return_value = ["x = 5"]
+        res = resolve_variable_definition_regex_fallback("dummy.py", "x", 1, file_cache, None)
+        self.assertEqual(res, {"resolved_type": "none", "definitions": []})
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_extract_identifiers_with_positions_ast_generalized_members(
+        self, mock_engine
+    ):
+        """Verify extract_identifiers_with_positions_ast filters out member property/field
+        identifiers for multiple languages.
+        """
+        from context_builder.ast_engine import extract_identifiers_with_positions_ast
+
+        file_cache = MagicMock()
+        file_cache.get_bytes.return_value = b"some bytes"
+        file_cache.get_lines.return_value = ["obj.prop"]
+
+        node_prop = MagicMock()
+        node_prop.type = 'identifier'
+        node_prop.start_point = (0, 4)
+        node_prop.text = b"prop"
+
+        parent = MagicMock()
+        parent.type = 'attribute'
+        parent.child_by_field_name.return_value = node_prop
+        node_prop.parent = parent
+
+        root = MagicMock()
+        root.children = [parent, node_prop]
+
+        mock_tree = SimpleNamespace(root_node=root)
+        mock_parser = MagicMock()
+        mock_parser.parse.return_value = mock_tree
+        mock_engine.parsers = {".py": mock_parser}
+        mock_engine.is_supported.return_value = True
+
+        res = extract_identifiers_with_positions_ast("dummy.py", [1], file_cache=file_cache)
+        self.assertEqual(res, [])
+
+        parent.child_by_field_name.return_value = None
+        res_valid = extract_identifiers_with_positions_ast("dummy.py", [1], file_cache=file_cache)
+        self.assertEqual(len(res_valid), 1)
+        self.assertEqual(res_valid[0][0], "prop")
+
+    def test_resolve_global_definition_original_code(self):
+        """Verify resolve_global_definition uses the original code from file cache."""
+        from context_builder.ast_engine import resolve_global_definition
+        from context_builder.languages.python import PythonProfile
+
+        profile = PythonProfile()
+        file_cache = MagicMock()
+        file_cache.get_stripped_lines.return_value = ["GLOBAL_VAR = 10"]
+        file_cache.get_lines.return_value = ["GLOBAL_VAR = 10  # original comment"]
+
+        with patch("context_builder.ast_engine.build_scopes") as mock_build_scopes:
+            from context_builder.ast_engine import RegexScope
+            g_scope = RegexScope(start_line=1)
+            g_scope.end_line = 2
+            mock_build_scopes.return_value = (g_scope, [g_scope])
+
+            res = resolve_global_definition("dummy.py", "GLOBAL_VAR", profile, file_cache)
+            self.assertEqual(len(res), 1)
+            self.assertEqual(res[0]["code"], "GLOBAL_VAR = 10  # original comment")
