@@ -2265,6 +2265,80 @@ class TestAstEngine(unittest.TestCase):
         self.assertEqual(res, {"my_var", "x", "obj"})
 
     @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_extract_identifiers_ast_normalizes_uppercase_extension(self, mock_engine):
+        from context_builder.ast_engine import extract_identifiers_ast
+
+        class FakeNode:
+            type = "module"
+            children = []
+            root_node = None
+
+        root = FakeNode()
+        root.root_node = root
+        parser = MagicMock()
+        parser.parse.return_value = SimpleNamespace(root_node=root)
+        mock_engine.parsers = {".py": parser}
+        mock_engine.is_supported.return_value = True
+
+        cache = MagicMock()
+        cache.get_bytes.return_value = b"some code"
+        cache.get_lines.return_value = []
+
+        extract_identifiers_ast("file.PY", [1], file_cache=cache)
+
+        mock_engine.is_supported.assert_called_once_with(".py")
+        parser.parse.assert_called_once_with(b"some code")
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_extract_identifiers_ast_skips_sparse_nonintersecting_subtrees(self, mock_engine):
+        from context_builder.ast_engine import extract_identifiers_ast
+
+        class FakeNode:
+            def __init__(
+                    self, node_type, start_line, end_line=None, text=None,
+                    children=None, fail_on_children=False
+            ):
+                self.type = node_type
+                self.start_point = (start_line - 1, 0)
+                self.end_point = ((end_line or start_line) - 1, 0)
+                self.text = text.encode('utf-8') if isinstance(text, str) else text
+                self._children = children or []
+                self.fail_on_children = fail_on_children
+                self.parent = None
+                for child in self._children:
+                    child.parent = self
+
+            @property
+            def children(self):
+                if self.fail_on_children:
+                    raise AssertionError("non-intersecting subtree was traversed")
+                return self._children
+
+            def child_by_field_name(self, _name):
+                return None
+
+        target_a = FakeNode("identifier", 10, text="line_ten")
+        ignored_subtree = FakeNode(
+            "block", 20, 30, children=[FakeNode("identifier", 25, text="ignored")],
+            fail_on_children=True
+        )
+        target_b = FakeNode("identifier", 100, text="line_hundred")
+        root = FakeNode("module", 1, 120, children=[target_a, ignored_subtree, target_b])
+
+        parser = MagicMock()
+        parser.parse.return_value = SimpleNamespace(root_node=root)
+        mock_engine.parsers = {".py": parser}
+        mock_engine.is_supported.return_value = True
+
+        cache = MagicMock()
+        cache.get_bytes.return_value = b"some code"
+        cache.get_lines.return_value = [""] * 120
+
+        res = extract_identifiers_ast("file.py", [10, 100], file_cache=cache)
+
+        self.assertEqual(res, {"line_ten", "line_hundred"})
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
     def test_extract_identifiers_unified(self, mock_engine):
         from context_builder.ast_engine import extract_identifiers
 

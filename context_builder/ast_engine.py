@@ -10,6 +10,7 @@ import os
 import re
 import difflib
 import importlib
+import bisect
 from .sys_utils import iter_scan_progress, warn_once, ripgrep_filter
 from .cache import get_global_cache
 from .languages import UNKNOWN_LANGUAGE, get_language_profile
@@ -908,6 +909,12 @@ def _process_identifier_node(node, lines, line_set, results):
     results.append((text, node_line, char_offset))
 
 
+def _node_intersects_target_lines(child_start, child_end, sorted_target_lines):
+    """Return whether a node range contains at least one target line."""
+    idx = bisect.bisect_left(sorted_target_lines, child_start)
+    return idx < len(sorted_target_lines) and sorted_target_lines[idx] <= child_end
+
+
 def extract_identifiers_with_positions_ast(file_path, line_numbers, file_cache=None):  # pylint: disable=too-many-branches,too-many-nested-blocks
     """Query Tree-sitter for raw (identifier) nodes with their positions within modified lines."""
     if not line_numbers:
@@ -931,9 +938,8 @@ def extract_identifiers_with_positions_ast(file_path, line_numbers, file_cache=N
         return []
 
     results = []
-    line_set = set(line_numbers)
-    min_line = min(line_set)
-    max_line = max(line_set)
+    sorted_target_lines = sorted(set(line_numbers))
+    line_set = set(sorted_target_lines)
     lines = file_cache.get_lines(file_path)
 
     stack = [tree.root_node]
@@ -955,7 +961,9 @@ def extract_identifiers_with_positions_ast(file_path, line_numbers, file_cache=N
             if not isinstance(child_start, int) or not isinstance(child_end, int):
                 stack.append(child)
                 continue
-            if child_end < min_line or child_start > max_line:
+            if not _node_intersects_target_lines(
+                    child_start, child_end, sorted_target_lines
+            ):
                 continue
             stack.append(child)
     return results
@@ -1084,6 +1092,47 @@ def extract_identifiers(file_path, line_numbers, file_cache=None):
     return extract_identifiers_regex(file_path, line_numbers, file_cache)
 
 
+def _decode_identifier_text(node):
+    """Return identifier text from a Tree-sitter-like node."""
+    text = node.text
+    if isinstance(text, bytes):
+        text = text.decode('utf-8', errors='ignore')
+    return text
+
+
+def _lhs_operator_index(node):
+    """Return the first assignment operator child index, or -1."""
+    for idx, child in enumerate(node.children):
+        if child.type in ('=', ':=', '+=', '-=', '*=', '/='):
+            return idx
+    return -1
+
+
+def _lhs_skip_nodes(node):
+    """Return RHS/init/value field nodes to skip during LHS traversal."""
+    if not hasattr(node, 'child_by_field_name'):
+        return []
+    skip_nodes = []
+    for field in ('right', 'init', 'value'):
+        child = node.child_by_field_name(field)
+        if child:
+            skip_nodes.append(child)
+    return skip_nodes
+
+
+def _lhs_children_to_visit(node):
+    """Return child nodes that can contain LHS identifiers."""
+    operator_idx = _lhs_operator_index(node)
+    skip_nodes = _lhs_skip_nodes(node)
+    children_to_push = []
+    for idx, child in enumerate(node.children):
+        if operator_idx != -1 and idx >= operator_idx:
+            break
+        if child not in skip_nodes:
+            children_to_push.append(child)
+    return children_to_push
+
+
 def get_lhs_identifiers(node):
     """Walk a Tree-sitter declaration or assignment node to find LHS target identifiers.
 
@@ -1095,37 +1144,12 @@ def get_lhs_identifiers(node):
     while stack:
         curr = stack.pop()
         if curr.type == 'identifier':
-            text = curr.text
-            if isinstance(text, bytes):
-                text = text.decode('utf-8', errors='ignore')
+            text = _decode_identifier_text(curr)
             if text:
                 ids.append(text)
             continue
 
-        # Check for operator child
-        operator_idx = -1
-        for idx, child in enumerate(curr.children):
-            if child.type in ('=', ':=', '+=', '-=', '*=', '/='):
-                operator_idx = idx
-                break
-
-        # Check for skip fields
-        right_fields = {'right', 'init', 'value'}
-        skip_nodes = []
-        if hasattr(curr, 'child_by_field_name'):
-            for field in right_fields:
-                child = curr.child_by_field_name(field)
-                if child:
-                    skip_nodes.append(child)
-
-        children_to_push = []
-        for idx, child in enumerate(curr.children):
-            if operator_idx != -1 and idx >= operator_idx:
-                break
-            if child not in skip_nodes:
-                children_to_push.append(child)
-
-        for child in reversed(children_to_push):
+        for child in reversed(_lhs_children_to_visit(curr)):
             stack.append(child)
 
     return ids
