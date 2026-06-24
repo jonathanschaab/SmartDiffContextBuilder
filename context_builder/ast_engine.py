@@ -1017,6 +1017,9 @@ def extract_identifiers_with_positions_regex(file_path, line_numbers, file_cache
                 word = match.group(0)
                 if word in keywords:
                     continue
+                clean_prefix = line_clean[:match.start()]
+                if clean_prefix.endswith('.') or clean_prefix.endswith('->'):
+                    continue
                 suffix = line_clean[match.end():]
                 suffix_stripped = suffix.lstrip()
                 if suffix_stripped.startswith('(') or suffix_stripped.startswith('::'):
@@ -1109,10 +1112,11 @@ def get_lhs_identifiers(node):
         # Check for skip fields
         right_fields = {'right', 'init', 'value'}
         skip_nodes = []
-        for field in right_fields:
-            child = curr.child_by_field_name(field)
-            if child:
-                skip_nodes.append(child)
+        if hasattr(curr, 'child_by_field_name'):
+            for field in right_fields:
+                child = curr.child_by_field_name(field)
+                if child:
+                    skip_nodes.append(child)
 
         children_to_push = []
         for idx, child in enumerate(curr.children):
@@ -1386,16 +1390,17 @@ def get_lines_directly_in_scope(scope, lines):
 def is_line_definition_of_var(cleaned_line, var_name, profile):
     """Check if a cleaned line defines var_name using simple regex heuristics."""
     escaped_var = re.escape(var_name)
+    standalone_var = r'(?<!\.)(?<!->)(?<!::)\b' + escaped_var + r'\b'
 
     # 1. Assignment
     assign_match = re.search(r'(?<![!=<>])=(?!=)|:=|\+=|-=|\*=|\/=', cleaned_line)
     if assign_match:
         lhs = cleaned_line[:assign_match.start()]
-        if re.search(r'\b' + escaped_var + r'\b', lhs):
+        if re.search(standalone_var, lhs):
             return True
 
     # 2. Explicit keywords
-    if re.search(r'\b(?:let|const|var|mut)\s+' + escaped_var + r'\b', cleaned_line):
+    if re.search(r'\b(?:let|const|var|mut)\s+' + standalone_var, cleaned_line):
         return True
 
     # 3. Type-based declarations (C/C++/Java/Go/Rust)
@@ -1408,7 +1413,7 @@ def is_line_definition_of_var(cleaned_line, var_name, profile):
     # that are perfectly valid as type declaration prefixes.
     flow_kws = getattr(profile, 'flow_keywords', frozenset())
     type_decl_match = re.search(
-        r'\b([A-Za-z_][A-Za-z0-9_<>:,*&]*)\s+' + escaped_var + r'\b',
+        r'\b([A-Za-z_][A-Za-z0-9_<>:,*&]*)\s+' + standalone_var,
         cleaned_line,
     )
     if type_decl_match and type_decl_match.group(1) not in flow_kws:
@@ -1422,7 +1427,7 @@ def is_line_definition_of_var(cleaned_line, var_name, profile):
         param_match = re.search(r'\(([^)]*)\)', cleaned_line)
         if param_match:
             params = param_match.group(1)
-            if re.search(r'\b' + escaped_var + r'\b', params):
+            if re.search(standalone_var, params):
                 return True
 
     return False

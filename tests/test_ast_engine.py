@@ -2169,6 +2169,42 @@ class TestAstEngine(unittest.TestCase):
         ids_multi = extract_identifiers_regex(file_path, [1, 2], file_cache=self.cache)
         self.assertEqual(ids_multi, {"x", "y"})
 
+    def test_extract_identifiers_regex_ignores_member_properties(self):
+        from context_builder.ast_engine import extract_identifiers_regex
+
+        code = (
+            "obj.x = local;\n"
+            "ptr->x = other;\n"
+            "ns::x(value);\n"
+            "x = obj.y + ptr->z;\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "regex_member_props.cpp")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        self.cache.get_content(file_path)
+
+        ids = extract_identifiers_regex(file_path, [1, 2, 3, 4], file_cache=self.cache)
+        self.assertIn("obj", ids)
+        self.assertIn("ptr", ids)
+        self.assertIn("local", ids)
+        self.assertIn("other", ids)
+        self.assertIn("value", ids)
+        self.assertIn("x", ids)
+        self.assertNotIn("y", ids)
+        self.assertNotIn("z", ids)
+
+    def test_is_line_definition_of_var_ignores_member_assignments(self):
+        from context_builder.ast_engine import is_line_definition_of_var
+        from context_builder.languages.python import PYTHON
+        from context_builder.languages.c_family import C_FAMILY
+
+        self.assertFalse(is_line_definition_of_var("self.x = 1", "x", PYTHON))
+        self.assertFalse(is_line_definition_of_var("obj.x = 1", "x", PYTHON))
+        self.assertFalse(is_line_definition_of_var("ptr->x = 1", "x", C_FAMILY))
+        self.assertFalse(is_line_definition_of_var("ns::x = 1", "x", C_FAMILY))
+        self.assertTrue(is_line_definition_of_var("x = 1", "x", PYTHON))
+
     @patch("context_builder.ast_engine.AST_ENGINE")
     def test_extract_identifiers_ast(self, mock_engine):
         from context_builder.ast_engine import extract_identifiers_ast
@@ -2276,6 +2312,23 @@ class TestAstEngine(unittest.TestCase):
         op_node = FakeNode("=", text="=")
         y_node = FakeNode("identifier", text="y")
         assign_node = FakeNode("assignment_expression", children=[x_node, op_node, y_node])
+
+        lhs_ids = get_lhs_identifiers(assign_node)
+        self.assertEqual(lhs_ids, ["x"])
+
+    def test_get_lhs_identifiers_handles_nodes_without_field_lookup(self):
+        from context_builder.ast_engine import get_lhs_identifiers
+
+        class MinimalNode:
+            def __init__(self, node_type, children=None, text=None):
+                self.type = node_type
+                self.children = children or []
+                self.text = text.encode('utf-8') if isinstance(text, str) else text
+
+        x_node = MinimalNode("identifier", text="x")
+        op_node = MinimalNode("=", text="=")
+        y_node = MinimalNode("identifier", text="y")
+        assign_node = MinimalNode("assignment_expression", children=[x_node, op_node, y_node])
 
         lhs_ids = get_lhs_identifiers(assign_node)
         self.assertEqual(lhs_ids, ["x"])
