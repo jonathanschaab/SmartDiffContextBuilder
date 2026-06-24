@@ -978,6 +978,9 @@ def _align_clean_to_original(original, clean):
     shorter than *clean*, causing subsequent index lookups to be shifted or
     to raise ``IndexError``.
     """
+    if len(original) == len(clean):
+        return list(range(len(clean)))
+
     matcher = difflib.SequenceMatcher(None, original, clean)
     mapping = []
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():

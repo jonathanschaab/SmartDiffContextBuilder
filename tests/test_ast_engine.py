@@ -2865,6 +2865,18 @@ class TestAstEngine(unittest.TestCase):
         # clean3[8] is 'b' -> should map to orig3[15]
         self.assertEqual(mapping3[8], 15)
 
+    def test_align_clean_to_original_equal_length_bypasses_difflib(self):
+        from context_builder.ast_engine import _align_clean_to_original
+
+        original = "foo # comment"
+        clean = "foo          "
+
+        with patch("context_builder.ast_engine.difflib.SequenceMatcher") as mock_matcher:
+            mapping = _align_clean_to_original(original, clean)
+
+        self.assertEqual(mapping, list(range(len(clean))))
+        mock_matcher.assert_not_called()
+
     def test_extract_identifiers_with_positions_regex_alignment(self):
         from context_builder.ast_engine import extract_identifiers_with_positions_regex
 
