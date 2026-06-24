@@ -83,7 +83,24 @@ def _fallback_strip(lines, profile):
     stripped = profile.strip_block_comments(content)
     if not isinstance(stripped, str):
         return lines
-    return stripped.splitlines(keepends=True)
+    stripped_lines = stripped.splitlines(keepends=True)
+    original_line_count = len(lines)
+    if len(stripped_lines) < original_line_count:
+        aligned_lines = [
+            "\n" if line.endswith(('\n', '\r')) else ""
+            for line in lines
+        ]
+        search_start = 0
+        for stripped_line in stripped_lines:
+            for idx in range(search_start, original_line_count):
+                if lines[idx].strip() == stripped_line.strip():
+                    aligned_lines[idx] = stripped_line
+                    search_start = idx + 1
+                    break
+        stripped_lines = aligned_lines
+    elif len(stripped_lines) > original_line_count:
+        stripped_lines = stripped_lines[:original_line_count]
+    return stripped_lines
 
 
 def _get_stripped_lines(file_cache, file_path, profile):
@@ -1418,12 +1435,15 @@ def is_line_definition_of_var(cleaned_line, var_name, profile):
     """Check if a cleaned line defines var_name using simple regex heuristics."""
     escaped_var = re.escape(var_name)
     standalone_var = r'(?<!\.)(?<!->)(?<!::)\b' + escaped_var + r'\b'
+    flow_kws = getattr(profile, 'flow_keywords', frozenset())
 
     # 1. Assignment
     assign_match = re.search(r'(?<![!=<>])=(?!=)|:=|\+=|-=|\*=|\/=', cleaned_line)
     if assign_match:
         lhs = cleaned_line[:assign_match.start()]
-        if re.search(standalone_var, lhs):
+        lhs_first = re.match(r'\s*([A-Za-z_][A-Za-z0-9_]*)\b', lhs)
+        lhs_starts_with_flow = lhs_first and lhs_first.group(1) in flow_kws
+        if not lhs_starts_with_flow and re.search(standalone_var, lhs):
             return True
 
     # 2. Explicit keywords
@@ -1438,7 +1458,6 @@ def is_line_definition_of_var(cleaned_line, var_name, profile):
     # We use profile.flow_keywords (not profile.keywords) because the full
     # keyword set also includes primitive type names ('int', 'char', etc.)
     # that are perfectly valid as type declaration prefixes.
-    flow_kws = getattr(profile, 'flow_keywords', frozenset())
     type_decl_match = re.search(
         r'\b([A-Za-z_][A-Za-z0-9_<>:,*&]*)\s+' + standalone_var,
         cleaned_line,

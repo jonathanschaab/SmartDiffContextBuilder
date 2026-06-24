@@ -2205,6 +2205,37 @@ class TestAstEngine(unittest.TestCase):
         self.assertFalse(is_line_definition_of_var("ns::x = 1", "x", C_FAMILY))
         self.assertTrue(is_line_definition_of_var("x = 1", "x", PYTHON))
 
+    def test_is_line_definition_of_var_ignores_language_declarations(self):
+        from context_builder.ast_engine import is_line_definition_of_var
+        from context_builder.languages.c_family import C_FAMILY
+        from context_builder.languages.go import GO
+        from context_builder.languages.java import JAVA
+        from context_builder.languages.javascript import JAVASCRIPT, TYPESCRIPT
+        from context_builder.languages.python import PYTHON
+        from context_builder.languages.rust import RUST
+
+        cases = [
+            (C_FAMILY, "namespace app {", "app"),
+            (C_FAMILY, "using Name = other::Name;", "Name"),
+            (C_FAMILY, "template <typename T>", "T"),
+            (C_FAMILY, "typename T value;", "T"),
+            (GO, "package main", "main"),
+            (GO, 'import fmt "fmt"', "fmt"),
+            (JAVA, "package app;", "app"),
+            (JAVA, "import app.Widget;", "app"),
+            (JAVASCRIPT, "import thing from './thing';", "thing"),
+            (JAVASCRIPT, "export value;", "value"),
+            (TYPESCRIPT, "export type User = {}", "type"),
+            (PYTHON, "import os", "os"),
+            (PYTHON, "from pkg import item", "pkg"),
+            (RUST, "use crate::thing;", "crate"),
+            (RUST, "mod app;", "app"),
+        ]
+
+        for profile, line, var_name in cases:
+            with self.subTest(profile=profile.name, line=line, var_name=var_name):
+                self.assertFalse(is_line_definition_of_var(line, var_name, profile))
+
     @patch("context_builder.ast_engine.AST_ENGINE")
     def test_extract_identifiers_ast(self, mock_engine):
         from context_builder.ast_engine import extract_identifiers_ast

@@ -27,7 +27,7 @@ class RustProfile(LanguageProfile):
     })
     flow_keywords = frozenset({
         'return', 'if', 'else', 'for', 'while', 'loop', 'match', 'break',
-        'continue', 'await', 'yield',
+        'continue', 'await', 'yield', 'use', 'mod',
     })
     declaration_query = "[(let_declaration) @decl (assignment_expression) @assign]"
 

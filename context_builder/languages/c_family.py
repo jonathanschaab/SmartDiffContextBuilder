@@ -31,7 +31,7 @@ class CFamilyProfile(LanguageProfile):
     flow_keywords = frozenset({
         'return', 'if', 'else', 'for', 'while', 'do', 'switch', 'case',
         'break', 'continue', 'goto', 'try', 'catch', 'throw', 'default',
-        'sizeof', 'new', 'delete',
+        'sizeof', 'new', 'delete', 'namespace', 'using', 'template', 'typename',
     })
     declaration_query = "[(variable_declaration) @decl (assignment_expression) @assign]"
 

@@ -19,7 +19,8 @@ class GoProfile(LanguageProfile):
     })
     flow_keywords = frozenset({
         'return', 'if', 'else', 'for', 'switch', 'case', 'break', 'continue',
-        'goto', 'fallthrough', 'go', 'select', 'defer', 'range',
+        'goto', 'fallthrough', 'go', 'select', 'defer', 'range', 'package',
+        'import',
     })
     declaration_query = (
         "[(var_declaration) @decl "

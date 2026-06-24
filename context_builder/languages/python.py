@@ -31,7 +31,7 @@ class PythonProfile(LanguageProfile):
         'return', 'if', 'elif', 'else', 'for', 'while', 'with', 'try',
         'except', 'finally', 'raise', 'yield', 'await', 'break', 'continue',
         'pass', 'assert', 'del', 'lambda', 'in', 'is', 'not', 'and', 'or',
-        'print',
+        'print', 'import', 'from',
     })
     declaration_query = "[(assignment) @assign]"
 

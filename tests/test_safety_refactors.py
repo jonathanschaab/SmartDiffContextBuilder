@@ -165,6 +165,20 @@ class TestSafetyRefactors(unittest.TestCase):
         self.assertEqual(_fallback_strip(None, profile), [])
         self.assertEqual(_fallback_strip([], profile), [])
 
+    def test_fallback_strip_preserves_line_count_when_comments_removed(self):
+        """Verify _fallback_strip keeps line alignment if comments are removed."""
+        from context_builder.ast_engine import _fallback_strip
+
+        profile = MagicMock()
+        profile.strip_block_comments.return_value = "int after;\n"
+
+        lines = ["/* comment\n", "still comment */\n", "int after;\n"]
+        stripped = _fallback_strip(lines, profile)
+
+        self.assertEqual(len(stripped), len(lines))
+        self.assertEqual(stripped[:2], ["\n", "\n"])
+        self.assertEqual(stripped[2], "int after;\n")
+
     def test_get_stripped_lines_guards(self):
         """Verify that _get_stripped_lines returns [] when file_cache returns None."""
         from context_builder.ast_engine import _get_stripped_lines

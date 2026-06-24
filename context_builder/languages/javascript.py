@@ -25,7 +25,7 @@ class JavaScriptProfile(LanguageProfile):
         'return', 'if', 'else', 'for', 'while', 'do', 'switch', 'case',
         'break', 'continue', 'throw', 'try', 'catch', 'finally', 'yield',
         'await', 'delete', 'typeof', 'instanceof', 'void', 'in', 'default',
-        'debugger',
+        'debugger', 'import', 'export',
     })
     declaration_query = (
         "[(lexical_declaration) @decl "

@@ -33,7 +33,7 @@ class JavaProfile(LanguageProfile):
     flow_keywords = frozenset({
         'return', 'if', 'else', 'for', 'while', 'do', 'switch', 'case',
         'break', 'continue', 'throw', 'throws', 'try', 'catch', 'finally',
-        'yield', 'assert', 'instanceof', 'new', 'default',
+        'yield', 'assert', 'instanceof', 'new', 'default', 'package', 'import',
     })
     declaration_query = "[(local_variable_declaration) @decl (assignment_expression) @assign]"
 
