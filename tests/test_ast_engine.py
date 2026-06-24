@@ -2891,6 +2891,76 @@ class TestAstEngine(unittest.TestCase):
         self.assertIn(os.path.abspath(math_path), res)
         self.assertIn(os.path.abspath(pkg_path), res)
 
+    def test_get_directly_included_files_go_grouped_imports(self):
+        from context_builder.ast_engine import get_directly_included_files
+        from context_builder.languages.go import GO
+        from context_builder.cache import LRUFileCache
+
+        cache = LRUFileCache(capacity=5)
+        go_code = (
+            "package main\n"
+            "import (\n"
+            "    \"fmt\"\n"
+            "    alias \"example.com/project/pkg\"\n"
+            "    . \"example.com/project/other\"\n"
+            ")\n"
+        )
+        go_file = os.path.join(self.temp_dir.name, "go_grouped_imports.go")
+        with open(go_file, "w", encoding="utf-8") as f:
+            f.write(go_code)
+
+        fmt_path = os.path.join(self.temp_dir.name, "fmt.go")
+        pkg_dir = os.path.join(self.temp_dir.name, "example.com", "project", "pkg")
+        other_dir = os.path.join(self.temp_dir.name, "example.com", "project", "other")
+        os.makedirs(pkg_dir, exist_ok=True)
+        os.makedirs(other_dir, exist_ok=True)
+        pkg_path = os.path.join(pkg_dir, "pkg.go")
+        other_path = os.path.join(other_dir, "other.go")
+
+        for path in (fmt_path, pkg_path, other_path):
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("")
+
+        with patch("context_builder.sys_utils.get_git_tracked_files") as mock_tracked:
+            mock_tracked.return_value = [fmt_path, pkg_path, other_path]
+            res = get_directly_included_files(go_file, GO, cache)
+
+        self.assertIn(os.path.abspath(fmt_path), res)
+        self.assertIn(os.path.abspath(pkg_path), res)
+        self.assertIn(os.path.abspath(other_path), res)
+
+    def test_get_directly_included_files_rust_crate_and_grouped_imports(self):
+        from context_builder.ast_engine import get_directly_included_files
+        from context_builder.languages.rust import RUST
+        from context_builder.cache import LRUFileCache
+
+        cache = LRUFileCache(capacity=5)
+        src_dir = os.path.join(self.temp_dir.name, "src")
+        nested_dir = os.path.join(src_dir, "nested")
+        os.makedirs(nested_dir, exist_ok=True)
+        rust_code = (
+            "use crate::foo::Thing;\n"
+            "use crate::{bar::Bar, nested::{qux::Qux}};\n"
+        )
+        rust_file = os.path.join(src_dir, "main.rs")
+        with open(rust_file, "w", encoding="utf-8") as f:
+            f.write(rust_code)
+
+        foo_path = os.path.join(src_dir, "foo.rs")
+        bar_path = os.path.join(src_dir, "bar.rs")
+        qux_path = os.path.join(nested_dir, "qux.rs")
+        for path in (foo_path, bar_path, qux_path):
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("")
+
+        with patch("context_builder.sys_utils.get_git_tracked_files") as mock_tracked:
+            mock_tracked.return_value = [foo_path, bar_path, qux_path]
+            res = get_directly_included_files(rust_file, RUST, cache)
+
+        self.assertIn(os.path.abspath(foo_path), res)
+        self.assertIn(os.path.abspath(bar_path), res)
+        self.assertIn(os.path.abspath(qux_path), res)
+
     def test_get_directly_included_files_python_relative_sibling_and_submodule(self):
         from context_builder.ast_engine import get_directly_included_files
         from context_builder.languages.python import PYTHON

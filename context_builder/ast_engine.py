@@ -1713,6 +1713,144 @@ def _parse_python_imports(cleaned, includes):
         includes.append(base + suffix + name)
 
 
+def _parse_go_imports(cleaned, includes, in_import_block):
+    """Parse Go import declarations, including grouped import blocks."""
+    if in_import_block:
+        for imported in re.findall(r'["\']([^"\']+)["\']', cleaned):
+            includes.append(imported)
+        return ')' not in cleaned
+
+    block_match = re.match(r'^import\s*\((.*)', cleaned)
+    if block_match:
+        remainder = block_match.group(1)
+        for imported in re.findall(r'["\']([^"\']+)["\']', remainder):
+            includes.append(imported)
+        return ')' not in remainder
+
+    m = re.match(r'^import\s+(?:[A-Za-z0-9_.]+\s+)?["\']([^"\']+)["\']', cleaned)
+    if m:
+        includes.append(m.group(1))
+    return False
+
+
+def _split_top_level_commas(value):
+    """Split comma-separated import fragments while respecting nested braces."""
+    parts = []
+    depth = 0
+    start = 0
+    for idx, char in enumerate(value):
+        if char == '{':
+            depth += 1
+        elif char == '}':
+            depth = max(0, depth - 1)
+        elif char == ',' and depth == 0:
+            parts.append(value[start:idx])
+            start = idx + 1
+    parts.append(value[start:])
+    return parts
+
+
+def _normalize_rust_import_path(path):
+    """Normalize a Rust use path into a dependency lookup candidate."""
+    path = path.strip().strip(';').strip()
+    path = re.sub(r'\s+as\s+[A-Za-z_][A-Za-z0-9_]*$', '', path).strip()
+    if not path:
+        return None
+
+    parts = [p for p in path.split('::') if p]
+    if not parts:
+        return None
+
+    if parts[0] in ('crate', 'self'):
+        parts = parts[1:]
+    else:
+        parent_prefix = []
+        while parts and parts[0] == 'super':
+            parent_prefix.append('..')
+            parts = parts[1:]
+        parts = parent_prefix + parts
+
+    if not parts:
+        return None
+    if parts[-1] in ('self', '*'):
+        parts = parts[:-1]
+    if not parts:
+        return None
+    return '/'.join(parts)
+
+
+def _rust_import_candidates(path):
+    """Return progressive dependency lookup candidates for a Rust use path."""
+    normalized = _normalize_rust_import_path(path)
+    if not normalized:
+        return []
+    parts = normalized.split('/')
+    candidates = []
+    for idx in range(1, len(parts) + 1):
+        candidate = '/'.join(parts[:idx])
+        if candidate not in candidates:
+            candidates.append(candidate)
+    return candidates
+
+
+def _collect_rust_use_paths(use_tree, prefix=''):
+    """Collect module lookup candidates from a Rust use tree."""
+    use_tree = use_tree.strip().strip(';').strip()
+    if not use_tree:
+        return []
+
+    brace_idx = use_tree.find('{')
+    if brace_idx == -1:
+        return _rust_import_candidates(prefix + use_tree)
+
+    base = use_tree[:brace_idx].strip()
+    base_prefix = prefix + base
+    if base_prefix and not base_prefix.endswith('::'):
+        base_prefix += '::'
+
+    depth = 0
+    end_idx = None
+    for idx in range(brace_idx, len(use_tree)):
+        if use_tree[idx] == '{':
+            depth += 1
+        elif use_tree[idx] == '}':
+            depth -= 1
+            if depth == 0:
+                end_idx = idx
+                break
+
+    if end_idx is None:
+        return []
+
+    paths = []
+    paths.extend(_rust_import_candidates(base_prefix.rstrip(':')))
+    inner = use_tree[brace_idx + 1:end_idx]
+    for fragment in _split_top_level_commas(inner):
+        paths.extend(_collect_rust_use_paths(fragment, base_prefix))
+    return paths
+
+
+def _parse_rust_use_imports(cleaned, includes, pending_use):
+    """Parse Rust use declarations, including grouped use trees."""
+    if pending_use:
+        pending_use = f"{pending_use} {cleaned}"
+    else:
+        match = re.match(r'^use\s+(.+)', cleaned)
+        if not match:
+            return None
+        pending_use = match.group(1)
+
+    if ';' not in pending_use:
+        return pending_use
+
+    statement, _, remainder = pending_use.partition(';')
+    includes.extend(_collect_rust_use_paths(statement))
+    remainder = remainder.strip()
+    if remainder.startswith('use '):
+        return _parse_rust_use_imports(remainder, includes, None)
+    return None
+
+
 def get_directly_included_files(file_path, profile, file_cache):  # pylint: disable=too-many-branches,too-many-statements
     """Find files directly imported or included in the source file."""
     if file_cache is None:
@@ -1732,6 +1870,8 @@ def get_directly_included_files(file_path, profile, file_cache):  # pylint: disa
         lines = _get_stripped_lines(file_cache, file_path, profile)
         includes = []
         curr_dir = os.path.dirname(file_path)
+        in_go_import_block = False
+        pending_rust_use = None
 
         for line in lines:
             cleaned = _strip_comments_only(line, profile).strip()
@@ -1758,14 +1898,13 @@ def get_directly_included_files(file_path, profile, file_cache):  # pylint: disa
                 if m2:
                     includes.append(m2.group(1))
             elif profile.name == 'go':
-                m = re.match(r'^import\s+(?:[A-Za-z0-9_.]+\s+)?["\']([^"\']+)["\']', cleaned)
-                if m:
-                    includes.append(m.group(1))
+                in_go_import_block = _parse_go_imports(
+                    cleaned, includes, in_go_import_block
+                )
             elif profile.name == 'rust':
-                m = re.match(r'^use\s+([A-Za-z0-9_:]+)', cleaned)
-                if m:
-                    parts = m.group(1).split('::')[0]
-                    includes.append(parts)
+                pending_rust_use = _parse_rust_use_imports(
+                    cleaned, includes, pending_rust_use
+                )
 
         from .sys_utils import get_git_tracked_files  # pylint: disable=import-outside-toplevel
         resolved_paths = []
