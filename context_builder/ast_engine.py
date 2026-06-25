@@ -1,4 +1,4 @@
-# pylint: disable=too-many-lines,cyclic-import
+# pylint: disable=too-many-lines
 """
 AST analysis engine utilizing tree-sitter or regex fallback.
 Provides syntax-aware function boundary extraction, dependency tracing,
@@ -37,6 +37,13 @@ ASSIGNMENT_OPERATOR_RE = re.compile(
     )
 )
 
+MEMBER_FIELD_BY_NODE_TYPE = {
+    'member_expression': 'property',
+    'attribute': 'attribute',
+    'selector_expression': 'field',
+    'field_access': 'field',
+    'field_expression': 'field',
+}
 
 
 
@@ -106,16 +113,30 @@ def _fallback_strip(lines, profile):
             stripped_text = stripped_line.strip()
             if not stripped_text:
                 continue
+            best_idx = None
+            best_score = 0.0
             for idx in range(search_start, original_line_count):
                 original_text = lines[idx].strip()
-                if original_text == stripped_text or stripped_text in original_text:
-                    aligned_lines[idx] = stripped_line
-                    search_start = idx + 1
-                    break
+                score = _line_alignment_score(original_text, stripped_text)
+                if score > best_score:
+                    best_idx = idx
+                    best_score = score
+            if best_idx is not None and best_score >= 0.5:
+                aligned_lines[best_idx] = stripped_line
+                search_start = best_idx + 1
         stripped_lines = aligned_lines
     elif len(stripped_lines) > original_line_count:
         stripped_lines = stripped_lines[:original_line_count]
     return stripped_lines
+
+
+def _line_alignment_score(original_text, stripped_text):
+    """Score how likely stripped_text came from original_text."""
+    if original_text == stripped_text:
+        return 1.0
+    if original_text.startswith(stripped_text):
+        return 0.95
+    return difflib.SequenceMatcher(None, original_text, stripped_text).ratio()
 
 
 def _get_stripped_lines(file_cache, file_path, profile):
@@ -915,13 +936,8 @@ def _process_identifier_node(node, lines, line_set, results):
             and parent.child_by_field_name('function') == node
         ):
             is_invalid = True
-        elif parent.type in (
-            'member_expression', 'attribute', 'selector_expression',
-            'field_access', 'field_expression'
-        ):
-            field_name = 'property' if parent.type == 'member_expression' else (
-                'attribute' if parent.type == 'attribute' else 'field'
-            )
+        elif parent.type in MEMBER_FIELD_BY_NODE_TYPE:
+            field_name = MEMBER_FIELD_BY_NODE_TYPE[parent.type]
             if parent.child_by_field_name(field_name) == node:
                 is_invalid = True
         elif (

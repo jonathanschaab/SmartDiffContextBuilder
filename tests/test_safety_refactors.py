@@ -184,6 +184,21 @@ class TestSafetyRefactors(unittest.TestCase):
         self.assertEqual(stripped[1], "\n")
         self.assertEqual(stripped[2], "int after;\n")
 
+    def test_fallback_strip_uses_best_line_alignment(self):
+        """Verify substring matches do not greedily steal later stripped code."""
+        from context_builder.ast_engine import _fallback_strip
+
+        profile = MagicMock()
+        profile.strip_block_comments.return_value = "foo = 1;\n"
+
+        lines = [
+            "bar(foo)\n",
+            "foo = 1; /* comment */\n",
+        ]
+        stripped = _fallback_strip(lines, profile)
+
+        self.assertEqual(stripped, ["\n", "foo = 1;\n"])
+
     @patch("context_builder.ast_engine.AST_ENGINE")
     def test_ast_parse_helpers_return_early_without_source_bytes(self, mock_engine):
         """Verify AST helpers do not parse None or empty source bytes."""
