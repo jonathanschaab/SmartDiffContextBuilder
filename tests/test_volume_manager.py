@@ -138,6 +138,15 @@ class TestVolumeManager(unittest.TestCase):
         self.assertEqual(data["downstream_called_functions"][0]["function_name"], "helper")
 
     def test_volume_manager_data_states_formatting(self):
+        self.addCleanup(
+            lambda: os.path.exists("test_payload_md_final.md")
+            and os.remove("test_payload_md_final.md")
+        )
+        self.addCleanup(
+            lambda: os.path.exists("test_payload_json_final.json")
+            and os.remove("test_payload_json_final.json")
+        )
+
         # 1. Test Markdown Formatting
         vm_md = VolumeManager(
             fmt="md", max_lines=100, max_mb=1.0, base_name="test_payload_md"

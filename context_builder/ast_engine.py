@@ -136,6 +136,8 @@ def _line_alignment_score(original_text, stripped_text):
         return 1.0
     if original_text.startswith(stripped_text):
         return 0.95
+    if stripped_text in original_text:
+        return 0.9
     return difflib.SequenceMatcher(None, original_text, stripped_text).ratio()
 
 

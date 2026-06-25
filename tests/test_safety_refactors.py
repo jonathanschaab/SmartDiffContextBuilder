@@ -199,6 +199,19 @@ class TestSafetyRefactors(unittest.TestCase):
 
         self.assertEqual(stripped, ["\n", "foo = 1;\n"])
 
+    def test_fallback_strip_substring_alignment_bypasses_difflib(self):
+        """Verify common substring alignment avoids expensive fuzzy matching."""
+        from context_builder.ast_engine import _fallback_strip
+
+        profile = MagicMock()
+        profile.strip_block_comments.return_value = "foo = 1;\n"
+
+        with patch("context_builder.ast_engine.difflib.SequenceMatcher") as mock_matcher:
+            stripped = _fallback_strip(["foo = 1; /* comment */\n"], profile)
+
+        self.assertEqual(stripped, ["foo = 1;\n"])
+        mock_matcher.assert_not_called()
+
     @patch("context_builder.ast_engine.AST_ENGINE")
     def test_ast_parse_helpers_return_early_without_source_bytes(self, mock_engine):
         """Verify AST helpers do not parse None or empty source bytes."""
