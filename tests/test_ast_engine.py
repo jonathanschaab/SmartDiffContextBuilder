@@ -3009,6 +3009,26 @@ class TestAstEngine(unittest.TestCase):
         self.assertIn(("flags", 2), res)
         self.assertNotIn(("mask", 2), res)
 
+    def test_get_class_members_ignores_default_argument_signatures(self):
+        from context_builder.ast_engine import get_class_members
+        from context_builder.languages.c_family import C_FAMILY
+
+        cache = MagicMock()
+        lines = [
+            "class TargetClass {",
+            "    void myMethod(int x = 0);",
+            "    int realMember = 1;",
+            "};"
+        ]
+        cache.get_lines.return_value = lines
+        cache.get_stripped_lines.return_value = lines
+
+        res = get_class_members("file.cpp", "TargetClass", C_FAMILY, cache)
+
+        self.assertIn(("realMember", 3), res)
+        self.assertNotIn(("myMethod", 2), res)
+        self.assertNotIn(("x", 2), res)
+
     def test_resolve_variable_definition_regex_fallback_new_line_brace(self):
         from context_builder.ast_engine import resolve_variable_definition
 

@@ -103,8 +103,12 @@ def _fallback_strip(lines, profile):
         ]
         search_start = 0
         for stripped_line in stripped_lines:
+            stripped_text = stripped_line.strip()
+            if not stripped_text:
+                continue
             for idx in range(search_start, original_line_count):
-                if lines[idx].strip() == stripped_line.strip():
+                original_text = lines[idx].strip()
+                if original_text == stripped_text or stripped_text in original_text:
                     aligned_lines[idx] = stripped_line
                     search_start = idx + 1
                     break
@@ -229,6 +233,14 @@ def strip_strings_and_comments(line, file_path_or_extension=None):
     return profile.strip_strings_and_comments(line)
 
 
+def _parse_ast_source(file_path, ext, file_cache):
+    """Parse source bytes for an AST-supported file, returning None for missing bytes."""
+    source_bytes = file_cache.get_bytes(file_path)
+    if not source_bytes:
+        return None, None
+    return source_bytes, AST_ENGINE.parsers[ext].parse(source_bytes)
+
+
 def extract_function_bounds_ast(file_path, line_num, ext, file_cache=None):
     """Extract 0-indexed start and end line bounds using tree-sitter AST nodes."""
     ext = ext.lower()
@@ -236,8 +248,7 @@ def extract_function_bounds_ast(file_path, line_num, ext, file_cache=None):
         return None, None
     if file_cache is None:
         file_cache = get_global_cache()
-    source_bytes = file_cache.get_bytes(file_path)
-    tree = AST_ENGINE.parsers[ext].parse(source_bytes)
+    _, tree = _parse_ast_source(file_path, ext, file_cache)
     if tree is None or tree.root_node is None:
         return None, None
     target_row = line_num - 1
@@ -362,8 +373,7 @@ def _trace_file_ast_dependencies(file_path, func_name, file_cache, callers):
 
     if tree_sitter is None or not AST_ENGINE.is_supported(ext):
         return
-    source_bytes = file_cache.get_bytes(file_path)
-    tree = AST_ENGINE.parsers[ext].parse(source_bytes)
+    source_bytes, tree = _parse_ast_source(file_path, ext, file_cache)
     if tree is None or tree.root_node is None:
         return
 
@@ -727,8 +737,7 @@ def extract_callees_ast(file_path, start_line, end_line, ext, file_cache):  # py
     ext = ext.lower()
     if tree_sitter is None or not AST_ENGINE.is_supported(ext):
         return set()
-    source_bytes = file_cache.get_bytes(file_path)
-    tree = AST_ENGINE.parsers[ext].parse(source_bytes)
+    _, tree = _parse_ast_source(file_path, ext, file_cache)
     if tree is None or tree.root_node is None:
         return set()
 
@@ -1535,6 +1544,8 @@ def get_class_members(file_path, class_name, profile, file_cache):  # pylint: di
         assign_match = ASSIGNMENT_OPERATOR_RE.search(cleaned)
         if assign_match:
             lhs = cleaned[:assign_match.start()]
+            if '(' in lhs:
+                continue
             for m in re.finditer(r'\b[A-Za-z_][A-Za-z0-9_]*\b', lhs):
                 name = m.group(0)
                 if name not in profile.keywords:

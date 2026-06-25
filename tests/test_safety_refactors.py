@@ -170,14 +170,50 @@ class TestSafetyRefactors(unittest.TestCase):
         from context_builder.ast_engine import _fallback_strip
 
         profile = MagicMock()
-        profile.strip_block_comments.return_value = "int after;\n"
+        profile.strip_block_comments.return_value = "int before;\nint after;\n"
 
-        lines = ["/* comment\n", "still comment */\n", "int after;\n"]
+        lines = [
+            "int before; /* comment */\n",
+            "/* full line comment */\n",
+            "int after;\n",
+        ]
         stripped = _fallback_strip(lines, profile)
 
         self.assertEqual(len(stripped), len(lines))
-        self.assertEqual(stripped[:2], ["\n", "\n"])
+        self.assertEqual(stripped[0], "int before;\n")
+        self.assertEqual(stripped[1], "\n")
         self.assertEqual(stripped[2], "int after;\n")
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_ast_parse_helpers_return_early_without_source_bytes(self, mock_engine):
+        """Verify AST helpers do not parse None or empty source bytes."""
+        from context_builder.ast_engine import (
+            _trace_file_ast_dependencies,
+            extract_callees_ast,
+            extract_function_bounds_ast,
+        )
+
+        parser = MagicMock()
+        mock_engine.parsers = {".py": parser}
+        mock_engine.is_supported.return_value = True
+
+        for missing_source in (None, b""):
+            file_cache = MagicMock()
+            file_cache.get_bytes.return_value = missing_source
+            callers = {}
+
+            self.assertEqual(
+                extract_function_bounds_ast("dummy.py", 1, ".py", file_cache),
+                (None, None),
+            )
+            _trace_file_ast_dependencies("dummy.py", "target", file_cache, callers)
+            self.assertEqual(callers, {})
+            self.assertEqual(
+                extract_callees_ast("dummy.py", 1, 5, ".py", file_cache),
+                set(),
+            )
+
+        parser.parse.assert_not_called()
 
     def test_get_stripped_lines_guards(self):
         """Verify that _get_stripped_lines returns [] when file_cache returns None."""
