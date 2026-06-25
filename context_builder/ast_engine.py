@@ -1065,7 +1065,7 @@ def extract_identifiers_with_positions_regex(file_path, line_numbers, file_cache
                 word = match.group(0)
                 if word in keywords:
                     continue
-                clean_prefix = line_clean[:match.start()]
+                clean_prefix = line_clean[:match.start()].rstrip()
                 if clean_prefix.endswith('.') or clean_prefix.endswith('->'):
                     continue
                 suffix = line_clean[match.end():]
@@ -1451,6 +1451,53 @@ def get_lines_directly_in_scope(scope, lines):
     return direct
 
 
+def _class_like_pattern(class_name, profile):
+    """Return a class/struct declaration pattern for the language profile."""
+    escaped = re.escape(class_name)
+    if profile and profile.name == 'go':
+        return re.compile(r'\btype\s+' + escaped + r'\s+(?:struct|interface)\b')
+    return re.compile(r'\b(?:class|struct)\s+' + escaped + r'\b')
+
+
+def _split_top_level_semicolon_statements(line):
+    """Split a line into top-level semicolon-separated statement fragments."""
+    parts = []
+    start = 0
+    paren_depth = bracket_depth = brace_depth = 0
+    for idx, char in enumerate(line):
+        if char == '(':
+            paren_depth += 1
+        elif char == ')':
+            paren_depth = max(0, paren_depth - 1)
+        elif char == '[':
+            bracket_depth += 1
+        elif char == ']':
+            bracket_depth = max(0, bracket_depth - 1)
+        elif char == '{':
+            brace_depth += 1
+        elif char == '}':
+            brace_depth = max(0, brace_depth - 1)
+        elif char == ';' and not (paren_depth or bracket_depth or brace_depth):
+            parts.append(line[start:idx])
+            start = idx + 1
+    parts.append(line[start:])
+    return parts
+
+
+def _is_assignment_definition(cleaned_line, standalone_var, flow_kws):
+    """Return whether an assignment-like statement defines the target variable."""
+    assign_match = ASSIGNMENT_OPERATOR_RE.search(cleaned_line)
+    if not assign_match:
+        return False
+    lhs = cleaned_line[:assign_match.start()]
+    lhs_first = re.match(r'\s*([A-Za-z_][A-Za-z0-9_]*)\b', lhs)
+    lhs_starts_with_flow = lhs_first and lhs_first.group(1) in flow_kws
+    return (
+        (assign_match.group(0) == ':=' or not lhs_starts_with_flow)
+        and re.search(standalone_var, lhs)
+    )
+
+
 def is_line_definition_of_var(cleaned_line, var_name, profile):
     """Check if a cleaned line defines var_name using simple regex heuristics."""
     escaped_var = re.escape(var_name)
@@ -1458,12 +1505,11 @@ def is_line_definition_of_var(cleaned_line, var_name, profile):
     flow_kws = getattr(profile, 'flow_keywords', frozenset())
 
     # 1. Assignment
-    assign_match = ASSIGNMENT_OPERATOR_RE.search(cleaned_line)
-    if assign_match:
-        lhs = cleaned_line[:assign_match.start()]
-        lhs_first = re.match(r'\s*([A-Za-z_][A-Za-z0-9_]*)\b', lhs)
-        lhs_starts_with_flow = lhs_first and lhs_first.group(1) in flow_kws
-        if not lhs_starts_with_flow and re.search(standalone_var, lhs):
+    if _is_assignment_definition(cleaned_line, standalone_var, flow_kws):
+        return True
+
+    for statement in _split_top_level_semicolon_statements(cleaned_line)[1:]:
+        if _is_assignment_definition(statement, standalone_var, flow_kws):
             return True
 
     # 2. Explicit keywords
@@ -1516,7 +1562,7 @@ def get_class_members(file_path, class_name, profile, file_cache):  # pylint: di
 
     lines = _get_stripped_lines(file_cache, file_path, profile)
     class_line_num = None
-    class_pattern = re.compile(r'\b(?:class|struct)\s+' + re.escape(class_name) + r'\b')
+    class_pattern = _class_like_pattern(class_name, profile)
     for idx, line in enumerate(lines):
         cleaned = profile.strip_strings_and_comments(line)
         if class_pattern.search(cleaned):
@@ -1551,9 +1597,16 @@ def get_class_members(file_path, class_name, profile, file_cache):  # pylint: di
                 if name not in profile.keywords:
                     members.append((name, ln))
         else:
-            decl_match = re.search(
-                r'\b[A-Za-z_][A-Za-z0-9_<>:,*&]*\s+([A-Za-z_][A-Za-z0-9_]*)\s*;', cleaned
-            )
+            if profile.name == 'go':
+                decl_match = re.search(
+                    r'^\s*([A-Za-z_][A-Za-z0-9_]*)\s+[\*\[\]A-Za-z_]',
+                    cleaned,
+                )
+            else:
+                decl_match = re.search(
+                    r'\b[A-Za-z_][A-Za-z0-9_<>:,*&]*\s+([A-Za-z_][A-Za-z0-9_]*)\s*;',
+                    cleaned,
+                )
             if decl_match:
                 name = decl_match.group(1)
                 if name not in profile.keywords:
@@ -1596,7 +1649,7 @@ def get_parent_classes(file_path, class_name, profile, file_cache):
     if profile is None:
         return []
     lines = _get_stripped_lines(file_cache, file_path, profile)
-    class_pattern = re.compile(r'\b(?:class|struct)\s+' + re.escape(class_name) + r'\b')
+    class_pattern = _class_like_pattern(class_name, profile)
     for line in lines:
         cleaned = profile.strip_strings_and_comments(line)
         if class_pattern.search(cleaned):
@@ -1645,7 +1698,7 @@ def find_class_definition(start_file, class_name, profile, file_cache):
         if profile is None:
             return None, None
         lines = _get_stripped_lines(file_cache, start_file, profile)
-        class_pattern = re.compile(r'\b(?:class|struct)\s+' + re.escape(class_name) + r'\b')
+        class_pattern = _class_like_pattern(class_name, profile)
         for idx, line in enumerate(lines):
             cleaned = profile.strip_strings_and_comments(line)
             if class_pattern.search(cleaned):
@@ -1657,10 +1710,11 @@ def find_class_definition(start_file, class_name, profile, file_cache):
                 inc_profile = get_language_profile(inc_file)
                 if inc_profile is None:
                     continue
+                inc_class_pattern = _class_like_pattern(class_name, inc_profile)
                 lines = _get_stripped_lines(file_cache, inc_file, inc_profile)
                 for idx, line in enumerate(lines):
                     cleaned = inc_profile.strip_strings_and_comments(line)
-                    if class_pattern.search(cleaned):
+                    if inc_class_pattern.search(cleaned):
                         return inc_file, idx + 1
 
         from .sys_utils import get_git_tracked_files  # pylint: disable=import-outside-toplevel
@@ -1679,10 +1733,11 @@ def find_class_definition(start_file, class_name, profile, file_cache):
                 f_profile = get_language_profile(f)
                 if f_profile is None:
                     continue
+                f_class_pattern = _class_like_pattern(class_name, f_profile)
                 lines = _get_stripped_lines(file_cache, f, f_profile)
                 for idx, line in enumerate(lines):
                     cleaned = f_profile.strip_strings_and_comments(line)
-                    if class_pattern.search(cleaned):
+                    if f_class_pattern.search(cleaned):
                         return f, idx + 1
 
         return None, None

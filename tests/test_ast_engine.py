@@ -2177,6 +2177,7 @@ class TestAstEngine(unittest.TestCase):
             "ptr->x = other;\n"
             "ns::x(value);\n"
             "x = obj.y + ptr->z;\n"
+            "spaced . prop = value;\n"
         )
         file_path = os.path.join(self.temp_dir.name, "regex_member_props.cpp")
         with open(file_path, "w", encoding="utf-8") as f:
@@ -2184,15 +2185,17 @@ class TestAstEngine(unittest.TestCase):
 
         self.cache.get_content(file_path)
 
-        ids = extract_identifiers_regex(file_path, [1, 2, 3, 4], file_cache=self.cache)
+        ids = extract_identifiers_regex(file_path, [1, 2, 3, 4, 5], file_cache=self.cache)
         self.assertIn("obj", ids)
         self.assertIn("ptr", ids)
+        self.assertIn("spaced", ids)
         self.assertIn("local", ids)
         self.assertIn("other", ids)
         self.assertIn("value", ids)
         self.assertIn("x", ids)
         self.assertNotIn("y", ids)
         self.assertNotIn("z", ids)
+        self.assertNotIn("prop", ids)
 
     def test_is_line_definition_of_var_ignores_member_assignments(self):
         from context_builder.ast_engine import is_line_definition_of_var
@@ -2258,6 +2261,22 @@ class TestAstEngine(unittest.TestCase):
         for profile, line, var_name in cases:
             with self.subTest(profile=profile.name, line=line):
                 self.assertTrue(is_line_definition_of_var(line, var_name, profile))
+
+    def test_is_line_definition_of_var_allows_short_decl_in_flow_statement(self):
+        from context_builder.ast_engine import is_line_definition_of_var
+        from context_builder.languages.go import GO
+        from context_builder.languages.python import PYTHON
+
+        self.assertTrue(is_line_definition_of_var("if x := 1; x < 2 {", "x", GO))
+        self.assertTrue(is_line_definition_of_var("for i := 0; i < 10; i++ {", "i", GO))
+        self.assertTrue(is_line_definition_of_var("if (x := value):", "x", PYTHON))
+
+    def test_is_line_definition_of_var_checks_statements_after_flow_control(self):
+        from context_builder.ast_engine import is_line_definition_of_var
+        from context_builder.languages.c_family import C_FAMILY
+
+        self.assertTrue(is_line_definition_of_var("if (ready); x = 1;", "x", C_FAMILY))
+        self.assertTrue(is_line_definition_of_var("while (ready); x += 1;", "x", C_FAMILY))
 
     @patch("context_builder.ast_engine.AST_ENGINE")
     def test_extract_identifiers_ast(self, mock_engine):
@@ -3047,6 +3066,35 @@ class TestAstEngine(unittest.TestCase):
 
         self.assertIn(("bar", 4), res)
         self.assertNotIn(("foo", 3), res)
+
+    def test_go_type_struct_class_like_helpers(self):
+        from context_builder.ast_engine import (
+            find_class_definition,
+            get_class_members,
+            get_parent_classes,
+        )
+        from context_builder.languages.go import GO
+
+        cache = MagicMock()
+        lines = [
+            "package main",
+            "type User struct {",
+            "    Name string",
+            "}",
+            "type Reader interface {",
+            "    Read() error",
+            "}",
+        ]
+        cache.get_lines.return_value = lines
+        cache.get_stripped_lines.return_value = lines
+        cache.find_class_definition_cache = {}
+        cache.class_members_cache = {}
+
+        members = get_class_members("file.go", "User", GO, cache)
+        self.assertIn(("Name", 3), members)
+        self.assertEqual(get_parent_classes("file.go", "User", GO, cache), [])
+        self.assertEqual(find_class_definition("file.go", "User", GO, cache), ("file.go", 2))
+        self.assertEqual(find_class_definition("file.go", "Reader", GO, cache), ("file.go", 5))
 
     def test_resolve_variable_definition_regex_fallback_new_line_brace(self):
         from context_builder.ast_engine import resolve_variable_definition
