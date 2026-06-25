@@ -3029,6 +3029,25 @@ class TestAstEngine(unittest.TestCase):
         self.assertNotIn(("myMethod", 2), res)
         self.assertNotIn(("x", 2), res)
 
+    def test_get_class_members_ignores_python_self_comparisons(self):
+        from context_builder.ast_engine import get_class_members
+        from context_builder.languages.python import PYTHON
+
+        cache = MagicMock()
+        lines = [
+            "class TargetClass:",
+            "    def method(self):",
+            "        if self.foo == 1:",
+            "            self.bar = 2",
+        ]
+        cache.get_lines.return_value = lines
+        cache.get_stripped_lines.return_value = lines
+
+        res = get_class_members("file.py", "TargetClass", PYTHON, cache)
+
+        self.assertIn(("bar", 4), res)
+        self.assertNotIn(("foo", 3), res)
+
     def test_resolve_variable_definition_regex_fallback_new_line_brace(self):
         from context_builder.ast_engine import resolve_variable_definition
 

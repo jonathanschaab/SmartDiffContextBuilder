@@ -1566,7 +1566,10 @@ def get_class_members(file_path, class_name, profile, file_cache):  # pylint: di
                 for ln in range(child.start_line, (child.end_line or len(lines)) + 1):
                     line = lines[ln - 1]
                     cleaned = profile.strip_strings_and_comments(line)
-                    self_match = re.search(r'\bself\.([A-Za-z_][A-Za-z0-9_]*)\s*=', cleaned)
+                    self_match = re.search(
+                        r'\bself\.([A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)',
+                        cleaned,
+                    )
                     if self_match:
                         name = self_match.group(1)
                         members.append((name, ln))
