@@ -2236,6 +2236,29 @@ class TestAstEngine(unittest.TestCase):
             with self.subTest(profile=profile.name, line=line, var_name=var_name):
                 self.assertFalse(is_line_definition_of_var(line, var_name, profile))
 
+    def test_is_line_definition_of_var_matches_common_augmented_assignments(self):
+        from context_builder.ast_engine import is_line_definition_of_var
+        from context_builder.languages.c_family import C_FAMILY
+        from context_builder.languages.go import GO
+        from context_builder.languages.python import PYTHON
+
+        cases = [
+            (PYTHON, "x //= y", "x"),
+            (PYTHON, "x **= y", "x"),
+            (PYTHON, "x @= y", "x"),
+            (C_FAMILY, "x %= y;", "x"),
+            (C_FAMILY, "x <<= y;", "x"),
+            (C_FAMILY, "x >>= y;", "x"),
+            (C_FAMILY, "x &= y;", "x"),
+            (C_FAMILY, "x |= y;", "x"),
+            (C_FAMILY, "x ^= y;", "x"),
+            (GO, "x &^= y", "x"),
+        ]
+
+        for profile, line, var_name in cases:
+            with self.subTest(profile=profile.name, line=line):
+                self.assertTrue(is_line_definition_of_var(line, var_name, profile))
+
     @patch("context_builder.ast_engine.AST_ENGINE")
     def test_extract_identifiers_ast(self, mock_engine):
         from context_builder.ast_engine import extract_identifiers_ast
@@ -2432,6 +2455,23 @@ class TestAstEngine(unittest.TestCase):
 
         x_node = MinimalNode("identifier", text="x")
         op_node = MinimalNode("=", text="=")
+        y_node = MinimalNode("identifier", text="y")
+        assign_node = MinimalNode("assignment_expression", children=[x_node, op_node, y_node])
+
+        lhs_ids = get_lhs_identifiers(assign_node)
+        self.assertEqual(lhs_ids, ["x"])
+
+    def test_get_lhs_identifiers_stops_at_common_augmented_assignment(self):
+        from context_builder.ast_engine import get_lhs_identifiers
+
+        class MinimalNode:
+            def __init__(self, node_type, children=None, text=None):
+                self.type = node_type
+                self.children = children or []
+                self.text = text.encode('utf-8') if isinstance(text, str) else text
+
+        x_node = MinimalNode("identifier", text="x")
+        op_node = MinimalNode("**=", text="**=")
         y_node = MinimalNode("identifier", text="y")
         assign_node = MinimalNode("assignment_expression", children=[x_node, op_node, y_node])
 
@@ -2951,6 +2991,23 @@ class TestAstEngine(unittest.TestCase):
 
         res = get_class_members("file.cpp", "TargetClass", C_FAMILY, cache)
         self.assertEqual(res, [("myVar", 3)])
+
+    def test_get_class_members_common_augmented_assignment(self):
+        from context_builder.ast_engine import get_class_members
+        from context_builder.languages.c_family import C_FAMILY
+
+        cache = MagicMock()
+        lines = [
+            "class TargetClass {",
+            "    flags &^= mask;",
+            "};"
+        ]
+        cache.get_lines.return_value = lines
+        cache.get_stripped_lines.return_value = lines
+
+        res = get_class_members("file.cpp", "TargetClass", C_FAMILY, cache)
+        self.assertIn(("flags", 2), res)
+        self.assertNotIn(("mask", 2), res)
 
     def test_resolve_variable_definition_regex_fallback_new_line_brace(self):
         from context_builder.ast_engine import resolve_variable_definition

@@ -26,6 +26,17 @@ from .config import CONFIG, ConfigDictProxy
 
 LANG_MAP = ConfigDictProxy('lang_map')
 
+ASSIGNMENT_OPERATORS = (
+    '>>>=', '<<=', '>>=', '**=', '//=', '&^=', '&&=', '||=', '??=',
+    '+=', '-=', '*=', '/=', '%=', '&=', '|=', '^=', '@=', ':=', '=',
+)
+ASSIGNMENT_OPERATOR_RE = re.compile(
+    '|'.join(
+        r'(?<![=!<>])=(?![=>])' if op == '=' else re.escape(op)
+        for op in ASSIGNMENT_OPERATORS
+    )
+)
+
 
 
 
@@ -1123,7 +1134,7 @@ def _decode_identifier_text(node):
 def _lhs_operator_index(node):
     """Return the first assignment operator child index, or -1."""
     for idx, child in enumerate(node.children):
-        if child.type in ('=', ':=', '+=', '-=', '*=', '/='):
+        if child.type in ASSIGNMENT_OPERATORS:
             return idx
     return -1
 
@@ -1438,7 +1449,7 @@ def is_line_definition_of_var(cleaned_line, var_name, profile):
     flow_kws = getattr(profile, 'flow_keywords', frozenset())
 
     # 1. Assignment
-    assign_match = re.search(r'(?<![!=<>])=(?!=)|:=|\+=|-=|\*=|\/=', cleaned_line)
+    assign_match = ASSIGNMENT_OPERATOR_RE.search(cleaned_line)
     if assign_match:
         lhs = cleaned_line[:assign_match.start()]
         lhs_first = re.match(r'\s*([A-Za-z_][A-Za-z0-9_]*)\b', lhs)
@@ -1521,7 +1532,7 @@ def get_class_members(file_path, class_name, profile, file_cache):  # pylint: di
     for ln in direct_lines:
         line = lines[ln - 1]
         cleaned = profile.strip_strings_and_comments(line)
-        assign_match = re.search(r'(?<![!=<>])=(?!=)|:=|\+=|-=|\*=|\/=', cleaned)
+        assign_match = ASSIGNMENT_OPERATOR_RE.search(cleaned)
         if assign_match:
             lhs = cleaned[:assign_match.start()]
             for m in re.finditer(r'\b[A-Za-z_][A-Za-z0-9_]*\b', lhs):
