@@ -212,6 +212,30 @@ class TestSafetyRefactors(unittest.TestCase):
         self.assertEqual(stripped, ["foo = 1;\n"])
         mock_matcher.assert_not_called()
 
+    def test_fallback_strip_lookahead_clamps_alignment_search(self):
+        """Verify fallback alignment limits lookahead and warns once."""
+        from context_builder.ast_engine import _fallback_strip
+
+        old_lookahead = CONFIG["fallback_strip_lookahead"]
+        CONFIG["fallback_strip_lookahead"] = 2
+        self.addCleanup(lambda: CONFIG.__setitem__("fallback_strip_lookahead", old_lookahead))
+
+        profile = MagicMock()
+        profile.strip_block_comments.return_value = "target = 1;\n"
+        lines = [
+            "noise0\n",
+            "noise1\n",
+            "noise2\n",
+            "target = 1; /* comment */\n",
+        ]
+
+        with patch("context_builder.ast_engine.warn_once") as mock_warn:
+            stripped = _fallback_strip(lines, profile)
+
+        self.assertEqual(stripped, ["\n", "\n", "\n", "\n"])
+        mock_warn.assert_called_once()
+        self.assertIn("--fallback-strip-lookahead", mock_warn.call_args.args[1])
+
     @patch("context_builder.ast_engine.AST_ENGINE")
     def test_ast_parse_helpers_return_early_without_source_bytes(self, mock_engine):
         """Verify AST helpers do not parse None or empty source bytes."""
@@ -301,13 +325,50 @@ class TestSafetyRefactors(unittest.TestCase):
         mock_engine.parsers = {".py": mock_parser}
         mock_engine.is_supported.return_value = True
 
-        with patch("context_builder.ast_engine.tree_sitter.Query", side_effect=Exception):
-            with patch("context_builder.ast_engine.get_lhs_identifiers", return_value={"x"}):
-                res_line, res_code = resolve_local_variable_ast(
-                    "dummy.py", "x", 5, file_cache=file_cache
+        mock_engine.get_query.side_effect = RuntimeError("bad query")
+        with patch("context_builder.ast_engine.get_lhs_identifiers", return_value={"x"}):
+            res_line, res_code = resolve_local_variable_ast(
+                "dummy.py", "x", 5, file_cache=file_cache
+            )
+            self.assertIsNone(res_line)
+            self.assertIsNone(res_code)
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_ast_parser_memory_error_is_not_swallowed(self, mock_engine):
+        """Verify critical parser failures are not converted into fallbacks."""
+        from context_builder.ast_engine import extract_identifiers_with_positions_ast
+
+        file_cache = MagicMock()
+        file_cache.get_bytes.return_value = b"x = 5"
+        mock_parser = MagicMock()
+        mock_parser.parse.side_effect = MemoryError("out of memory")
+        mock_engine.parsers = {".py": mock_parser}
+        mock_engine.is_supported.return_value = True
+
+        with self.assertRaises(MemoryError):
+            extract_identifiers_with_positions_ast(
+                "dummy.py", [1], file_cache=file_cache
+            )
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_ast_query_memory_error_is_not_swallowed(self, mock_engine):
+        """Verify critical query failures are not masked by manual AST fallback."""
+        from context_builder.ast_engine import resolve_local_variable_ast
+
+        file_cache = MagicMock()
+        file_cache.get_bytes.return_value = b"x = 5"
+        mock_tree = SimpleNamespace(root_node=MagicMock())
+        mock_parser = MagicMock()
+        mock_parser.parse.return_value = mock_tree
+        mock_engine.parsers = {".py": mock_parser}
+        mock_engine.is_supported.return_value = True
+        mock_engine.get_query.side_effect = MemoryError("out of memory")
+
+        with patch("context_builder.ast_engine.extract_function_bounds", return_value=(0, 1)):
+            with self.assertRaises(MemoryError):
+                resolve_local_variable_ast(
+                    "dummy.py", "x", 1, file_cache=file_cache
                 )
-                self.assertIsNone(res_line)
-                self.assertIsNone(res_code)
 
     def test_resolve_class_member_definition_none_lines(self):
         """Verify resolve_class_member_definition handles None lines from cache gracefully."""
@@ -325,8 +386,7 @@ class TestSafetyRefactors(unittest.TestCase):
             self.assertEqual(res["code"], "")
 
     @patch("context_builder.ast_engine.AST_ENGINE")
-    @patch("context_builder.ast_engine.tree_sitter")
-    def test_trace_file_ast_dependencies_none_lines(self, mock_tree_sitter, mock_engine):
+    def test_trace_file_ast_dependencies_none_lines(self, mock_engine):
         """Verify _trace_file_ast_dependencies returns early without crashing
         when get_lines returns None.
         """
@@ -350,9 +410,8 @@ class TestSafetyRefactors(unittest.TestCase):
         capture_node.parent.start_byte = 0
         capture_node.parent.end_byte = 5
         mock_query.captures.return_value = [(capture_node, None)]
-        mock_tree_sitter.Query.return_value = mock_query
-
         mock_engine.languages = {".py": MagicMock()}
+        mock_engine.get_query.return_value = mock_query
 
         callers = {}
         _trace_file_ast_dependencies(

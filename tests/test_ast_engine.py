@@ -1037,7 +1037,7 @@ class TestAstEngine(unittest.TestCase):
         mock_lang = MagicMock()
         mock_ast_engine.languages = {".py": mock_lang}
         # Raise an exception (e.g. tree-sitter QuerySyntaxError or similar) when compiling query
-        mock_ast_engine.get_query.side_effect = Exception("Query syntax error")
+        mock_ast_engine.get_query.side_effect = RuntimeError("Query syntax error")
 
         mock_parser = MagicMock()
         mock_parser.parse.return_value = MagicMock()
@@ -2548,7 +2548,7 @@ class TestAstEngine(unittest.TestCase):
         mock_engine.parsers = {".py": parser}
         mock_engine.is_supported.return_value = True
         mock_engine.languages = {}
-        mock_engine.get_query.side_effect = Exception("fall back to manual traversal")
+        mock_engine.get_query.side_effect = RuntimeError("fall back to manual traversal")
 
         cache = MagicMock()
         cache.get_bytes.return_value = b"some code"

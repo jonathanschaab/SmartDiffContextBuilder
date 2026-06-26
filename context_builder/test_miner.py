@@ -13,6 +13,13 @@ from .languages import get_language_profile
 from .sys_utils import iter_scan_progress, ripgrep_filter, warn_once
 from .path_utils import find_artifact_path
 
+try:
+    import tree_sitter
+    TreeSitterQueryError = tree_sitter.QueryError
+except ImportError:
+    tree_sitter = None
+    TreeSitterQueryError = ValueError
+
 
 def get_coverage_data():
     """Parse coverage.xml to map files to lists of covered line numbers.
@@ -74,13 +81,15 @@ def _mine_ast_tests(
     file_path, ext, test_pattern, source_bytes, lines, seen_bodies, discovered_tests
 ):
     """Scan file using AST query to find tests."""
-    tree = AST_ENGINE.parsers[ext].parse(source_bytes)
     test_query = get_language_profile(ext).test_query
     if not test_query:
         return False
 
+    if tree_sitter is None:
+        return False
+
     try:
-        import tree_sitter  # pylint: disable=import-outside-toplevel,import-error
+        tree = AST_ENGINE.parsers[ext].parse(source_bytes)
         query = tree_sitter.Query(AST_ENGINE.languages[ext], test_query)
         captures = query.captures(tree.root_node)
         for node, _ in captures:
@@ -94,7 +103,7 @@ def _mine_ast_tests(
                 file_path,
             )
         return True
-    except Exception as exc:  # pylint: disable=broad-exception-caught
+    except (RuntimeError, ValueError, TreeSitterQueryError) as exc:
         warn_once("test_query_fail", f"AST test query failed on {file_path}: {exc}")
         return False
 

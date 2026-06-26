@@ -642,6 +642,44 @@ class TestCallGraphTracer(unittest.TestCase):
         ])
 
     @patch("context_builder.graph_tracer.extract_identifiers_with_positions")
+    def test_trace_data_flow_batches_same_depth_identifiers(self, mock_extract):
+        mock_extract.return_value = [
+            ("var_a", 10, 5),
+            ("var_b", 11, 6),
+        ]
+
+        vm = MagicMock()
+        args = SimpleNamespace(
+            data_depth=1,
+            lsp_timeout=5.0,
+            data_flow_batch_size=2,
+        )
+        tracer = CallGraphTracer(MagicMock(), [], set(), {}, vm, args)
+        seen_batches = []
+
+        def resolve_batch(batch, _timeout, _batch_size):
+            seen_batches.append(list(batch))
+            return [
+                (
+                    batch[0],
+                    {"definitions": [{"path": "file_a.py", "line": 20, "code": "a = 1"}]},
+                    None,
+                ),
+                (
+                    batch[1],
+                    {"definitions": [{"path": "file_b.py", "line": 30, "code": "b = 2"}]},
+                    None,
+                ),
+            ]
+
+        with patch.object(tracer, "_resolve_data_flow_batch", side_effect=resolve_batch):
+            tracer.trace_data_flow({"file.py": [10, 11]})
+
+        self.assertEqual(len(seen_batches), 1)
+        self.assertEqual(len(seen_batches[0]), 2)
+        self.assertEqual(vm.add_data_state.call_count, 2)
+
+    @patch("context_builder.graph_tracer.extract_identifiers_with_positions")
     @patch("context_builder.graph_tracer.resolve_variable_definition")
     @patch("os.path.exists", return_value=True)
     def test_trace_data_flow_zero_depth(self, mock_exists, mock_resolve, mock_extract):

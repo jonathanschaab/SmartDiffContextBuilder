@@ -11,20 +11,30 @@ import re
 import difflib
 import importlib
 import bisect
+import sys
 from collections import OrderedDict
 from .sys_utils import iter_scan_progress, warn_once, ripgrep_filter
 from .cache import get_global_cache
 from .languages import UNKNOWN_LANGUAGE, get_language_profile
 from .ast_pruning import split_massive_block_ast as _split_massive_block_ast
+from .config import CONFIG, ConfigDictProxy
 
 try:
     import tree_sitter
     HAS_TREESITTER = True
+    TreeSitterQueryError = tree_sitter.QueryError
 except ImportError:
     tree_sitter = None
     HAS_TREESITTER = False
+    TreeSitterQueryError = ValueError
 
-from .config import CONFIG, ConfigDictProxy
+TREE_SITTER_BINDING_ERRORS = (
+    ImportError,
+    AttributeError,
+    TypeError,
+    RuntimeError,
+    ValueError,
+)
 
 LANG_MAP = ConfigDictProxy('lang_map')
 
@@ -48,6 +58,39 @@ MEMBER_FIELD_BY_NODE_TYPE = {
 }
 
 AST_ENGINE_CACHE_LIMIT = 1024
+AST_ENGINE_CACHE_MAX_BYTES = 16 * 1024 * 1024
+
+
+def _estimate_cache_entry_size(value, seen=None):
+    """Estimate cache value memory usage for bounded eviction decisions."""
+    if seen is None:
+        seen = set()
+    obj_id = id(value)
+    if obj_id in seen:
+        return 0
+    seen.add(obj_id)
+
+    try:
+        size = sys.getsizeof(value)
+    except TypeError:
+        return 0
+
+    if isinstance(value, dict):
+        for key, item in value.items():
+            size += _estimate_cache_entry_size(key, seen)
+            size += _estimate_cache_entry_size(item, seen)
+    elif isinstance(value, (list, tuple, set, frozenset, OrderedDict)):
+        for item in value:
+            size += _estimate_cache_entry_size(item, seen)
+    return size
+
+
+def _estimate_lru_cache_size(cache):
+    """Estimate total memory held by cache keys and values."""
+    return sum(
+        _estimate_cache_entry_size(key) + _estimate_cache_entry_size(value)
+        for key, value in cache.items()
+    )
 
 
 def _get_lru_cache(owner, attr_name):
@@ -69,11 +112,19 @@ def _lru_get(cache, key):
     return cache[key], True
 
 
-def _lru_set(cache, key, value, max_size=AST_ENGINE_CACHE_LIMIT):
+def _lru_set(
+    cache,
+    key,
+    value,
+    max_size=AST_ENGINE_CACHE_LIMIT,
+    max_bytes=AST_ENGINE_CACHE_MAX_BYTES,
+):
     """Set a cache value, evicting the least recently used entry if needed."""
     cache[key] = value
     cache.move_to_end(key)
     while len(cache) > max_size:
+        cache.popitem(last=False)
+    while len(cache) > 1 and _estimate_lru_cache_size(cache) > max_bytes:
         cache.popitem(last=False)
 
 
@@ -146,7 +197,18 @@ def _fallback_strip(lines, profile):
                 continue
             best_idx = None
             best_score = 0.0
-            for idx in range(search_start, original_line_count):
+            lookahead = max(1, CONFIG.get('fallback_strip_lookahead', 20))
+            search_end = min(original_line_count, search_start + lookahead)
+            if search_end < original_line_count:
+                warn_once(
+                    "fallback_strip_lookahead_clamped",
+                    "[SmartDiffContextBuilder Warning] Block-comment fallback "
+                    f"alignment scanned only the next {lookahead} lines to avoid "
+                    "quadratic work on large files. If this misses valid code, "
+                    "raise the limit with --fallback-strip-lookahead N or set "
+                    "'fallback_strip_lookahead' in your config file.",
+                )
+            for idx in range(search_start, search_end):
                 original_text = lines[idx].strip()
                 score = _line_alignment_score(original_text, stripped_text)
                 if score > best_score:
@@ -264,13 +326,13 @@ class AstEngine:
                 binding_obj = binding() if callable(binding) else binding
                 try:
                     lang_obj = tree_sitter.Language(binding_obj)
-                except Exception:  # pylint: disable=broad-exception-caught
+                except (TypeError, ValueError, RuntimeError):
                     lang_obj = binding_obj
                 parser = tree_sitter.Parser()
                 parser.set_language(lang_obj)
                 self.languages[ext] = lang_obj
                 self.parsers[ext] = parser
-            except Exception:  # pylint: disable=broad-exception-caught
+            except TREE_SITTER_BINDING_ERRORS:
                 self.missing_bindings[ext] = module_name
         self._initialized = True
 
@@ -478,7 +540,7 @@ def _trace_file_ast_dependencies(file_path, func_name, file_cache, callers):
                     "line": line_idx + 1,
                     "code": lines[line_idx].strip()
                 })
-    except Exception as exc:  # pylint: disable=broad-exception-caught
+    except (RuntimeError, ValueError, TreeSitterQueryError) as exc:
         warn_once("ast_query_fail", f"AST query failed on {file_path}: {exc}")
 
 
@@ -644,7 +706,7 @@ def extract_callees_ast(file_path, start_line, end_line, ext, file_cache):  # py
                 callees.add(node.text.decode('utf-8', errors='ignore'))
     except AttributeError as ae:
         raise ae
-    except Exception as e:  # pylint: disable=broad-exception-caught
+    except (RuntimeError, ValueError, TreeSitterQueryError) as e:
         raise RuntimeError(f"AST callee extraction failed: {e}") from e
     return callees
 
@@ -829,7 +891,7 @@ def extract_identifiers_with_positions_ast(file_path, line_numbers, file_cache=N
 
     try:
         tree = AST_ENGINE.parsers[ext].parse(source_bytes)
-    except Exception:  # pylint: disable=broad-exception-caught
+    except (RuntimeError, ValueError, TreeSitterQueryError):
         return []
 
     if tree is None or tree.root_node is None:
@@ -954,7 +1016,7 @@ def extract_identifiers_with_positions(file_path, line_numbers, file_cache=None)
     if AST_ENGINE.is_supported(ext):
         try:
             return extract_identifiers_with_positions_ast(file_path, line_numbers, file_cache)
-        except Exception as e:  # pylint: disable=broad-exception-caught
+        except (RuntimeError, ValueError, TreeSitterQueryError) as e:
             print(f"\n[SmartDiffContextBuilder Warning] AST position extraction failed: {e}. "
                   "Falling back to regex-based position extraction.")
     return extract_identifiers_with_positions_regex(file_path, line_numbers, file_cache)
@@ -987,7 +1049,7 @@ def extract_identifiers(file_path, line_numbers, file_cache=None):
     if AST_ENGINE.is_supported(ext):
         try:
             return extract_identifiers_ast(file_path, line_numbers, file_cache)
-        except Exception as e:  # pylint: disable=broad-exception-caught
+        except (RuntimeError, ValueError, TreeSitterQueryError) as e:
             print(f"\n[SmartDiffContextBuilder Warning] AST identifier extraction failed: {e}. "
                   "Falling back to regex-based identifier extraction.")
     return extract_identifiers_regex(file_path, line_numbers, file_cache)
@@ -1079,7 +1141,7 @@ def resolve_local_variable_ast(file_path, var_name, ref_line, file_cache=None): 
 
     try:
         tree = AST_ENGINE.parsers[ext].parse(source_bytes)
-    except Exception:  # pylint: disable=broad-exception-caught
+    except (RuntimeError, ValueError, TreeSitterQueryError):
         return None, None
 
     if tree is None or tree.root_node is None:
@@ -1092,7 +1154,7 @@ def resolve_local_variable_ast(file_path, var_name, ref_line, file_cache=None): 
     try:
         query = AST_ENGINE.get_query(ext, profile.declaration_query)
         captures = query.captures(tree.root_node)
-    except Exception:  # pylint: disable=broad-exception-caught
+    except (RuntimeError, ValueError, TreeSitterQueryError):
         # Fallback to manual AST traversal
         nodes = []
         stack = [tree.root_node]

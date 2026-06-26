@@ -36,6 +36,16 @@ class TestAstCaching(unittest.TestCase):
         self.assertIn("newest", cache)
         self.assertNotIn("newer-but-cold", cache)
 
+    def test_file_cache_helpers_evict_when_byte_bound_is_exceeded(self):
+        from context_builder.ast_engine import _lru_set
+
+        cache = OrderedDict()
+        _lru_set(cache, "old", "x" * 2048, max_size=10, max_bytes=4096)
+        _lru_set(cache, "new", "y" * 2048, max_size=10, max_bytes=4096)
+
+        self.assertNotIn("old", cache)
+        self.assertIn("new", cache)
+
     def test_file_cache_helpers_upgrade_plain_dict_to_ordered_dict(self):
         from context_builder.ast_engine import _get_lru_cache
 

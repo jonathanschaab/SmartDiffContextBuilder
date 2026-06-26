@@ -586,6 +586,7 @@ class MinimalLSPClient:
                     "increase this limit using --lsp-timeout or by setting "
                     "'lsp_timeout' in your config file.",
                 )
+                self.cleanup(force_kill=True)
             else:
                 warn_once(
                     "lsp_query_fail",
@@ -640,6 +641,7 @@ class MinimalLSPClient:
                     "lsp_timeout",
                     f"LSP query timed out after {timeout} seconds.",
                 )
+                self.cleanup(force_kill=True)
             else:
                 warn_once(
                     "lsp_query_fail",
@@ -694,6 +696,7 @@ class MinimalLSPClient:
                     "lsp_timeout",
                     f"LSP query timed out after {timeout} seconds.",
                 )
+                self.cleanup(force_kill=True)
             else:
                 warn_once(
                     "lsp_query_fail",

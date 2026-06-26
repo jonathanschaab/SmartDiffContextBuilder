@@ -183,6 +183,7 @@ def reset_config():
         'base_name': 'SmartDiffContextBuilder',
         'max_cache_size_mb': 200.0,
         'max_interface_depth': 15,
+        'fallback_strip_lookahead': 20,
         'disable_pruning': False,
         'lsp_init_timeout': DEFAULT_LSP_INIT_TIMEOUT,
         'lsp_timeout': DEFAULT_LSP_QUERY_TIMEOUT,
@@ -248,9 +249,10 @@ def generate_commented_config(active_options):
     groups = {
         "General Settings": [
             'format', 'max_lines', 'max_mb', 'base_name', 'max_cache_size_mb',
-            'max_interface_depth', 'disable_pruning', 'lsp_init_timeout',
-            'lsp_timeout', 'ripgrep_timeout', 'git_timeout',
-            'git_probe_timeout', 'no_language_server', 'compare',
+            'max_interface_depth', 'fallback_strip_lookahead',
+            'disable_pruning', 'lsp_init_timeout', 'lsp_timeout',
+            'ripgrep_timeout', 'git_timeout', 'git_probe_timeout',
+            'no_language_server', 'compare',
             'skip_ffi', 'skip_macro_expansion', 'path_case_rules',
             'caller_depth', 'callee_depth', 'commit_range', 'build_directories',
             'ignored_directories'

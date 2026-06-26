@@ -301,6 +301,7 @@ class TestLspClient(unittest.TestCase):
         client = MinimalLSPClient(["some_lsp_binary"])
         client.client = mock_client
         client.start = MagicMock(return_value=True)
+        client.cleanup = MagicMock()
 
         def mock_run_coroutine(coro, _loop):
             coro.close()
@@ -319,6 +320,7 @@ class TestLspClient(unittest.TestCase):
 
         self.assertEqual(refs, [])
         self.assertTrue(duration < 0.5)
+        client.cleanup.assert_called_once_with(force_kill=True)
 
     @patch("context_builder.lsp_client.USE_LSP", True)
     @patch("context_builder.lsp_client.LSP_INSTANCES")
@@ -731,6 +733,7 @@ class TestLspClient(unittest.TestCase):
     def test_lsp_query_timeout_warning_explains_configuration(self, mock_warn):
         client = MinimalLSPClient(["some_lsp_binary"])
         client.client = MagicMock(stopped=False)
+        client.cleanup = MagicMock()
 
         def timeout_query(coro, _loop):
             coro.close()
@@ -752,6 +755,31 @@ class TestLspClient(unittest.TestCase):
         self.assertIn("12.5 seconds", warning)
         self.assertIn("--lsp-timeout", warning)
         self.assertIn("'lsp_timeout'", warning)
+        client.cleanup.assert_called_once_with(force_kill=True)
+
+    def test_lsp_definition_timeouts_force_cleanup(self):
+        client = MinimalLSPClient(["some_lsp_binary"])
+        client.client = MagicMock(stopped=False)
+        client.cleanup = MagicMock()
+
+        def timeout_query(coro, _loop):
+            coro.close()
+            future = concurrent.futures.Future()
+            future.set_exception(TimeoutError())
+            return future
+
+        with patch(
+            "asyncio.run_coroutine_threadsafe",
+            side_effect=timeout_query,
+        ), patch("context_builder.lsp_client.warn_once"):
+            self.assertEqual(client.get_definition("file.py", 1, 0, timeout=1.0), [])
+            self.assertEqual(
+                client.get_type_definition("file.py", 1, 0, timeout=1.0),
+                [],
+            )
+
+        self.assertEqual(client.cleanup.call_count, 2)
+        client.cleanup.assert_any_call(force_kill=True)
 
     @patch("context_builder.lsp_client.warn_once")
     def test_invalid_lsp_timeouts_warn_and_use_defaults(self, mock_warn):
@@ -1680,3 +1708,26 @@ class TestLspClient(unittest.TestCase):
                 decorator_lookahead=0
             )
             self.assertEqual(res, (-1, 10))
+
+    def test_find_lsp_func_start_character_ast_propagates_memory_error(self):
+        from context_builder.lsp_client import _find_lsp_func_start_character_ast
+
+        parser = MagicMock()
+        parser.parse.side_effect = MemoryError("out of memory")
+        file_cache = MagicMock()
+        file_cache.get_bytes.return_value = b"void target() {}"
+
+        with patch(
+            "context_builder.lsp_ast_utils._get_parser_and_language",
+            return_value=(parser, MagicMock()),
+        ):
+            with self.assertRaises(MemoryError):
+                _find_lsp_func_start_character_ast(
+                    lines=["void target() {}"],
+                    line_num=1,
+                    func_name="target",
+                    ext=".cpp",
+                    file_path="dummy.cpp",
+                    file_cache=file_cache,
+                    decorator_lookahead=1,
+                )

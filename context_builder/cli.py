@@ -469,6 +469,7 @@ def _merge_cli_mappings(args, active_overrides):
         "base_name": "base_name",
         "max_cache_size_mb": "max_cache_size_mb",
         "max_interface_depth": "max_interface_depth",
+        "fallback_strip_lookahead": "fallback_strip_lookahead",
         "disable_pruning": "disable_pruning",
         "lsp_init_timeout": "lsp_init_timeout",
         "lsp_timeout": "lsp_timeout",
@@ -847,6 +848,7 @@ def main():  # pylint: disable=too-many-statements
     parser.add_argument("--max-cache-size-mb", type=float, default=None)
 
     parser.add_argument("--max-interface-depth", type=int, default=None)
+    parser.add_argument("--fallback-strip-lookahead", type=int, default=None)
     parser.add_argument("--disable-pruning", action="store_true", default=None)
     parser.add_argument("--lsp-init-timeout", type=float, default=None)
     parser.add_argument("--lsp-timeout", type=float, default=None)

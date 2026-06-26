@@ -6,8 +6,18 @@ from .config import CONFIG
 
 try:
     import tree_sitter
+    TreeSitterQueryError = tree_sitter.QueryError
 except ImportError:
     tree_sitter = None
+    TreeSitterQueryError = ValueError
+
+TREE_SITTER_BINDING_ERRORS = (
+    ImportError,
+    AttributeError,
+    TypeError,
+    RuntimeError,
+    ValueError,
+)
 
 _PARSERS = {}
 _LANGUAGES = {}
@@ -36,11 +46,11 @@ def _get_parser_and_language(ext):
         binding_obj = binding() if callable(binding) else binding
         try:
             lang_obj = tree_sitter.Language(binding_obj)
-        except Exception:  # pylint: disable=broad-exception-caught
+        except (TypeError, ValueError, RuntimeError):
             lang_obj = binding_obj
         parser = tree_sitter.Parser()
         parser.set_language(lang_obj)
-    except Exception:  # pylint: disable=broad-exception-caught
+    except TREE_SITTER_BINDING_ERRORS:
         _MISSING_BINDINGS.add(ext)
         return None, None
 
@@ -112,6 +122,6 @@ def find_lsp_func_start_character_ast(
             char_idx = len(prefix_str.encode("utf-16-le")) // 2
             actual_line = node_row + 1
             return char_idx, actual_line
-    except Exception:  # pylint: disable=broad-exception-caught
+    except (RuntimeError, ValueError, TreeSitterQueryError):
         pass
     return -1, line_num

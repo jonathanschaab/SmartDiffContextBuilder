@@ -316,6 +316,20 @@ class TestTestMiner(unittest.TestCase):
         mock_warn.assert_called_once()
         self.assertIn("test_bad.py", mock_warn.call_args.args[1])
 
+    @patch("context_builder.test_miner.get_language_profile")
+    def test_mine_ast_tests_propagates_memory_error(self, mock_profile):
+        parser = Mock()
+        parser.parse.side_effect = MemoryError("out of memory")
+        language = Mock()
+        mock_profile.return_value.test_query = "(function_definition) @test"
+
+        with patch.dict(test_miner.AST_ENGINE.parsers, {".py": parser}), \
+                patch.dict(test_miner.AST_ENGINE.languages, {".py": language}):
+            with self.assertRaises(MemoryError):
+                test_miner._mine_ast_tests(
+                    "test_bad.py", ".py", Mock(), b"", [], set(), []
+                )
+
     @patch("context_builder.test_miner._mine_regex_tests")
     @patch("context_builder.test_miner._mine_ast_tests", return_value=False)
     @patch.object(test_miner.AST_ENGINE, "is_supported", return_value=True)

@@ -1759,6 +1759,22 @@ class TestCLI(unittest.TestCase):
 
     @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
     @patch("context_builder.cli.run_scan")
+    def test_cli_fallback_strip_lookahead_mapping(self, mock_run_scan, mock_parse_args):
+        from context_builder.config import CONFIG, reset_config
+
+        reset_config()
+        mock_args = CliNamespace(fallback_strip_lookahead=55)
+        mock_parse_args.return_value = mock_args
+
+        main()
+
+        self.assertEqual(CONFIG["fallback_strip_lookahead"], 55)
+        args_passed = mock_run_scan.call_args.args[0]
+        self.assertEqual(args_passed.fallback_strip_lookahead, 55)
+        reset_config()
+
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    @patch("context_builder.cli.run_scan")
     def test_config_file_lsp_timeout_mappings(
         self, mock_run_scan, mock_parse_args
     ):
