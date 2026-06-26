@@ -11,9 +11,11 @@ import re
 import difflib
 import importlib
 import bisect
+from collections import OrderedDict
 from .sys_utils import iter_scan_progress, warn_once, ripgrep_filter
 from .cache import get_global_cache
 from .languages import UNKNOWN_LANGUAGE, get_language_profile
+from .ast_pruning import split_massive_block_ast as _split_massive_block_ast
 
 try:
     import tree_sitter
@@ -44,6 +46,35 @@ MEMBER_FIELD_BY_NODE_TYPE = {
     'field_access': 'field',
     'field_expression': 'field',
 }
+
+AST_ENGINE_CACHE_LIMIT = 1024
+
+
+def _get_lru_cache(owner, attr_name):
+    """Return an OrderedDict cache attribute, upgrading plain dicts in place."""
+    cache = getattr(owner, attr_name, None)
+    if not isinstance(cache, dict):
+        cache = OrderedDict()
+    elif not isinstance(cache, OrderedDict):
+        cache = OrderedDict(cache)
+    setattr(owner, attr_name, cache)
+    return cache
+
+
+def _lru_get(cache, key):
+    """Return a cached value and mark it recently used."""
+    if key not in cache:
+        return None, False
+    cache.move_to_end(key)
+    return cache[key], True
+
+
+def _lru_set(cache, key, value, max_size=AST_ENGINE_CACHE_LIMIT):
+    """Set a cache value, evicting the least recently used entry if needed."""
+    cache[key] = value
+    cache.move_to_end(key)
+    while len(cache) > max_size:
+        cache.popitem(last=False)
 
 
 
@@ -200,6 +231,7 @@ class AstEngine:
         """Initialize parser, language, and missing binding trackers."""
         self.parsers = {}
         self.languages = {}
+        self.queries = OrderedDict()
         self.missing_bindings = {}
         self._initialized = False
 
@@ -209,6 +241,7 @@ class AstEngine:
             return
         self.parsers.clear()
         self.languages.clear()
+        self.queries.clear()
         self.missing_bindings.clear()
 
         if not HAS_TREESITTER:
@@ -245,6 +278,18 @@ class AstEngine:
         """Check if tree-sitter parsing is supported for a given file extension."""
         self.initialize()
         return ext.lower() in self.parsers
+
+    def get_query(self, ext, query_string):
+        """Return a cached compiled tree-sitter query for ext/query_string."""
+        self.initialize()
+        ext = ext.lower()
+        query_key = (ext, query_string)
+        query, found = _lru_get(self.queries, query_key)
+        if found:
+            return query
+        query = tree_sitter.Query(self.languages[ext], query_string)
+        _lru_set(self.queries, query_key, query)
+        return query
 
 
 AST_ENGINE = AstEngine()
@@ -410,7 +455,7 @@ def _trace_file_ast_dependencies(file_path, func_name, file_cache, callers):
     q_str = q_str.replace("{escaped_func_name}", escaped_func_name)
 
     try:
-        query = tree_sitter.Query(AST_ENGINE.languages[ext], q_str)
+        query = AST_ENGINE.get_query(ext, q_str)
         captures = query.captures(tree.root_node)
         lines = file_cache.get_lines(file_path)
         if lines is None:
@@ -546,213 +591,11 @@ def trace_lexical_dependencies_regex(func_name, repo_files, file_cache=None):
     return callers
 
 
-def _semantically_truncate_child(child, lines, profile):
-    """Perform semantic truncation of an AST node."""
-    uses_indentation_blocks = profile.uses_indentation_blocks
-    sig_lines = []
-    end_idx = min(child.end_point[0], len(lines) - 1)
-    has_brace = False
-    for idx in range(child.start_point[0], end_idx + 1):
-        line = lines[idx]
-        sig_lines.append(line)
-        clean_line = profile.strip_strings_and_comments(line)
-        if not uses_indentation_blocks and "{" in clean_line:
-            has_brace = True
-            break
-        if uses_indentation_blocks and clean_line.rstrip().endswith(":"):
-            break
-
-    truncated_lines = list(sig_lines)
-    if sig_lines:
-        indent = len(sig_lines[0]) - len(sig_lines[0].lstrip())
-        if uses_indentation_blocks:
-            truncated_lines.append(
-                " " * (indent + 4)
-                + profile.format_omission_comment(
-                    "Inner Body Omitted for Context Preservation"
-                )
-            )
-            truncated_lines.append(" " * (indent + 4) + "pass")
-        else:
-            if has_brace:
-                truncated_lines.append(
-                    " " * (indent + 4)
-                    + profile.format_omission_comment(
-                        "Inner Body Omitted for Context Preservation"
-                    )
-                )
-                truncated_lines.append(" " * indent + "}")
-    return truncated_lines
-
-
-def _get_fallback_truncated_text(lines, max_lines, profile):
-    """Get fallback plain truncation when AST parsing is not supported."""
-    omission_comment = profile.format_omission_comment("Lines Omitted due to size")
-    return "\n".join(lines[:max_lines]) + f"\n{omission_comment}"
-
-
-def _get_group_min_lines(group, lines, profile):
-    """Get the minimum representation lines for a group of children."""
-    start_line = group["start_line"]
-    end_line = group["end_line"]
-    group_children = group["children"]
-
-    definition_types = {
-        'function_definition', 'class_definition', 'function_item', 'impl_item',
-        'method_definition', 'function_declaration', 'generator_function',
-        'generator_function_declaration', 'arrow_function',
-        'decorated_definition', 'class_declaration', 'export_statement'
-    }
-
-    # Find all children in the group that are definition types
-    defs = [c for c in group_children if c.type in definition_types]
-
-    if not defs:
-        # No definition in the group, fallback to default truncation of the group's lines
-        group_lines = lines[start_line:end_line + 1]
-        min_lines = list(group_lines[:5])
-        if len(group_lines) > 5:
-            indent = 0
-            if min_lines:
-                last_line = min_lines[-1]
-                indent = len(last_line) - len(last_line.lstrip())
-            indent_str = " " * indent
-            min_lines.append(
-                indent_str
-                + profile.format_omission_comment("Data Structure Omitted")
-            )
-        return min_lines
-
-    # If there are definitions, we want to semantically truncate each definition
-    # inside the group's line range.
-    # We sort defs by start_line desc to replace slices from end to start safely.
-    defs_sorted = sorted(defs, key=lambda c: c.start_point[0], reverse=True)
-    group_lines = list(lines[start_line:end_line + 1])
-
-    for d in defs_sorted:
-        d_start = d.start_point[0] - start_line
-        d_end = d.end_point[0] - start_line
-        truncated_def = _semantically_truncate_child(d, lines, profile)
-        group_lines[d_start:d_end + 1] = truncated_def
-
-    return group_lines
-
-
-def _collect_children_info(tree, lines, profile):
-    """Collect full and minimum representation lines for each child node,
-    merging overlapping ranges."""
-    groups = []
-    for child in tree.root_node.children:
-        c_start = child.start_point[0]
-        c_end = child.end_point[0]
-
-        if groups and c_start <= groups[-1]["end_line"]:
-            groups[-1]["end_line"] = max(groups[-1]["end_line"], c_end)
-            groups[-1]["children"].append(child)
-        else:
-            groups.append({
-                "start_line": c_start,
-                "end_line": c_end,
-                "children": [child]
-            })
-
-    children_info = []
-    for group in groups:
-        full_lines = lines[group["start_line"]:group["end_line"] + 1]
-        min_lines = _get_group_min_lines(group, lines, profile)
-
-        if len(min_lines) >= len(full_lines):
-            min_lines = list(full_lines)
-
-        children_info.append({
-            "full_lines": full_lines,
-            "min_lines": min_lines
-        })
-    return children_info
-
-
-def _build_with_omissions(children_info, max_lines, profile):
-    """Build list of lines when total minimum lines exceeds budget, showing omissions."""
-    output_lines = []
-    # Reserve 1 line for omission comment
-    budget = max(0, max_lines - 1)
-    for info in children_info:
-        min_len = len(info["min_lines"])
-        if min_len <= budget:
-            output_lines.extend(info["min_lines"])
-            budget -= min_len
-        else:
-            output_lines.extend(info["min_lines"][:budget])
-            budget = 0
-        if budget <= 0:
-            break
-
-    # Determine indentation of the last line in output_lines
-    indent = 0
-    if output_lines:
-        last_line = output_lines[-1]
-        indent = len(last_line) - len(last_line.lstrip())
-
-    omission_comment = profile.format_omission_comment(
-        "Remaining Methods Omitted"
-    )
-    output_lines.append(" " * indent + omission_comment)
-    return output_lines
-
-
-def _build_upgraded(children_info, max_lines, total_min_lines):
-    """Build list of lines by upgrading signatures to full bodies where budget allows."""
-    remaining_budget = max_lines - total_min_lines
-    upgraded = [False] * len(children_info)
-    for i, info in enumerate(children_info):
-        upgrade_cost = len(info["full_lines"]) - len(info["min_lines"])
-        if upgrade_cost <= remaining_budget:
-            upgraded[i] = True
-            remaining_budget -= upgrade_cost
-
-    output_lines = []
-    for i, info in enumerate(children_info):
-        if upgraded[i]:
-            output_lines.extend(info["full_lines"])
-        else:
-            output_lines.extend(info["min_lines"])
-    return output_lines
-
-
-def _allocate_budget_and_build(children_info, max_lines, profile):
-    """Allocate budget and build final pruned line list."""
-    total_min_lines = sum(len(info["min_lines"]) for info in children_info)
-    if total_min_lines > max_lines:
-        return _build_with_omissions(children_info, max_lines, profile)
-    return _build_upgraded(children_info, max_lines, total_min_lines)
-
-
 def split_massive_block_ast(source_text, file_path, max_lines):
     """Truncate and omit large AST definition blocks to preserve context budgets."""
-    max_lines = max(1, max_lines)
-    lines = source_text.splitlines()
-    if len(lines) <= max_lines:
-        return [{"suffix": "", "text": source_text}]
-
-    ext = os.path.splitext(file_path)[1].lower()
-    profile = get_language_profile(file_path)
-
-    if not AST_ENGINE.is_supported(ext):
-        fallback_text = _get_fallback_truncated_text(lines, max_lines, profile)
-        return [{"suffix": " (Truncated)", "text": fallback_text}]
-
-    tree = AST_ENGINE.parsers[ext].parse(source_text.encode('utf-8'))
-    if tree is None or tree.root_node is None:
-        fallback_text = _get_fallback_truncated_text(lines, max_lines, profile)
-        return [{"suffix": " (Truncated)", "text": fallback_text}]
-    children_info = _collect_children_info(tree, lines, profile)
-    if not children_info:
-        fallback_text = _get_fallback_truncated_text(lines, max_lines, profile)
-        return [{"suffix": " (Truncated)", "text": fallback_text}]
-
-    output_lines = _allocate_budget_and_build(children_info, max_lines, profile)
-
-    return [{"suffix": " (AST Semantically Pruned)", "text": "\n".join(output_lines)}]
+    return _split_massive_block_ast(
+        source_text, file_path, max_lines, AST_ENGINE, get_language_profile
+    )
 
 
 def extract_callees_ast(file_path, start_line, end_line, ext, file_cache):  # pylint: disable=too-many-branches
@@ -789,7 +632,7 @@ def extract_callees_ast(file_path, start_line, end_line, ext, file_cache):  # py
 
     callees = set()
     try:
-        query = tree_sitter.Query(AST_ENGINE.languages[ext], q_str)
+        query = AST_ENGINE.get_query(ext, q_str)
         captures = query.captures(func_node)
         for node, _ in captures:
             if start_line <= node.start_point[0] < end_line:
@@ -1247,10 +1090,7 @@ def resolve_local_variable_ast(file_path, var_name, ref_line, file_cache=None): 
         return None, None
     captures = []
     try:
-        query = tree_sitter.Query(
-            AST_ENGINE.languages[ext],
-            profile.declaration_query
-        )
+        query = AST_ENGINE.get_query(ext, profile.declaration_query)
         captures = query.captures(tree.root_node)
     except Exception:  # pylint: disable=broad-exception-caught
         # Fallback to manual AST traversal
@@ -1571,12 +1411,12 @@ def get_class_members(file_path, class_name, profile, file_cache):  # pylint: di
     if profile is None:
         return []
 
-    if not isinstance(getattr(file_cache, "class_members_cache", None), dict):
-        file_cache.class_members_cache = {}
+    class_members_cache = _get_lru_cache(file_cache, "class_members_cache")
 
     cache_key = (os.path.abspath(file_path), class_name)
-    if cache_key in file_cache.class_members_cache:
-        return file_cache.class_members_cache[cache_key]
+    cached_members, found = _lru_get(class_members_cache, cache_key)
+    if found:
+        return cached_members
 
     lines = _get_stripped_lines(file_cache, file_path, profile)
     class_line_num = None
@@ -1652,12 +1492,7 @@ def get_class_members(file_path, class_name, profile, file_cache):  # pylint: di
             seen.add(name)
             unique_members.append((name, ln))
 
-    # Bounded cache to avoid leaks
-    if len(file_cache.class_members_cache) >= 1024:
-        first_key = next(iter(file_cache.class_members_cache))
-        file_cache.class_members_cache.pop(first_key, None)
-
-    file_cache.class_members_cache[cache_key] = unique_members
+    _lru_set(class_members_cache, cache_key, unique_members)
     return unique_members
 
 
@@ -1705,12 +1540,14 @@ def find_class_definition(start_file, class_name, profile, file_cache):
     if file_cache is None:
         file_cache = get_global_cache()
 
-    if not isinstance(getattr(file_cache, "find_class_definition_cache", None), dict):
-        file_cache.find_class_definition_cache = {}
+    find_class_definition_cache = _get_lru_cache(
+        file_cache, "find_class_definition_cache"
+    )
 
     cache_key = (os.path.abspath(start_file), class_name)
-    if cache_key in file_cache.find_class_definition_cache:
-        return file_cache.find_class_definition_cache[cache_key]
+    cached_definition, found = _lru_get(find_class_definition_cache, cache_key)
+    if found:
+        return cached_definition
 
     def _find():  # pylint: disable=too-many-branches
         if profile is None:
@@ -1761,10 +1598,7 @@ def find_class_definition(start_file, class_name, profile, file_cache):
         return None, None
 
     res = _find()
-    if len(file_cache.find_class_definition_cache) >= 1024:
-        first_key = next(iter(file_cache.find_class_definition_cache))
-        file_cache.find_class_definition_cache.pop(first_key, None)
-    file_cache.find_class_definition_cache[cache_key] = res
+    _lru_set(find_class_definition_cache, cache_key, res)
     return res
 
 
@@ -2005,12 +1839,14 @@ def get_directly_included_files(file_path, profile, file_cache):  # pylint: disa
     if file_cache is None:
         file_cache = get_global_cache()
 
-    if not isinstance(getattr(file_cache, "get_directly_included_files_cache", None), dict):
-        file_cache.get_directly_included_files_cache = {}
+    included_files_cache = _get_lru_cache(
+        file_cache, "get_directly_included_files_cache"
+    )
 
     cache_key = os.path.abspath(file_path)
-    if cache_key in file_cache.get_directly_included_files_cache:
-        return file_cache.get_directly_included_files_cache[cache_key]
+    cached_files, found = _lru_get(included_files_cache, cache_key)
+    if found:
+        return cached_files
 
     if profile is None:
         return []
@@ -2094,10 +1930,7 @@ def get_directly_included_files(file_path, profile, file_cache):  # pylint: disa
         return resolved_paths
 
     res = _get_files()
-    if len(file_cache.get_directly_included_files_cache) >= 1024:
-        first_key = next(iter(file_cache.get_directly_included_files_cache))
-        file_cache.get_directly_included_files_cache.pop(first_key, None)
-    file_cache.get_directly_included_files_cache[cache_key] = res
+    _lru_set(included_files_cache, cache_key, res)
     return res
 
 
@@ -2108,12 +1941,14 @@ def resolve_global_definition(
     if file_cache is None:
         file_cache = get_global_cache()
 
-    if not isinstance(getattr(file_cache, "resolve_global_definition_cache", None), dict):
-        file_cache.resolve_global_definition_cache = {}
+    global_definition_cache = _get_lru_cache(
+        file_cache, "resolve_global_definition_cache"
+    )
 
     cache_key = (os.path.abspath(file_path), var_name)
-    if cache_key in file_cache.resolve_global_definition_cache:
-        return file_cache.resolve_global_definition_cache[cache_key]
+    cached_definition, found = _lru_get(global_definition_cache, cache_key)
+    if found:
+        return cached_definition
 
     def _resolve():
         if searched_files is None:
@@ -2186,10 +2021,7 @@ def resolve_global_definition(
         return []
 
     res = _resolve()
-    if len(file_cache.resolve_global_definition_cache) >= 1024:
-        first_key = next(iter(file_cache.resolve_global_definition_cache))
-        file_cache.resolve_global_definition_cache.pop(first_key, None)
-    file_cache.resolve_global_definition_cache[cache_key] = res
+    _lru_set(global_definition_cache, cache_key, res)
     return res
 
 

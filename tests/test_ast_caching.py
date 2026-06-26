@@ -3,6 +3,8 @@
 
 import os
 import unittest
+from collections import OrderedDict
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from context_builder.ast_engine import (
@@ -13,6 +15,35 @@ from context_builder.ast_engine import (
 
 
 class TestAstCaching(unittest.TestCase):
+    def test_file_cache_helpers_evict_least_recently_used_entry(self):
+        from context_builder.ast_engine import _get_lru_cache, _lru_get, _lru_set
+
+        owner = SimpleNamespace(
+            custom_cache=OrderedDict([
+                ("old-but-hot", 1),
+                ("newer-but-cold", 2),
+            ])
+        )
+
+        cache = _get_lru_cache(owner, "custom_cache")
+        value, found = _lru_get(cache, "old-but-hot")
+        self.assertTrue(found)
+        self.assertEqual(value, 1)
+
+        _lru_set(cache, "newest", 3, max_size=2)
+
+        self.assertIn("old-but-hot", cache)
+        self.assertIn("newest", cache)
+        self.assertNotIn("newer-but-cold", cache)
+
+    def test_file_cache_helpers_upgrade_plain_dict_to_ordered_dict(self):
+        from context_builder.ast_engine import _get_lru_cache
+
+        owner = SimpleNamespace(custom_cache={"item": "value"})
+        cache = _get_lru_cache(owner, "custom_cache")
+
+        self.assertIsInstance(cache, OrderedDict)
+        self.assertIs(owner.custom_cache, cache)
 
     @patch("context_builder.ast_engine.ripgrep_filter")
     @patch("context_builder.sys_utils.get_git_tracked_files")

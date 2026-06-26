@@ -6,6 +6,7 @@
 
 import os
 import unittest
+from collections import OrderedDict
 from unittest.mock import ANY, patch, MagicMock
 import tempfile
 from types import SimpleNamespace
@@ -29,6 +30,33 @@ class TestAstEngine(unittest.TestCase):
 
     def tearDown(self):
         self.temp_dir.cleanup()
+
+    def test_tree_sitter_query_cache_reuses_compiled_queries(self):
+        from context_builder import ast_engine
+
+        orig_initialized = ast_engine.AST_ENGINE._initialized
+        orig_languages = ast_engine.AST_ENGINE.languages.copy()
+        orig_queries = ast_engine.AST_ENGINE.queries.copy()
+        try:
+            ast_engine.AST_ENGINE._initialized = True
+            ast_engine.AST_ENGINE.languages = {".py": MagicMock()}
+            ast_engine.AST_ENGINE.queries = OrderedDict()
+
+            compiled_query = MagicMock()
+            with patch(
+                "context_builder.ast_engine.tree_sitter.Query",
+                return_value=compiled_query,
+            ) as mock_query:
+                first = ast_engine.AST_ENGINE.get_query(".PY", "(identifier) @name")
+                second = ast_engine.AST_ENGINE.get_query(".py", "(identifier) @name")
+
+            self.assertIs(first, compiled_query)
+            self.assertIs(second, compiled_query)
+            mock_query.assert_called_once()
+        finally:
+            ast_engine.AST_ENGINE._initialized = orig_initialized
+            ast_engine.AST_ENGINE.languages = orig_languages
+            ast_engine.AST_ENGINE.queries = orig_queries
 
     def test_strip_strings_and_comments(self):
         self.assertEqual(
@@ -656,17 +684,16 @@ class TestAstEngine(unittest.TestCase):
         mock_lang = MagicMock()
         mock_query = MagicMock()
         mock_query.captures.return_value = [(mock_node, "id")]
-        mock_lang.query.return_value = mock_query
         mock_ast_engine.languages = {".py": mock_lang}
+        mock_ast_engine.get_query.return_value = mock_query
 
         from context_builder.ast_engine import extract_callees_ast
 
         mock_cache = MagicMock()
         mock_cache.get_bytes.return_value = b"def foo():\n    bar()\n"
 
-        with patch("tree_sitter.Query", return_value=mock_query):
-            with self.assertRaises(AttributeError) as ctx:
-                extract_callees_ast("dummy.py", 1, 3, ".py", mock_cache)
+        with self.assertRaises(AttributeError) as ctx:
+            extract_callees_ast("dummy.py", 1, 3, ".py", mock_cache)
 
         self.assertIn("Node object lacks '.text' attribute", str(ctx.exception))
 
@@ -1008,9 +1035,9 @@ class TestAstEngine(unittest.TestCase):
         mock_ast_engine.is_supported.return_value = True
 
         mock_lang = MagicMock()
-        # Raise an exception (e.g. tree-sitter QuerySyntaxError or similar) when compiling query
-        mock_lang.query.side_effect = Exception("Query syntax error")
         mock_ast_engine.languages = {".py": mock_lang}
+        # Raise an exception (e.g. tree-sitter QuerySyntaxError or similar) when compiling query
+        mock_ast_engine.get_query.side_effect = Exception("Query syntax error")
 
         mock_parser = MagicMock()
         mock_parser.parse.return_value = MagicMock()
@@ -1049,8 +1076,8 @@ class TestAstEngine(unittest.TestCase):
         mock_lang = MagicMock()
         mock_query = MagicMock()
         mock_query.captures.return_value = []
-        mock_lang.query.return_value = mock_query
         mock_ast_engine.languages = {".cpp": mock_lang}
+        mock_ast_engine.get_query.return_value = mock_query
 
         mock_cache = MagicMock()
         mock_cache.get_bytes.return_value = b"void operator+();"
@@ -1058,15 +1085,12 @@ class TestAstEngine(unittest.TestCase):
         with patch(
             "context_builder.ast_engine.ripgrep_filter",
             return_value=["file.cpp"],
-        ), patch(
-            "tree_sitter.Query",
-            return_value=mock_query,
-        ) as mock_query_class:
+        ):
             trace_lexical_dependencies_ast("operator+", ["file.cpp"], file_cache=mock_cache)
 
-        # Verify that tree_sitter.Query was called with double-escaped operator\\+
-        mock_query_class.assert_called_once()
-        query_str = mock_query_class.call_args[0][1]
+        # Verify that the cached query lookup used double-escaped operator\\+
+        mock_ast_engine.get_query.assert_called_once()
+        query_str = mock_ast_engine.get_query.call_args[0][1]
         self.assertIn("operator\\\\+", query_str)
 
     def test_trace_lexical_dependencies_regex_operators(self):
@@ -2524,6 +2548,7 @@ class TestAstEngine(unittest.TestCase):
         mock_engine.parsers = {".py": parser}
         mock_engine.is_supported.return_value = True
         mock_engine.languages = {}
+        mock_engine.get_query.side_effect = Exception("fall back to manual traversal")
 
         cache = MagicMock()
         cache.get_bytes.return_value = b"some code"
