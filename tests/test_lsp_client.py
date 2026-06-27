@@ -1500,6 +1500,7 @@ class TestLspClient(unittest.TestCase):
 
         self.assertIsNone(res)
         mock_warn.assert_called_once()
+        mock_get_profile.assert_called_once_with("dummy.cpp")
         # Ensure it didn't call the client to get references
         mock_client.get_references.assert_not_called()
 
@@ -1666,6 +1667,10 @@ class TestLspClient(unittest.TestCase):
             type_defs = get_lsp_type_definition("dummy.py", 1, 5, timeout=5)
             self.assertEqual(len(type_defs), 1)
             self.assertEqual(type_defs[0]["uri"], "file:///c:/path/to/type.py")
+            self.assertEqual(
+                [call_args.args[0] for call_args in mock_profile_getter.call_args_list],
+                ["dummy.py", "dummy.py"],
+            )
 
     def test_serialize_locations(self):
         from context_builder.lsp_client import _serialize_locations

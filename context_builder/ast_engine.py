@@ -12,6 +12,7 @@ import difflib
 import importlib
 import bisect
 import sys
+import threading
 from collections import OrderedDict
 from .sys_utils import iter_scan_progress, warn_once, ripgrep_filter
 from .cache import get_global_cache
@@ -81,7 +82,7 @@ def _estimate_cache_entry_size(value, seen=None):
         for key, item in value.items():
             size += _estimate_cache_entry_size(key, seen)
             size += _estimate_cache_entry_size(item, seen)
-    elif isinstance(value, (list, tuple, set, frozenset, OrderedDict)):
+    elif isinstance(value, (list, tuple, set, frozenset)):
         for item in value:
             size += _estimate_cache_entry_size(item, seen)
     return size
@@ -230,23 +231,25 @@ def _fallback_strip(lines, profile):
             for line in lines
         ]
         search_start = 0
+        lookahead = max(1, CONFIG.get('fallback_strip_lookahead', 20))
+        if lookahead < original_line_count and any(
+            stripped_line.strip() for stripped_line in stripped_lines
+        ):
+            warn_once(
+                "fallback_strip_lookahead_clamped",
+                "[SmartDiffContextBuilder Warning] Block-comment fallback "
+                f"alignment scanned only the next {lookahead} lines to avoid "
+                "quadratic work on large files. If this misses valid code, "
+                "raise the limit with --fallback-strip-lookahead N or set "
+                "'fallback_strip_lookahead' in your config file.",
+            )
         for stripped_line in stripped_lines:
             stripped_text = stripped_line.strip()
             if not stripped_text:
                 continue
             best_idx = None
             best_score = 0.0
-            lookahead = max(1, CONFIG.get('fallback_strip_lookahead', 20))
             search_end = min(original_line_count, search_start + lookahead)
-            if search_end < original_line_count:
-                warn_once(
-                    "fallback_strip_lookahead_clamped",
-                    "[SmartDiffContextBuilder Warning] Block-comment fallback "
-                    f"alignment scanned only the next {lookahead} lines to avoid "
-                    "quadratic work on large files. If this misses valid code, "
-                    "raise the limit with --fallback-strip-lookahead N or set "
-                    "'fallback_strip_lookahead' in your config file.",
-                )
             for idx in range(search_start, search_end):
                 original_text = lines[idx].strip()
                 score = _line_alignment_score(original_text, stripped_text)
@@ -335,62 +338,70 @@ class AstEngine:
         self.queries = OrderedDict()
         self.missing_bindings = {}
         self._initialized = False
+        self._lock = threading.RLock()
 
     def initialize(self):
         """Dynamically load tree-sitter language bindings from configuration."""
-        if self._initialized:
-            return
-        self.parsers.clear()
-        self.languages.clear()
-        self.queries.clear()
-        self.missing_bindings.clear()
+        with self._lock:
+            if self._initialized:
+                return
+            self.parsers.clear()
+            self.languages.clear()
+            self.queries.clear()
+            self.missing_bindings.clear()
 
-        if not HAS_TREESITTER:
-            warn_once('tree-sitter', "For perfect AST scoping, install tree-sitter bindings.")
-            self._initialized = True
-            return
-
-        for ext, val in CONFIG['bindings'].items():
-            if not isinstance(val, (list, tuple)) or len(val) != 2:
+            if not HAS_TREESITTER:
                 warn_once(
-                    f"invalid_binding_{ext}",
-                    f"Invalid tree-sitter binding configuration for {ext}. "
-                    f"Expected list/tuple of (module_name, function_name), but got: {val}"
+                    'tree-sitter',
+                    "For perfect AST scoping, install tree-sitter bindings.",
                 )
-                continue
-            module_name, func_name = val
-            try:
-                mod = importlib.import_module(module_name)
-                binding = getattr(mod, func_name)
-                binding_obj = binding() if callable(binding) else binding
+                self._initialized = True
+                return
+
+            for ext, val in CONFIG['bindings'].items():
+                if not isinstance(val, (list, tuple)) or len(val) != 2:
+                    warn_once(
+                        f"invalid_binding_{ext}",
+                        f"Invalid tree-sitter binding configuration for {ext}. "
+                        "Expected list/tuple of (module_name, function_name), "
+                        f"but got: {val}"
+                    )
+                    continue
+                module_name, func_name = val
                 try:
-                    lang_obj = tree_sitter.Language(binding_obj)
-                except (TypeError, ValueError, RuntimeError):
-                    lang_obj = binding_obj
-                parser = tree_sitter.Parser()
-                parser.set_language(lang_obj)
-                self.languages[ext] = lang_obj
-                self.parsers[ext] = parser
-            except TREE_SITTER_BINDING_ERRORS:
-                self.missing_bindings[ext] = module_name
-        self._initialized = True
+                    mod = importlib.import_module(module_name)
+                    binding = getattr(mod, func_name)
+                    binding_obj = binding() if callable(binding) else binding
+                    try:
+                        lang_obj = tree_sitter.Language(binding_obj)
+                    except (TypeError, ValueError, RuntimeError):
+                        lang_obj = binding_obj
+                    parser = tree_sitter.Parser()
+                    parser.set_language(lang_obj)
+                    self.languages[ext] = lang_obj
+                    self.parsers[ext] = parser
+                except TREE_SITTER_BINDING_ERRORS:
+                    self.missing_bindings[ext] = module_name
+            self._initialized = True
 
     def is_supported(self, ext):
         """Check if tree-sitter parsing is supported for a given file extension."""
-        self.initialize()
-        return ext.lower() in self.parsers
+        with self._lock:
+            self.initialize()
+            return ext.lower() in self.parsers
 
     def get_query(self, ext, query_string):
         """Return a cached compiled tree-sitter query for ext/query_string."""
-        self.initialize()
-        ext = ext.lower()
-        query_key = (ext, query_string)
-        query, found = _lru_get(self.queries, query_key)
-        if found:
+        with self._lock:
+            self.initialize()
+            ext = ext.lower()
+            query_key = (ext, query_string)
+            query, found = _lru_get(self.queries, query_key)
+            if found:
+                return query
+            query = tree_sitter.Query(self.languages[ext], query_string)
+            _lru_set(self.queries, query_key, query)
             return query
-        query = tree_sitter.Query(self.languages[ext], query_string)
-        _lru_set(self.queries, query_key, query)
-        return query
 
 
 AST_ENGINE = AstEngine()

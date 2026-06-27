@@ -69,6 +69,40 @@ class TestSafetyRefactors(unittest.TestCase):
         finally:
             CONFIG["bindings"] = orig_bindings
 
+    def test_ast_engine_lock_guards_support_and_query_access(self):
+        """Verify AstEngine synchronizes parser and query cache access."""
+        import context_builder.ast_engine as ast_engine
+
+        class CountingRLock:
+            """Reentrant context manager that records lock use."""
+
+            def __init__(self):
+                self.enter_count = 0
+
+            def __enter__(self):
+                self.enter_count += 1
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+        engine = ast_engine.AstEngine()
+        lock = CountingRLock()
+        setattr(engine, "_lock", lock)
+        setattr(engine, "_initialized", True)
+        engine.parsers[".py"] = MagicMock()
+        engine.languages[".py"] = MagicMock()
+
+        self.assertTrue(engine.is_supported(".PY"))
+        self.assertGreaterEqual(lock.enter_count, 2)
+
+        lock.enter_count = 0
+        fake_tree_sitter = SimpleNamespace(Query=MagicMock(return_value="query"))
+        with patch.object(ast_engine, "tree_sitter", fake_tree_sitter):
+            self.assertEqual(engine.get_query(".PY", "(call) @callee"), "query")
+
+        self.assertGreaterEqual(lock.enter_count, 2)
+
     def test_utf8_bom_support(self):
         """Verify that UTF-8 BOM signature is successfully stripped from config files."""
         from context_builder.config import load_json_with_comments

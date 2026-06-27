@@ -977,7 +977,7 @@ def get_lsp_references(
         file_cache = get_global_cache()
 
     ext = os.path.splitext(file_path)[1].lower()
-    profile = get_language_profile(ext)
+    profile = get_language_profile(file_path)
     if not profile or not profile.lsp_command:
         return None
     command = list(profile.lsp_command)
@@ -1152,8 +1152,7 @@ def get_lsp_definition(
     if not USE_LSP or line_num <= 0 or char_offset < 0:
         return []
 
-    ext = os.path.splitext(file_path)[1].lower()
-    profile = get_language_profile(ext)
+    profile = get_language_profile(file_path)
     if not profile or not profile.lsp_command:
         return []
     command = list(profile.lsp_command)
@@ -1187,8 +1186,7 @@ def get_lsp_type_definition(
     if not USE_LSP or line_num <= 0 or char_offset < 0:
         return []
 
-    ext = os.path.splitext(file_path)[1].lower()
-    profile = get_language_profile(ext)
+    profile = get_language_profile(file_path)
     if not profile or not profile.lsp_command:
         return []
     command = list(profile.lsp_command)

@@ -295,6 +295,7 @@ class TestTestMiner(unittest.TestCase):
 
         self.assertTrue(success)
         self.assertEqual(discovered[0]["line"], 1)
+        mock_profile.assert_called_once_with("tests.rs")
         mock_query_class.assert_called_once_with(language, "(function_item) @test")
 
     @patch("context_builder.test_miner.warn_once")
@@ -313,6 +314,7 @@ class TestTestMiner(unittest.TestCase):
             )
 
         self.assertFalse(success)
+        mock_profile.assert_called_once_with("test_bad.py")
         mock_warn.assert_called_once()
         self.assertIn("test_bad.py", mock_warn.call_args.args[1])
 
@@ -329,6 +331,7 @@ class TestTestMiner(unittest.TestCase):
                 test_miner._mine_ast_tests(
                     "test_bad.py", ".py", Mock(), b"", [], set(), []
                 )
+        mock_profile.assert_called_once_with("test_bad.py")
 
     @patch("context_builder.test_miner._mine_regex_tests")
     @patch("context_builder.test_miner._mine_ast_tests", return_value=False)

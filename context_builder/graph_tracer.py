@@ -132,11 +132,11 @@ class CallGraphTracer:
                 )
         return callers
 
-    def _merge_macro_and_build_linkages(self, curr_file, curr_func, ext, callers):
+    def _merge_macro_and_build_linkages(self, curr_file, curr_func, callers):
         """Merge macro expansion and C++ build system compilation linkages into callers."""
         if (
             not self._arg_or_default("skip_macro_expansion", False)
-            and get_language_profile(ext).supports_macro_expansion
+            and get_language_profile(curr_file).supports_macro_expansion
         ):
             macro_results = trace_macro_expansion(
                 curr_func, self.all_repo_files, file_cache=self.file_cache
@@ -157,7 +157,7 @@ class CallGraphTracer:
         """Trace callers for a single queue item at the current depth step."""
         callers = self._resolve_references(curr_file, curr_line, curr_func)
         ext = os.path.splitext(curr_file)[1].lower()
-        self._merge_macro_and_build_linkages(curr_file, curr_func, ext, callers)
+        self._merge_macro_and_build_linkages(curr_file, curr_func, callers)
 
         filtered_callers = {}
         for fp, occs in callers.items():
@@ -339,21 +339,17 @@ class CallGraphTracer:
             )
 
     @staticmethod
-    def _next_data_flow_batch(queue, data_depth, batch_size):
+    def _next_data_flow_batch(queue, batch_size):
         """Pop the next same-depth batch from the BFS queue."""
         batch = []
         while queue and not batch:
-            item = queue.popleft()
-            if item[4] < data_depth:
-                batch.append(item)
+            batch.append(queue.popleft())
         if not batch:
             return batch
 
         depth = batch[0][4]
         while queue and len(batch) < batch_size and queue[0][4] == depth:
-            item = queue.popleft()
-            if item[4] < data_depth:
-                batch.append(item)
+            batch.append(queue.popleft())
         return batch
 
     def trace_data_flow(self, diff_files_lines):
@@ -377,7 +373,7 @@ class CallGraphTracer:
         )
 
         while queue:
-            batch = self._next_data_flow_batch(queue, data_depth, batch_size)
+            batch = self._next_data_flow_batch(queue, batch_size)
             if not batch:
                 continue
             results = self._resolve_data_flow_batch(batch, lsp_timeout, batch_size)

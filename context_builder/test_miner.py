@@ -81,7 +81,7 @@ def _mine_ast_tests(
     file_path, ext, test_pattern, source_bytes, lines, seen_bodies, discovered_tests
 ):
     """Scan file using AST query to find tests."""
-    test_query = get_language_profile(ext).test_query
+    test_query = get_language_profile(file_path).test_query
     if not test_query:
         return False
 

@@ -500,12 +500,11 @@ class TestCallGraphTracer(unittest.TestCase):
         )
         callers = {"macro.cpp": [{"line": 4, "code": "existing"}]}
 
-        tracer._merge_macro_and_build_linkages(
-            "source.cpp", "target", ".cpp", callers
-        )
+        tracer._merge_macro_and_build_linkages("source.cpp", "target", callers)
 
         self.assertEqual([item["line"] for item in callers["macro.cpp"]], [4, 8])
         self.assertEqual(callers["build.cpp"], [build_match])
+        mock_profile.assert_called_once_with("source.cpp")
 
     @patch("context_builder.graph_tracer.trace_ffi_callers")
     @patch("context_builder.graph_tracer.is_in_repo")
@@ -678,6 +677,18 @@ class TestCallGraphTracer(unittest.TestCase):
         self.assertEqual(len(seen_batches), 1)
         self.assertEqual(len(seen_batches[0]), 2)
         self.assertEqual(vm.add_data_state.call_count, 2)
+
+    def test_next_data_flow_batch_groups_without_depth_filter(self):
+        queue = deque([
+            ("file.py", "a", 1, 1, 0),
+            ("file.py", "b", 2, 1, 0),
+            ("file.py", "c", 3, 1, 1),
+        ])
+
+        batch = CallGraphTracer._next_data_flow_batch(queue, batch_size=4)
+
+        self.assertEqual([item[1] for item in batch], ["a", "b"])
+        self.assertEqual([item[1] for item in queue], ["c"])
 
     @patch("context_builder.graph_tracer.extract_identifiers_with_positions")
     @patch("context_builder.graph_tracer.resolve_variable_definition")
