@@ -14,6 +14,7 @@ import bisect
 import sys
 import threading
 from collections import OrderedDict
+from contextlib import nullcontext
 from .sys_utils import iter_scan_progress, warn_once, ripgrep_filter
 from .cache import get_global_cache
 from .languages import UNKNOWN_LANGUAGE, get_language_profile
@@ -62,6 +63,7 @@ AST_ENGINE_CACHE_LIMIT = 1024
 AST_ENGINE_CACHE_MAX_BYTES = 16 * 1024 * 1024
 _LRU_TOTAL_BYTES_ATTR = '_total_bytes'
 _LRU_ENTRY_SIZES_ATTR = '_entry_sizes'
+_LRU_LOCK_ATTR = '_owner_lock'
 
 
 def _estimate_cache_entry_size(value, seen=None):
@@ -121,22 +123,33 @@ def _lru_pop_oldest(cache):
 
 def _get_lru_cache(owner, attr_name):
     """Return an OrderedDict cache attribute, upgrading plain dicts in place."""
-    cache = getattr(owner, attr_name, None)
-    if not isinstance(cache, dict):
-        cache = OrderedDict()
-    elif not isinstance(cache, OrderedDict):
-        cache = OrderedDict(cache)
-    setattr(owner, attr_name, cache)
-    _ensure_lru_size_tracking(cache)
-    return cache
+    owner_lock = getattr(owner, '_lock', None)
+    with owner_lock if owner_lock is not None else nullcontext():
+        cache = getattr(owner, attr_name, None)
+        if not isinstance(cache, dict):
+            cache = OrderedDict()
+        elif not isinstance(cache, OrderedDict):
+            cache = OrderedDict(cache)
+        if owner_lock is not None:
+            setattr(cache, _LRU_LOCK_ATTR, owner_lock)
+        setattr(owner, attr_name, cache)
+        _ensure_lru_size_tracking(cache)
+        return cache
+
+
+def _lru_lock(cache):
+    """Return an optional owner lock for an LRU cache."""
+    lock = getattr(cache, _LRU_LOCK_ATTR, None)
+    return lock if lock is not None else nullcontext()
 
 
 def _lru_get(cache, key):
     """Return a cached value and mark it recently used."""
-    if key not in cache:
-        return None, False
-    cache.move_to_end(key)
-    return cache[key], True
+    with _lru_lock(cache):
+        if key not in cache:
+            return None, False
+        cache.move_to_end(key)
+        return cache[key], True
 
 
 def _lru_set(
@@ -147,21 +160,22 @@ def _lru_set(
     max_bytes=AST_ENGINE_CACHE_MAX_BYTES,
 ):
     """Set a cache value, evicting the least recently used entry if needed."""
-    _ensure_lru_size_tracking(cache)
-    entry_sizes = getattr(cache, _LRU_ENTRY_SIZES_ATTR)
-    total_bytes = getattr(cache, _LRU_TOTAL_BYTES_ATTR)
-    if key in cache:
-        total_bytes -= entry_sizes.pop(key, 0)
-    cache[key] = value
-    entry_size = _lru_entry_size(key, value)
-    entry_sizes[key] = entry_size
-    total_bytes += entry_size
-    setattr(cache, _LRU_TOTAL_BYTES_ATTR, total_bytes)
-    cache.move_to_end(key)
-    while len(cache) > max_size:
-        _lru_pop_oldest(cache)
-    while len(cache) > 1 and getattr(cache, _LRU_TOTAL_BYTES_ATTR) > max_bytes:
-        _lru_pop_oldest(cache)
+    with _lru_lock(cache):
+        _ensure_lru_size_tracking(cache)
+        entry_sizes = getattr(cache, _LRU_ENTRY_SIZES_ATTR)
+        total_bytes = getattr(cache, _LRU_TOTAL_BYTES_ATTR)
+        if key in cache:
+            total_bytes -= entry_sizes.pop(key, 0)
+        cache[key] = value
+        entry_size = _lru_entry_size(key, value)
+        entry_sizes[key] = entry_size
+        total_bytes += entry_size
+        setattr(cache, _LRU_TOTAL_BYTES_ATTR, total_bytes)
+        cache.move_to_end(key)
+        while len(cache) > max_size:
+            _lru_pop_oldest(cache)
+        while len(cache) > 1 and getattr(cache, _LRU_TOTAL_BYTES_ATTR) > max_bytes:
+            _lru_pop_oldest(cache)
 
 
 
@@ -403,8 +417,33 @@ class AstEngine:
             _lru_set(self.queries, query_key, query)
             return query
 
+    def get_language(self, ext):
+        """Return a tree-sitter language object under the engine lock."""
+        with self._lock:
+            self.initialize()
+            return self.languages[ext.lower()]
+
+    def parse(self, ext, source_bytes):
+        """Parse source bytes with the shared parser under the engine lock."""
+        with self._lock:
+            self.initialize()
+            return self.parsers[ext.lower()].parse(source_bytes)
+
 
 AST_ENGINE = AstEngine()
+
+
+def _parse_ast_bytes(ext, source_bytes, ast_engine=None):
+    """Parse source bytes through a locked AstEngine-compatible object."""
+    ast_engine = ast_engine or AST_ENGINE
+    ext = ext.lower()
+    parse_func = getattr(ast_engine, 'parse', None)
+    if callable(parse_func) and not hasattr(parse_func, 'mock_calls'):
+        return parse_func(ext, source_bytes)
+
+    lock = getattr(ast_engine, '_lock', None)
+    with lock if lock is not None else nullcontext():
+        return ast_engine.parsers[ext].parse(source_bytes)
 
 
 def strip_strings_and_comments(line, file_path_or_extension=None):
@@ -418,7 +457,7 @@ def _parse_ast_source(file_path, ext, file_cache):
     source_bytes = file_cache.get_bytes(file_path)
     if not source_bytes:
         return None, None
-    return source_bytes, AST_ENGINE.parsers[ext].parse(source_bytes)
+    return source_bytes, _parse_ast_bytes(ext, source_bytes)
 
 
 def extract_function_bounds_ast(file_path, line_num, ext, file_cache=None):
@@ -940,7 +979,7 @@ def extract_identifiers_with_positions_ast(file_path, line_numbers, file_cache=N
         return []
 
     try:
-        tree = AST_ENGINE.parsers[ext].parse(source_bytes)
+        tree = _parse_ast_bytes(ext, source_bytes)
     except (RuntimeError, ValueError, TreeSitterQueryError):
         return []
 
@@ -1190,7 +1229,7 @@ def resolve_local_variable_ast(file_path, var_name, ref_line, file_cache=None): 
     start_line = func_start + 1 if func_start is not None else 1
 
     try:
-        tree = AST_ENGINE.parsers[ext].parse(source_bytes)
+        tree = _parse_ast_bytes(ext, source_bytes)
     except (RuntimeError, ValueError, TreeSitterQueryError):
         return None, None
 

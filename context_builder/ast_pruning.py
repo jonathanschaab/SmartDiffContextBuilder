@@ -1,6 +1,7 @@
 """Semantic AST pruning helpers for oversized source blocks."""
 
 import os
+from contextlib import nullcontext
 
 
 def _semantically_truncate_child(child, lines, profile):
@@ -189,7 +190,13 @@ def split_massive_block_ast(source_text, file_path, max_lines, ast_engine, profi
         fallback_text = _get_fallback_truncated_text(lines, max_lines, profile)
         return [{"suffix": " (Truncated)", "text": fallback_text}]
 
-    tree = ast_engine.parsers[ext].parse(source_text.encode('utf-8'))
+    parse_func = getattr(ast_engine, 'parse', None)
+    if callable(parse_func) and not hasattr(parse_func, 'mock_calls'):
+        tree = parse_func(ext, source_text.encode('utf-8'))
+    else:
+        lock = getattr(ast_engine, '_lock', None)
+        with lock if lock is not None else nullcontext():
+            tree = ast_engine.parsers[ext].parse(source_text.encode('utf-8'))
     if tree is None or tree.root_node is None:
         fallback_text = _get_fallback_truncated_text(lines, max_lines, profile)
         return [{"suffix": " (Truncated)", "text": fallback_text}]

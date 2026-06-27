@@ -72,6 +72,30 @@ class TestAstCaching(unittest.TestCase):
         self.assertIsInstance(cache, OrderedDict)
         self.assertIs(owner.custom_cache, cache)
 
+    def test_file_cache_helpers_use_owner_lock_when_available(self):
+        from context_builder.ast_engine import _get_lru_cache, _lru_get, _lru_set
+
+        class CountingRLock:
+            def __init__(self):
+                self.enter_count = 0
+
+            def __enter__(self):
+                self.enter_count += 1
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+        owner = SimpleNamespace(_lock=CountingRLock(), custom_cache={})
+        cache = _get_lru_cache(owner, "custom_cache")
+
+        _lru_set(cache, "key", "value")
+        value, found = _lru_get(cache, "key")
+
+        self.assertTrue(found)
+        self.assertEqual(value, "value")
+        self.assertGreaterEqual(getattr(owner, "_lock").enter_count, 3)
+
     def test_strip_comments_only_ignores_empty_line_comment_marker(self):
         from context_builder.ast_engine import _strip_comments_only
 

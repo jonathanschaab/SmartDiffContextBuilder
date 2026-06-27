@@ -103,6 +103,15 @@ class TestSafetyRefactors(unittest.TestCase):
 
         self.assertGreaterEqual(lock.enter_count, 2)
 
+        lock.enter_count = 0
+        parser = MagicMock()
+        parser.parse.return_value = "tree"
+        engine.parsers[".py"] = parser
+
+        self.assertEqual(engine.parse(".PY", b"x = 1"), "tree")
+        parser.parse.assert_called_once_with(b"x = 1")
+        self.assertGreaterEqual(lock.enter_count, 1)
+
     def test_utf8_bom_support(self):
         """Verify that UTF-8 BOM signature is successfully stripped from config files."""
         from context_builder.config import load_json_with_comments

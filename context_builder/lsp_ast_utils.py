@@ -1,6 +1,7 @@
 """AST helpers used by LSP query positioning."""
 
 import importlib
+import threading
 
 from .config import CONFIG
 
@@ -22,41 +23,49 @@ TREE_SITTER_BINDING_ERRORS = (
 _PARSERS = {}
 _LANGUAGES = {}
 _MISSING_BINDINGS = set()
+_LOCK = threading.RLock()
 
 
 def _get_parser_and_language(ext):
     """Return cached tree-sitter parser/language objects for ext."""
     ext = ext.lower()
-    if tree_sitter is None:
-        return None, None
-    if ext in _PARSERS:
-        return _PARSERS[ext], _LANGUAGES[ext]
-    if ext in _MISSING_BINDINGS:
-        return None, None
+    with _LOCK:
+        if tree_sitter is None:
+            return None, None
+        if ext in _PARSERS:
+            return _PARSERS[ext], _LANGUAGES[ext]
+        if ext in _MISSING_BINDINGS:
+            return None, None
 
-    binding_info = CONFIG['bindings'].get(ext)
-    if not isinstance(binding_info, (list, tuple)) or len(binding_info) != 2:
-        _MISSING_BINDINGS.add(ext)
-        return None, None
+        binding_info = CONFIG['bindings'].get(ext)
+        if not isinstance(binding_info, (list, tuple)) or len(binding_info) != 2:
+            _MISSING_BINDINGS.add(ext)
+            return None, None
 
-    module_name, func_name = binding_info
-    try:
-        mod = importlib.import_module(module_name)
-        binding = getattr(mod, func_name)
-        binding_obj = binding() if callable(binding) else binding
+        module_name, func_name = binding_info
         try:
-            lang_obj = tree_sitter.Language(binding_obj)
-        except (TypeError, ValueError, RuntimeError):
-            lang_obj = binding_obj
-        parser = tree_sitter.Parser()
-        parser.set_language(lang_obj)
-    except TREE_SITTER_BINDING_ERRORS:
-        _MISSING_BINDINGS.add(ext)
-        return None, None
+            mod = importlib.import_module(module_name)
+            binding = getattr(mod, func_name)
+            binding_obj = binding() if callable(binding) else binding
+            try:
+                lang_obj = tree_sitter.Language(binding_obj)
+            except (TypeError, ValueError, RuntimeError):
+                lang_obj = binding_obj
+            parser = tree_sitter.Parser()
+            parser.set_language(lang_obj)
+        except TREE_SITTER_BINDING_ERRORS:
+            _MISSING_BINDINGS.add(ext)
+            return None, None
 
-    _LANGUAGES[ext] = lang_obj
-    _PARSERS[ext] = parser
-    return parser, lang_obj
+        _LANGUAGES[ext] = lang_obj
+        _PARSERS[ext] = parser
+        return parser, lang_obj
+
+
+def _parse_with_cached_parser(parser, source_bytes):
+    """Parse with a shared LSP positioning parser under the module lock."""
+    with _LOCK:
+        return parser.parse(source_bytes)
 
 
 def find_lsp_func_start_character_ast(
@@ -72,7 +81,7 @@ def find_lsp_func_start_character_ast(
         source_bytes = file_cache.get_bytes(file_path)
         if not source_bytes:
             return -1, line_num
-        tree = parser.parse(source_bytes)
+        tree = _parse_with_cached_parser(parser, source_bytes)
         q_str = None
         if ext in (".cpp", ".cc", ".cxx", ".hpp", ".hxx", ".h", ".c"):
             q_str = """

@@ -7,7 +7,7 @@ import os
 import re
 import xml.etree.ElementTree as ET
 
-from .ast_engine import AST_ENGINE, extract_function_bounds_regex
+from .ast_engine import AST_ENGINE, _parse_ast_bytes, extract_function_bounds_regex
 from .cache import get_global_cache
 from .languages import get_language_profile
 from .sys_utils import iter_scan_progress, ripgrep_filter, warn_once
@@ -89,8 +89,8 @@ def _mine_ast_tests(
         return False
 
     try:
-        tree = AST_ENGINE.parsers[ext].parse(source_bytes)
-        query = tree_sitter.Query(AST_ENGINE.languages[ext], test_query)
+        tree = _parse_ast_bytes(ext, source_bytes, AST_ENGINE)
+        query = tree_sitter.Query(AST_ENGINE.get_language(ext), test_query)
         captures = query.captures(tree.root_node)
         for node, _ in captures:
             _process_ast_capture(

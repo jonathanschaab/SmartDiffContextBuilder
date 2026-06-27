@@ -1714,6 +1714,33 @@ class TestLspClient(unittest.TestCase):
             )
             self.assertEqual(res, (-1, 10))
 
+    def test_lsp_ast_parser_parse_uses_module_lock(self):
+        from context_builder import lsp_ast_utils
+
+        class CountingRLock:
+            def __init__(self):
+                self.enter_count = 0
+
+            def __enter__(self):
+                self.enter_count += 1
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+        parser = MagicMock()
+        parser.parse.return_value = "tree"
+        lock = CountingRLock()
+
+        with patch.object(lsp_ast_utils, "_LOCK", lock):
+            self.assertEqual(
+                lsp_ast_utils._parse_with_cached_parser(parser, b"source"),
+                "tree",
+            )
+
+        parser.parse.assert_called_once_with(b"source")
+        self.assertEqual(lock.enter_count, 1)
+
     def test_find_lsp_func_start_character_ast_propagates_memory_error(self):
         from context_builder.lsp_client import _find_lsp_func_start_character_ast
 
