@@ -312,10 +312,13 @@ def _get_cached_aligned_stripped_lines(file_cache, file_path, profile):  # pylin
         lines = entry.get("lines")
         if not isinstance(lines, (list, tuple)):
             return []
+        strip_block_comments = getattr(profile, "strip_block_comments", None)
+        if not callable(strip_block_comments):
+            return None
         stripped = (
             file_cache.get_stripped_content(abs_path, profile)
             if hasattr(file_cache, "get_stripped_content")
-            else profile.strip_block_comments(entry.get("content", "".join(lines)))
+            else strip_block_comments(entry.get("content", "".join(lines)))
         )
         aligned_lines = _align_stripped_to_original_lines(lines, stripped)
         entry["aligned_stripped_lines"] = aligned_lines
@@ -347,6 +350,11 @@ def _get_stripped_lines(file_cache, file_path, profile):  # pylint: disable=too-
         lines = file_cache.get_lines(file_path)
         return lines if isinstance(lines, (list, tuple)) else []
 
+    strip_block_comments = getattr(profile, "strip_block_comments", None)
+    if not callable(strip_block_comments):
+        lines = file_cache.get_lines(file_path)
+        return lines if isinstance(lines, (list, tuple)) else []
+
     cached_aligned_lines = _get_cached_aligned_stripped_lines(
         file_cache, file_path, profile
     )
@@ -362,12 +370,10 @@ def _get_stripped_lines(file_cache, file_path, profile):  # pylint: disable=too-
     if not isinstance(lines, (list, tuple)):
         return []
 
-    if hasattr(profile, "strip_block_comments") and callable(profile.strip_block_comments):
-        try:
-            return _fallback_strip(lines, profile)
-        except Exception:  # pylint: disable=broad-exception-caught
-            return lines
-    return lines
+    try:
+        return _fallback_strip(lines, profile)
+    except Exception:  # pylint: disable=broad-exception-caught
+        return lines
 
 
 _CONFIG_PATTERN_CACHE = {}
@@ -415,7 +421,7 @@ class AstEngine:
                 return
             self.parsers.clear()
             self.languages.clear()
-            self.queries.clear()
+            self.queries = OrderedDict()
             self.missing_bindings.clear()
 
             if not HAS_TREESITTER:

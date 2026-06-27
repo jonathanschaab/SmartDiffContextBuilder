@@ -112,6 +112,22 @@ class TestSafetyRefactors(unittest.TestCase):
         parser.parse.assert_called_once_with(b"x = 1")
         self.assertGreaterEqual(lock.enter_count, 1)
 
+    def test_ast_engine_initialize_replaces_query_cache_metadata(self):
+        """Verify initialize discards stale LRU query-cache accounting."""
+        import context_builder.ast_engine as ast_engine
+
+        engine = ast_engine.AstEngine()
+        engine.queries["stale"] = "query"
+        setattr(engine.queries, "_total_bytes", 12345)
+        setattr(engine.queries, "_entry_sizes", {"stale": 12345})
+
+        with patch.object(ast_engine, "HAS_TREESITTER", False):
+            engine.initialize()
+
+        self.assertEqual(engine.queries, {})
+        self.assertFalse(hasattr(engine.queries, "_total_bytes"))
+        self.assertFalse(hasattr(engine.queries, "_entry_sizes"))
+
     def test_utf8_bom_support(self):
         """Verify that UTF-8 BOM signature is successfully stripped from config files."""
         from context_builder.config import load_json_with_comments
@@ -259,6 +275,23 @@ class TestSafetyRefactors(unittest.TestCase):
         self.assertEqual(raw_stripped, ["int before;\n", "int after;\n"])
         self.assertEqual(aligned, ["int before;\n", "\n", "int after;\n"])
         self.assertIs(aligned_again, aligned)
+
+    def test_get_stripped_lines_without_block_comment_support_returns_raw_lines(self):
+        """Verify profiles without block stripping do not crash aligned cache logic."""
+        from context_builder.ast_engine import _get_stripped_lines
+
+        file_cache = MagicMock()
+        if hasattr(file_cache, "get_stripped_content"):
+            del file_cache.get_stripped_content
+        if hasattr(file_cache, "get_stripped_lines"):
+            del file_cache.get_stripped_lines
+        file_cache.get_lines.return_value = ["line1\n", "line2\n"]
+        profile = SimpleNamespace()
+
+        self.assertEqual(
+            _get_stripped_lines(file_cache, "dummy.txt", profile),
+            ["line1\n", "line2\n"],
+        )
 
     def test_fallback_strip_uses_best_line_alignment(self):
         """Verify substring matches do not greedily steal later stripped code."""

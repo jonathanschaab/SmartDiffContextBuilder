@@ -8,6 +8,7 @@ import unittest
 import asyncio
 import concurrent.futures
 import io
+import threading
 import time
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch, AsyncMock
@@ -1670,6 +1671,37 @@ class TestLspClient(unittest.TestCase):
                 [call_args.args[0] for call_args in mock_profile_getter.call_args_list],
                 ["dummy.py", "dummy.py"],
             )
+
+    def test_get_or_create_lsp_client_is_synchronized(self):
+        from context_builder import lsp_client
+
+        start_count = 0
+        start_lock = threading.Lock()
+
+        class SlowClient:  # pylint: disable=too-few-public-methods
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def start(self):
+                nonlocal start_count
+                time.sleep(0.05)
+                with start_lock:
+                    start_count += 1
+                return True
+
+        with patch.dict(lsp_client.LSP_INSTANCES, {}, clear=True), patch.object(
+            lsp_client, "MinimalLSPClient", SlowClient
+        ):
+            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+                clients = list(
+                    executor.map(
+                        lambda _: lsp_client._get_or_create_lsp_client(["slow-lsp"]),
+                        range(4),
+                    )
+                )
+
+        self.assertEqual(start_count, 1)
+        self.assertTrue(all(client is clients[0] for client in clients))
 
     def test_serialize_locations(self):
         from context_builder.lsp_client import _serialize_locations

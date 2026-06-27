@@ -29,6 +29,7 @@ from .sys_utils import warn_once
 
 USE_LSP = True
 LSP_INSTANCES = {}
+_LSP_LOCK = threading.Lock()
 _LSP_PROGRESS_BAR_WIDTH = 24
 _find_lsp_func_start_character_ast = find_lsp_func_start_character_ast
 
@@ -758,13 +759,14 @@ async def _async_clean_method(client, method_name, use_wait_for=True):
 
 def cleanup_zombie_lsps():
     """Shut down all language server instances and terminate background threads."""
-    for client in LSP_INSTANCES.values():
-        if client:
-            try:
-                client.cleanup()
-            except Exception:  # pylint: disable=broad-exception-caught
-                pass
-    LSP_INSTANCES.clear()
+    with _LSP_LOCK:
+        for client in LSP_INSTANCES.values():
+            if client:
+                try:
+                    client.cleanup()
+                except Exception:  # pylint: disable=broad-exception-caught
+                    pass
+        LSP_INSTANCES.clear()
 
     with _LOOP_LOCK:
         thread = globals().get("_LOOP_THREAD")
@@ -868,10 +870,11 @@ def _get_or_create_lsp_client(
 ):
     """Retrieve or start a client shared by identical server invocations."""
     instance_key = _get_lsp_instance_key(command)
-    if instance_key not in LSP_INSTANCES:
-        client = MinimalLSPClient(command, init_timeout=init_timeout)
-        LSP_INSTANCES[instance_key] = client if client.start() else None
-    return LSP_INSTANCES.get(instance_key)
+    with _LSP_LOCK:
+        if instance_key not in LSP_INSTANCES:
+            client = MinimalLSPClient(command, init_timeout=init_timeout)
+            LSP_INSTANCES[instance_key] = client if client.start() else None
+        return LSP_INSTANCES.get(instance_key)
 
 
 def _count_parts(p):
