@@ -865,13 +865,27 @@ def _get_lsp_instance_key(command):
     return project_root, tuple(command)
 
 
+def _is_lsp_client_alive(client):
+    """Return whether a cached MinimalLSPClient still has a running inner client."""
+    if client is None:
+        return False
+    inner_client = getattr(client, "client", None)
+    return bool(inner_client) and getattr(inner_client, "stopped", False) is not True
+
+
 def _get_or_create_lsp_client(
     command, init_timeout=DEFAULT_LSP_INIT_TIMEOUT
 ):
     """Retrieve or start a client shared by identical server invocations."""
     instance_key = _get_lsp_instance_key(command)
     with _LSP_LOCK:
-        if instance_key not in LSP_INSTANCES:
+        cached_client = LSP_INSTANCES.get(instance_key)
+        if not _is_lsp_client_alive(cached_client):
+            if cached_client is not None:
+                try:
+                    cached_client.cleanup(force_kill=True)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    pass
             client = MinimalLSPClient(command, init_timeout=init_timeout)
             LSP_INSTANCES[instance_key] = client if client.start() else None
         return LSP_INSTANCES.get(instance_key)

@@ -1680,7 +1680,7 @@ class TestLspClient(unittest.TestCase):
 
         class SlowClient:  # pylint: disable=too-few-public-methods
             def __init__(self, *_args, **_kwargs):
-                pass
+                self.client = MagicMock(stopped=False)
 
             def start(self):
                 nonlocal start_count
@@ -1702,6 +1702,51 @@ class TestLspClient(unittest.TestCase):
 
         self.assertEqual(start_count, 1)
         self.assertTrue(all(client is clients[0] for client in clients))
+
+    def test_get_or_create_lsp_client_recreates_dead_cached_client(self):
+        from context_builder import lsp_client
+
+        cached_client = MagicMock()
+        cached_client.client = MagicMock(stopped=True)
+        started_clients = []
+
+        class ReplacementClient:  # pylint: disable=too-few-public-methods
+            def __init__(self, *_args, **_kwargs):
+                self.client = MagicMock(stopped=False)
+
+            def start(self):
+                started_clients.append(self)
+                return True
+
+        instance_key = lsp_client._get_lsp_instance_key(["dead-lsp"])
+        with patch.dict(
+            lsp_client.LSP_INSTANCES, {instance_key: cached_client}, clear=True
+        ), patch.object(lsp_client, "MinimalLSPClient", ReplacementClient):
+            client = lsp_client._get_or_create_lsp_client(["dead-lsp"])
+
+        self.assertIs(client, started_clients[0])
+        cached_client.cleanup.assert_called_once_with(force_kill=True)
+
+    def test_get_or_create_lsp_client_recreates_none_cached_client(self):
+        from context_builder import lsp_client
+
+        started_clients = []
+
+        class ReplacementClient:  # pylint: disable=too-few-public-methods
+            def __init__(self, *_args, **_kwargs):
+                self.client = MagicMock(stopped=False)
+
+            def start(self):
+                started_clients.append(self)
+                return True
+
+        instance_key = lsp_client._get_lsp_instance_key(["none-lsp"])
+        with patch.dict(
+            lsp_client.LSP_INSTANCES, {instance_key: None}, clear=True
+        ), patch.object(lsp_client, "MinimalLSPClient", ReplacementClient):
+            client = lsp_client._get_or_create_lsp_client(["none-lsp"])
+
+        self.assertIs(client, started_clients[0])
 
     def test_serialize_locations(self):
         from context_builder.lsp_client import _serialize_locations
