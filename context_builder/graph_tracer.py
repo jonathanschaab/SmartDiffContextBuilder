@@ -46,6 +46,22 @@ class CallGraphTracer:
         self.cpp_linkages = cpp_linkages if cpp_linkages is not None else {}
         self.vm = vm
         self.args = args
+        self._data_flow_executor = None
+        self._data_flow_executor_workers = None
+
+    def close(self):
+        """Release persistent worker resources owned by the tracer."""
+        if self._data_flow_executor is not None:
+            self._data_flow_executor.shutdown(wait=True)
+            self._data_flow_executor = None
+            self._data_flow_executor_workers = None
+
+    def __del__(self):
+        """Best-effort cleanup for persistent data-flow workers."""
+        try:
+            self.close()
+        except Exception:  # pylint: disable=broad-exception-caught
+            pass
 
     def _arg_or_default(self, name, default):
         """Return an argument value, treating absent args and values alike."""
@@ -292,13 +308,28 @@ class CallGraphTracer:
         if len(batch) == 1:
             return [self._resolve_data_flow_item(batch[0], lsp_timeout)]
         max_workers = min(batch_size, len(batch))
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            return list(
-                executor.map(
-                    lambda item: self._resolve_data_flow_item(item, lsp_timeout),
-                    batch,
-                )
+        executor = self._get_data_flow_executor(max_workers)
+        return list(
+            executor.map(
+                lambda item: self._resolve_data_flow_item(item, lsp_timeout),
+                batch,
             )
+        )
+
+    def _get_data_flow_executor(self, max_workers):
+        """Lazily create or reuse a persistent data-flow executor."""
+        if (
+            self._data_flow_executor is not None
+            and self._data_flow_executor_workers == max_workers
+        ):
+            return self._data_flow_executor
+        if self._data_flow_executor is not None:
+            self._data_flow_executor.shutdown(wait=True)
+        self._data_flow_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=max_workers
+        )
+        self._data_flow_executor_workers = max_workers
+        return self._data_flow_executor
 
     def _process_data_flow_result(
         self, item, res, exc, processed_defs, processed_vars, queue, data_depth

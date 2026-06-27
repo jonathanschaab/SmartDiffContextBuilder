@@ -30,20 +30,19 @@ from context_builder.lsp_client import (
 class TestLspClient(unittest.TestCase):
     @contextmanager
     def _lsp_ast_cache(self, ext, parser, language):
-        from context_builder import lsp_ast_utils
-
-        orig_parsers = lsp_ast_utils._PARSERS.copy()
-        orig_languages = lsp_ast_utils._LANGUAGES.copy()
-        orig_missing = lsp_ast_utils._MISSING_BINDINGS.copy()
+        mock_engine = MagicMock()
+        mock_engine.is_supported.return_value = True
+        mock_engine.parse.side_effect = lambda query_ext, source_bytes: (
+            parser.parse(source_bytes)
+            if query_ext == ext
+            else None
+        )
+        mock_engine.get_query.side_effect = lambda _query_ext, q_str: language.query(q_str)
         try:
-            lsp_ast_utils._PARSERS = {ext: parser}
-            lsp_ast_utils._LANGUAGES = {ext: language}
-            lsp_ast_utils._MISSING_BINDINGS = set()
-            yield
+            with patch("context_builder.lsp_ast_utils._get_ast_engine", return_value=mock_engine):
+                yield mock_engine
         finally:
-            lsp_ast_utils._PARSERS = orig_parsers
-            lsp_ast_utils._LANGUAGES = orig_languages
-            lsp_ast_utils._MISSING_BINDINGS = orig_missing
+            pass
 
     def test_lsp_progress_reporter_renders_non_tty_milestones(self):
         stream = io.StringIO()
@@ -1714,45 +1713,16 @@ class TestLspClient(unittest.TestCase):
             )
             self.assertEqual(res, (-1, 10))
 
-    def test_lsp_ast_parser_parse_uses_module_lock(self):
-        from context_builder import lsp_ast_utils
-
-        class CountingRLock:
-            def __init__(self):
-                self.enter_count = 0
-
-            def __enter__(self):
-                self.enter_count += 1
-                return self
-
-            def __exit__(self, *_args):
-                return False
-
-        parser = MagicMock()
-        parser.parse.return_value = "tree"
-        lock = CountingRLock()
-
-        with patch.object(lsp_ast_utils, "_LOCK", lock):
-            self.assertEqual(
-                lsp_ast_utils._parse_with_cached_parser(parser, b"source"),
-                "tree",
-            )
-
-        parser.parse.assert_called_once_with(b"source")
-        self.assertEqual(lock.enter_count, 1)
-
     def test_find_lsp_func_start_character_ast_propagates_memory_error(self):
         from context_builder.lsp_client import _find_lsp_func_start_character_ast
 
-        parser = MagicMock()
-        parser.parse.side_effect = MemoryError("out of memory")
+        mock_engine = MagicMock()
+        mock_engine.is_supported.return_value = True
+        mock_engine.parse.side_effect = MemoryError("out of memory")
         file_cache = MagicMock()
         file_cache.get_bytes.return_value = b"void target() {}"
 
-        with patch(
-            "context_builder.lsp_ast_utils._get_parser_and_language",
-            return_value=(parser, MagicMock()),
-        ):
+        with patch("context_builder.lsp_ast_utils._get_ast_engine", return_value=mock_engine):
             with self.assertRaises(MemoryError):
                 _find_lsp_func_start_character_ast(
                     lines=["void target() {}"],

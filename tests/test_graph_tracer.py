@@ -690,6 +690,16 @@ class TestCallGraphTracer(unittest.TestCase):
         self.assertEqual([item[1] for item in batch], ["a", "b"])
         self.assertEqual([item[1] for item in queue], ["c"])
 
+    def test_data_flow_executor_is_reused_for_same_worker_count(self):
+        tracer = CallGraphTracer(MagicMock(), [], set(), {}, MagicMock(), None)
+        try:
+            executor = tracer._get_data_flow_executor(2)
+            same_executor = tracer._get_data_flow_executor(2)
+
+            self.assertIs(same_executor, executor)
+        finally:
+            tracer.close()
+
     @patch("context_builder.graph_tracer.extract_identifiers_with_positions")
     @patch("context_builder.graph_tracer.resolve_variable_definition")
     @patch("os.path.exists", return_value=True)

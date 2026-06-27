@@ -227,6 +227,39 @@ class TestSafetyRefactors(unittest.TestCase):
         self.assertEqual(stripped[1], "\n")
         self.assertEqual(stripped[2], "int after;\n")
 
+    def test_get_stripped_lines_aligns_global_lru_cache_results(self):
+        """Verify _get_stripped_lines aligns and caches LRU stripped lines."""
+        from context_builder.ast_engine import _get_stripped_lines
+        from context_builder.cache import LRUFileCache
+
+        class MockProfile:
+            """Minimal block-comment profile for aligned cache tests."""
+
+            def strip_block_comments(self, _content):
+                return "int before;\nint after;\n"
+
+            def strip_strings_and_comments(self, line):
+                return line
+
+        profile = MockProfile()
+        with tempfile.TemporaryDirectory() as temp_dir_path:
+            file_path = os.path.join(temp_dir_path, "source.c")
+            with open(file_path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(
+                    "int before; /* comment */\n"
+                    "/* full line comment */\n"
+                    "int after;\n"
+                )
+            file_cache = LRUFileCache(max_size_mb=1.0)
+
+            raw_stripped = file_cache.get_stripped_lines(file_path, profile)
+            aligned = _get_stripped_lines(file_cache, file_path, profile)
+            aligned_again = _get_stripped_lines(file_cache, file_path, profile)
+
+        self.assertEqual(raw_stripped, ["int before;\n", "int after;\n"])
+        self.assertEqual(aligned, ["int before;\n", "\n", "int after;\n"])
+        self.assertIs(aligned_again, aligned)
+
     def test_fallback_strip_uses_best_line_alignment(self):
         """Verify substring matches do not greedily steal later stripped code."""
         from context_builder.ast_engine import _fallback_strip

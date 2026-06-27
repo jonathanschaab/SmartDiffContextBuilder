@@ -235,6 +235,11 @@ def _fallback_strip(lines, profile):
     ]
     content = "".join(lines_with_nl)
     stripped = profile.strip_block_comments(content)
+    return _align_stripped_to_original_lines(lines, stripped)
+
+
+def _align_stripped_to_original_lines(lines, stripped):
+    """Align block-comment-stripped content back to original line positions."""
     if not isinstance(stripped, str):
         return lines
     stripped_lines = stripped.splitlines(keepends=True)
@@ -279,6 +284,49 @@ def _fallback_strip(lines, profile):
     return stripped_lines
 
 
+def _estimate_aligned_lines_size(aligned_lines):
+    """Estimate memory used by an aligned stripped-lines cache entry."""
+    try:
+        if sys.implementation.name != "cpython":
+            return sum(len(line) for line in aligned_lines)
+        return sys.getsizeof(aligned_lines) + sum(
+            sys.getsizeof(line) for line in aligned_lines
+        )
+    except Exception:  # pylint: disable=broad-exception-caught
+        return sum(len(line) for line in aligned_lines)
+
+
+def _get_cached_aligned_stripped_lines(file_cache, file_path, profile):  # pylint: disable=too-many-return-statements
+    """Return aligned stripped lines cached on LRUFileCache entries when possible."""
+    cache = getattr(file_cache, 'cache', None)
+    load_func = getattr(file_cache, '_load', None)
+    if not isinstance(cache, dict) or not callable(load_func):
+        return None
+
+    abs_path = os.path.abspath(file_path)
+    lock = getattr(file_cache, '_lock', None)
+    with lock if lock is not None else nullcontext():
+        entry = load_func(abs_path)
+        if "aligned_stripped_lines" in entry:
+            return entry["aligned_stripped_lines"]
+        lines = entry.get("lines")
+        if not isinstance(lines, (list, tuple)):
+            return []
+        stripped = (
+            file_cache.get_stripped_content(abs_path, profile)
+            if hasattr(file_cache, "get_stripped_content")
+            else profile.strip_block_comments(entry.get("content", "".join(lines)))
+        )
+        aligned_lines = _align_stripped_to_original_lines(lines, stripped)
+        entry["aligned_stripped_lines"] = aligned_lines
+        added_bytes = _estimate_aligned_lines_size(aligned_lines)
+        entry["size_bytes"] = entry.get("size_bytes", 0) + added_bytes
+        if abs_path in cache:
+            file_cache.current_size_bytes += added_bytes
+            file_cache.evict_to_limit()
+        return aligned_lines
+
+
 def _line_alignment_score(original_text, stripped_text):
     """Score how likely stripped_text came from original_text."""
     if original_text == stripped_text:
@@ -290,7 +338,7 @@ def _line_alignment_score(original_text, stripped_text):
     return difflib.SequenceMatcher(None, original_text, stripped_text).ratio()
 
 
-def _get_stripped_lines(file_cache, file_path, profile):
+def _get_stripped_lines(file_cache, file_path, profile):  # pylint: disable=too-many-return-statements
     """Retrieve stripped lines from cache."""
     if file_cache is None:
         file_cache = get_global_cache()
@@ -298,6 +346,12 @@ def _get_stripped_lines(file_cache, file_path, profile):
     if profile is None:
         lines = file_cache.get_lines(file_path)
         return lines if isinstance(lines, (list, tuple)) else []
+
+    cached_aligned_lines = _get_cached_aligned_stripped_lines(
+        file_cache, file_path, profile
+    )
+    if isinstance(cached_aligned_lines, (list, tuple)):
+        return cached_aligned_lines
 
     if hasattr(file_cache, "get_stripped_lines"):
         res = file_cache.get_stripped_lines(file_path, profile)
