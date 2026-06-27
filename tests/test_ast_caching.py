@@ -46,6 +46,23 @@ class TestAstCaching(unittest.TestCase):
         self.assertNotIn("old", cache)
         self.assertIn("new", cache)
 
+    def test_file_cache_helpers_update_byte_accounting_incrementally(self):
+        from context_builder.ast_engine import _lru_set
+
+        cache = OrderedDict()
+        _lru_set(cache, "existing", "value", max_size=10, max_bytes=100000)
+        original_total = getattr(cache, "_total_bytes")
+
+        with patch(
+            "context_builder.ast_engine._estimate_cache_entry_size",
+            side_effect=[7, 11],
+        ) as mock_estimate_size:
+            _lru_set(cache, "new", "value", max_size=10, max_bytes=100000)
+
+        self.assertEqual(mock_estimate_size.call_count, 2)
+        self.assertEqual(getattr(cache, "_entry_sizes")["new"], 18)
+        self.assertEqual(getattr(cache, "_total_bytes"), original_total + 18)
+
     def test_file_cache_helpers_upgrade_plain_dict_to_ordered_dict(self):
         from context_builder.ast_engine import _get_lru_cache
 
@@ -54,6 +71,15 @@ class TestAstCaching(unittest.TestCase):
 
         self.assertIsInstance(cache, OrderedDict)
         self.assertIs(owner.custom_cache, cache)
+
+    def test_strip_comments_only_ignores_empty_line_comment_marker(self):
+        from context_builder.ast_engine import _strip_comments_only
+
+        profile = MagicMock()
+        profile.line_comment = ""
+
+        self.assertEqual(_strip_comments_only("value = 1", profile), "value = 1")
+        profile.strip_string_literals.assert_not_called()
 
     @patch("context_builder.ast_engine.ripgrep_filter")
     @patch("context_builder.sys_utils.get_git_tracked_files")

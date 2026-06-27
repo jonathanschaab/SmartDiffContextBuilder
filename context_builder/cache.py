@@ -5,6 +5,7 @@ This prevents redundant disk reads and speeds up processing across multiple pass
 
 import os
 import sys
+import threading
 from collections import OrderedDict
 
 try:
@@ -25,6 +26,7 @@ class LRUFileCache:
                 backward compatibility.
         """
         self.cache = OrderedDict()
+        self._lock = threading.RLock()
         limit = capacity if capacity is not None else max_size_mb
         if limit is None or limit <= 0:
             limit = 200.0
@@ -77,42 +79,44 @@ class LRUFileCache:
             dict: Cache entry dictionary with 'lines', 'content', and 'bytes'.
         """
         file_path = os.path.abspath(file_path)
-        if file_path in self.cache:
+        with self._lock:
+            if file_path in self.cache:
+                self.cache.move_to_end(file_path)
+                return self.cache[file_path]
+
+            if not os.path.exists(file_path):
+                return {"lines": [], "content": "", "bytes": b""}
+
+            try:
+                with open(file_path, "rb") as f:
+                    bytes_content = f.read()
+            except IOError:
+                return {"lines": [], "content": "", "bytes": b""}
+
+            content = bytes_content.decode("utf-8", errors="ignore")
+            lines = content.splitlines(keepends=True)
+
+            size_bytes = self._get_entry_memory_usage(bytes_content, content, lines)
+            entry = {
+                "lines": lines,
+                "content": content,
+                "bytes": bytes_content,
+                "size_bytes": size_bytes,
+            }
+            self.cache[file_path] = entry
             self.cache.move_to_end(file_path)
-            return self.cache[file_path]
-
-        if not os.path.exists(file_path):
-            return {"lines": [], "content": "", "bytes": b""}
-
-        try:
-            with open(file_path, "rb") as f:
-                bytes_content = f.read()
-        except IOError:
-            return {"lines": [], "content": "", "bytes": b""}
-
-        content = bytes_content.decode("utf-8", errors="ignore")
-        lines = content.splitlines(keepends=True)
-
-        size_bytes = self._get_entry_memory_usage(bytes_content, content, lines)
-        entry = {
-            "lines": lines,
-            "content": content,
-            "bytes": bytes_content,
-            "size_bytes": size_bytes,
-        }
-        self.cache[file_path] = entry
-        self.cache.move_to_end(file_path)
-        self.current_size_bytes += size_bytes
-        self.evict_to_limit()
-        return entry
+            self.current_size_bytes += size_bytes
+            self.evict_to_limit()
+            return entry
 
     def evict_to_limit(self):
         """Evict oldest cache entries if total memory footprint exceeds the threshold."""
-        while self.cache and self.current_size_bytes > self.max_size_bytes:
-            _, popped_entry = self.cache.popitem(last=False)
-            self.current_size_bytes -= popped_entry.get(
-                "size_bytes", len(popped_entry["bytes"])
-            )
+        with self._lock:
+            while self.cache and self.current_size_bytes > self.max_size_bytes:
+                _, popped_entry = self.cache.popitem(last=False)
+                self.current_size_bytes -= popped_entry.get(
+                    "size_bytes", len(popped_entry["bytes"])
+                )
 
     def resize(self, max_size_mb):
         """Resize the cache limit in MB, performing validation and immediate evictions.
@@ -120,10 +124,11 @@ class LRUFileCache:
         Args:
             max_size_mb (float): The new maximum cumulative memory footprint in MB.
         """
-        if max_size_mb is None or max_size_mb <= 0:
-            max_size_mb = 200.0
-        self.max_size_bytes = int(max_size_mb * 1024 * 1024)
-        self.evict_to_limit()
+        with self._lock:
+            if max_size_mb is None or max_size_mb <= 0:
+                max_size_mb = 200.0
+            self.max_size_bytes = int(max_size_mb * 1024 * 1024)
+            self.evict_to_limit()
 
     def get_lines(self, file_path):
         """Retrieve lines of the file.
@@ -169,22 +174,23 @@ class LRUFileCache:
             str: Block-comment-stripped string content.
         """
         file_path = os.path.abspath(file_path)
-        entry = self._load(file_path)
-        if "stripped_content" not in entry:
-            stripped = profile.strip_block_comments(entry["content"])
-            entry["stripped_content"] = stripped
-            try:
-                if sys.implementation.name != "cpython":
+        with self._lock:
+            entry = self._load(file_path)
+            if "stripped_content" not in entry:
+                stripped = profile.strip_block_comments(entry["content"])
+                entry["stripped_content"] = stripped
+                try:
+                    if sys.implementation.name != "cpython":
+                        added_bytes = len(stripped)
+                    else:
+                        added_bytes = sys.getsizeof(stripped)
+                except Exception:  # pylint: disable=broad-except
                     added_bytes = len(stripped)
-                else:
-                    added_bytes = sys.getsizeof(stripped)
-            except Exception:  # pylint: disable=broad-except
-                added_bytes = len(stripped)
-            entry["size_bytes"] += added_bytes
-            if file_path in self.cache:
-                self.current_size_bytes += added_bytes
-                self.evict_to_limit()
-        return entry["stripped_content"]
+                entry["size_bytes"] += added_bytes
+                if file_path in self.cache:
+                    self.current_size_bytes += added_bytes
+                    self.evict_to_limit()
+            return entry["stripped_content"]
 
     def get_stripped_lines(self, file_path, profile):
         """Retrieve block-comment-stripped lines of the file, caching the result.
@@ -197,29 +203,30 @@ class LRUFileCache:
             list: List of stripped lines in the file.
         """
         file_path = os.path.abspath(file_path)
-        entry = self._load(file_path)
-        if "stripped_lines" not in entry:
-            stripped_content = self.get_stripped_content(file_path, profile)
-            stripped_lines = stripped_content.splitlines(keepends=True)
-            entry["stripped_lines"] = stripped_lines
-            try:
-                if sys.implementation.name != "cpython":
+        with self._lock:
+            entry = self._load(file_path)
+            if "stripped_lines" not in entry:
+                stripped_content = self.get_stripped_content(file_path, profile)
+                stripped_lines = stripped_content.splitlines(keepends=True)
+                entry["stripped_lines"] = stripped_lines
+                try:
+                    if sys.implementation.name != "cpython":
+                        added_bytes = len(stripped_content) * 2
+                    else:
+                        line_strings_size = (
+                            (len(stripped_lines) - 1) * _EMPTY_STR_SIZE
+                            + sys.getsizeof(stripped_content)
+                            if stripped_lines
+                            else 0
+                        )
+                        added_bytes = sys.getsizeof(stripped_lines) + line_strings_size
+                except Exception:  # pylint: disable=broad-except
                     added_bytes = len(stripped_content) * 2
-                else:
-                    line_strings_size = (
-                        (len(stripped_lines) - 1) * _EMPTY_STR_SIZE
-                        + sys.getsizeof(stripped_content)
-                        if stripped_lines
-                        else 0
-                    )
-                    added_bytes = sys.getsizeof(stripped_lines) + line_strings_size
-            except Exception:  # pylint: disable=broad-except
-                added_bytes = len(stripped_content) * 2
-            entry["size_bytes"] += added_bytes
-            if file_path in self.cache:
-                self.current_size_bytes += added_bytes
-                self.evict_to_limit()
-        return entry["stripped_lines"]
+                entry["size_bytes"] += added_bytes
+                if file_path in self.cache:
+                    self.current_size_bytes += added_bytes
+                    self.evict_to_limit()
+            return entry["stripped_lines"]
 
 
 # Global dictionary holder to avoid 'global' keyword warning in get_global_cache

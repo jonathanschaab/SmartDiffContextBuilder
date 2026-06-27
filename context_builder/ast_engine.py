@@ -59,6 +59,8 @@ MEMBER_FIELD_BY_NODE_TYPE = {
 
 AST_ENGINE_CACHE_LIMIT = 1024
 AST_ENGINE_CACHE_MAX_BYTES = 16 * 1024 * 1024
+_LRU_TOTAL_BYTES_ATTR = '_total_bytes'
+_LRU_ENTRY_SIZES_ATTR = '_entry_sizes'
 
 
 def _estimate_cache_entry_size(value, seen=None):
@@ -87,10 +89,33 @@ def _estimate_cache_entry_size(value, seen=None):
 
 def _estimate_lru_cache_size(cache):
     """Estimate total memory held by cache keys and values."""
-    return sum(
-        _estimate_cache_entry_size(key) + _estimate_cache_entry_size(value)
+    _ensure_lru_size_tracking(cache)
+    return getattr(cache, _LRU_TOTAL_BYTES_ATTR)
+
+
+def _ensure_lru_size_tracking(cache):
+    """Initialize O(1) byte accounting metadata on an LRU cache."""
+    if hasattr(cache, _LRU_ENTRY_SIZES_ATTR) and hasattr(cache, _LRU_TOTAL_BYTES_ATTR):
+        return
+    entry_sizes = {
+        key: _lru_entry_size(key, value)
         for key, value in cache.items()
-    )
+    }
+    setattr(cache, _LRU_ENTRY_SIZES_ATTR, entry_sizes)
+    setattr(cache, _LRU_TOTAL_BYTES_ATTR, sum(entry_sizes.values()))
+
+
+def _lru_entry_size(key, value):
+    """Estimate total memory held by one LRU key/value pair."""
+    return _estimate_cache_entry_size(key) + _estimate_cache_entry_size(value)
+
+
+def _lru_pop_oldest(cache):
+    """Evict one LRU entry and update byte accounting."""
+    key, _ = cache.popitem(last=False)
+    entry_sizes = getattr(cache, _LRU_ENTRY_SIZES_ATTR)
+    total_bytes = getattr(cache, _LRU_TOTAL_BYTES_ATTR)
+    setattr(cache, _LRU_TOTAL_BYTES_ATTR, total_bytes - entry_sizes.pop(key, 0))
 
 
 def _get_lru_cache(owner, attr_name):
@@ -101,6 +126,7 @@ def _get_lru_cache(owner, attr_name):
     elif not isinstance(cache, OrderedDict):
         cache = OrderedDict(cache)
     setattr(owner, attr_name, cache)
+    _ensure_lru_size_tracking(cache)
     return cache
 
 
@@ -120,18 +146,31 @@ def _lru_set(
     max_bytes=AST_ENGINE_CACHE_MAX_BYTES,
 ):
     """Set a cache value, evicting the least recently used entry if needed."""
+    _ensure_lru_size_tracking(cache)
+    entry_sizes = getattr(cache, _LRU_ENTRY_SIZES_ATTR)
+    total_bytes = getattr(cache, _LRU_TOTAL_BYTES_ATTR)
+    if key in cache:
+        total_bytes -= entry_sizes.pop(key, 0)
     cache[key] = value
+    entry_size = _lru_entry_size(key, value)
+    entry_sizes[key] = entry_size
+    total_bytes += entry_size
+    setattr(cache, _LRU_TOTAL_BYTES_ATTR, total_bytes)
     cache.move_to_end(key)
     while len(cache) > max_size:
-        cache.popitem(last=False)
-    while len(cache) > 1 and _estimate_lru_cache_size(cache) > max_bytes:
-        cache.popitem(last=False)
+        _lru_pop_oldest(cache)
+    while len(cache) > 1 and getattr(cache, _LRU_TOTAL_BYTES_ATTR) > max_bytes:
+        _lru_pop_oldest(cache)
 
 
 
 def _strip_comments_only(line, profile):
     """Strip same-line comments while leaving string literals intact."""
-    if not profile or not isinstance(profile.line_comment, str):
+    if (
+        not profile
+        or not isinstance(profile.line_comment, str)
+        or not profile.line_comment
+    ):
         return line
     if not hasattr(profile, 'strip_string_literals') or not callable(
         profile.strip_string_literals

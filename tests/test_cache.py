@@ -6,6 +6,7 @@ import os
 import sys
 import tempfile
 import unittest
+import concurrent.futures
 from unittest.mock import patch
 
 from context_builder.cache import LRUFileCache
@@ -253,3 +254,30 @@ class TestLRUFileCache(unittest.TestCase):
         cache.get_stripped_lines(self.file_path, profile)
         self.assertNotIn(self.file_path, cache.cache)
         self.assertEqual(cache.current_size_bytes, 0)
+
+    def test_concurrent_cache_access_is_thread_safe(self):
+        class MockProfile:
+            def strip_block_comments(self, content):
+                return content.replace("line", "row")
+
+        cache = LRUFileCache(max_size_mb=5)
+        profile = MockProfile()
+
+        def read_all_views():
+            return (
+                cache.get_lines(self.file_path),
+                cache.get_content(self.file_path),
+                cache.get_bytes(self.file_path),
+                cache.get_stripped_lines(self.file_path, profile),
+            )
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+            results = list(executor.map(lambda _: read_all_views(), range(50)))
+
+        for lines, content, bytes_content, stripped_lines in results:
+            self.assertEqual(lines, ["line 1\n", "line 2\n"])
+            self.assertEqual(content, "line 1\nline 2\n")
+            self.assertEqual(bytes_content, b"line 1\nline 2\n")
+            self.assertEqual(stripped_lines, ["row 1\n", "row 2\n"])
+
+        self.assertGreaterEqual(cache.current_size_bytes, 0)
