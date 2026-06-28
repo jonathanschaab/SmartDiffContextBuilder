@@ -6,6 +6,7 @@ modified files and tracing callers/callees.
 
 import os
 import concurrent.futures
+import threading
 from collections import deque
 from .ast_engine import (
     AST_ENGINE,
@@ -48,13 +49,15 @@ class CallGraphTracer:
         self.args = args
         self._data_flow_executor = None
         self._data_flow_executor_workers = None
+        self._executor_lock = threading.RLock()
 
     def close(self):
         """Release persistent worker resources owned by the tracer."""
-        if self._data_flow_executor is not None:
-            self._data_flow_executor.shutdown(wait=True)
-            self._data_flow_executor = None
-            self._data_flow_executor_workers = None
+        with self._executor_lock:
+            if self._data_flow_executor is not None:
+                self._data_flow_executor.shutdown(wait=True)
+                self._data_flow_executor = None
+                self._data_flow_executor_workers = None
 
     def __del__(self):
         """Best-effort cleanup for persistent data-flow workers."""
@@ -318,18 +321,19 @@ class CallGraphTracer:
 
     def _get_data_flow_executor(self, max_workers):
         """Lazily create or reuse a persistent data-flow executor."""
-        if (
-            self._data_flow_executor is not None
-            and self._data_flow_executor_workers == max_workers
-        ):
+        with self._executor_lock:
+            if (
+                self._data_flow_executor is not None
+                and self._data_flow_executor_workers == max_workers
+            ):
+                return self._data_flow_executor
+            if self._data_flow_executor is not None:
+                self._data_flow_executor.shutdown(wait=True)
+            self._data_flow_executor = concurrent.futures.ThreadPoolExecutor(
+                max_workers=max_workers
+            )
+            self._data_flow_executor_workers = max_workers
             return self._data_flow_executor
-        if self._data_flow_executor is not None:
-            self._data_flow_executor.shutdown(wait=True)
-        self._data_flow_executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=max_workers
-        )
-        self._data_flow_executor_workers = max_workers
-        return self._data_flow_executor
 
     def _process_data_flow_result(
         self, item, res, exc, processed_defs, processed_vars, queue, data_depth

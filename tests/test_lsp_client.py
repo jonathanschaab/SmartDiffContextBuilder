@@ -781,6 +781,53 @@ class TestLspClient(unittest.TestCase):
         self.assertEqual(client.cleanup.call_count, 2)
         client.cleanup.assert_any_call(force_kill=True)
 
+    def test_lsp_query_submission_holds_lifecycle_lock(self):
+        client = MinimalLSPClient(["some_lsp_binary"])
+        client.client = MagicMock(stopped=False)
+        observed_lock_states = []
+
+        def successful_query(coro, _loop):
+            observed_lock_states.append(client._lock._is_owned())
+            coro.close()
+            future = concurrent.futures.Future()
+            future.set_result([])
+            return future
+
+        with patch(
+            "asyncio.run_coroutine_threadsafe",
+            side_effect=successful_query,
+        ):
+            self.assertEqual(client.get_definition("file.py", 1, 0, timeout=1.0), [])
+
+        self.assertEqual(observed_lock_states, [True])
+
+    def test_lsp_cleanup_holds_lifecycle_lock(self):
+        client = MinimalLSPClient(["some_lsp_binary"])
+        client.client = MagicMock(stopped=True)
+        observed_lock_states = []
+
+        def fake_kill(_client):
+            observed_lock_states.append(client._lock._is_owned())
+
+        def successful_cleanup(coro, _loop):
+            observed_lock_states.append(client._lock._is_owned())
+            coro.close()
+            future = concurrent.futures.Future()
+            future.set_result(None)
+            return future
+
+        with patch(
+            "context_builder.lsp_client._kill_lsp_process",
+            side_effect=fake_kill,
+        ), patch(
+            "asyncio.run_coroutine_threadsafe",
+            side_effect=successful_cleanup,
+        ):
+            client.cleanup(force_kill=True)
+
+        self.assertGreaterEqual(len(observed_lock_states), 2)
+        self.assertTrue(all(observed_lock_states))
+
     @patch("context_builder.lsp_client.warn_once")
     def test_invalid_lsp_timeouts_warn_and_use_defaults(self, mock_warn):
         client = MinimalLSPClient(["some_lsp_binary"], init_timeout=0)

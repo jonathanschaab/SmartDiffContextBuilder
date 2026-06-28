@@ -92,8 +92,9 @@ def _estimate_cache_entry_size(value, seen=None):
 
 def _estimate_lru_cache_size(cache):
     """Estimate total memory held by cache keys and values."""
-    _ensure_lru_size_tracking(cache)
-    return getattr(cache, _LRU_TOTAL_BYTES_ATTR)
+    with _lru_lock(cache):
+        _ensure_lru_size_tracking(cache)
+        return getattr(cache, _LRU_TOTAL_BYTES_ATTR)
 
 
 def _ensure_lru_size_tracking(cache):
@@ -298,6 +299,10 @@ def _estimate_aligned_lines_size(aligned_lines):
 
 def _get_cached_aligned_stripped_lines(file_cache, file_path, profile):  # pylint: disable=too-many-return-statements
     """Return aligned stripped lines cached on LRUFileCache entries when possible."""
+    get_aligned = getattr(file_cache, "get_aligned_stripped_lines", None)
+    if callable(get_aligned):
+        return get_aligned(file_path, profile, _align_stripped_to_original_lines)
+
     cache = getattr(file_cache, 'cache', None)
     load_func = getattr(file_cache, '_load', None)
     if not isinstance(cache, dict) or not callable(load_func):
@@ -324,7 +329,11 @@ def _get_cached_aligned_stripped_lines(file_cache, file_path, profile):  # pylin
         entry["aligned_stripped_lines"] = aligned_lines
         added_bytes = _estimate_aligned_lines_size(aligned_lines)
         entry["size_bytes"] = entry.get("size_bytes", 0) + added_bytes
-        if abs_path in cache:
+        if (
+            abs_path in cache
+            and hasattr(file_cache, "current_size_bytes")
+            and hasattr(file_cache, "evict_to_limit")
+        ):
             file_cache.current_size_bytes += added_bytes
             file_cache.evict_to_limit()
         return aligned_lines

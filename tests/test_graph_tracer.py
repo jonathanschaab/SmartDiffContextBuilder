@@ -5,6 +5,7 @@
 """Unit tests for CallGraphTracer."""
 
 import unittest
+import concurrent.futures
 from unittest.mock import MagicMock, patch, ANY
 from collections import deque
 from types import SimpleNamespace
@@ -699,6 +700,26 @@ class TestCallGraphTracer(unittest.TestCase):
             self.assertIs(same_executor, executor)
         finally:
             tracer.close()
+
+    def test_data_flow_executor_creation_holds_owner_lock(self):
+        tracer = CallGraphTracer(MagicMock(), [], set(), {}, MagicMock(), None)
+        observed_lock_states = []
+        real_executor = concurrent.futures.ThreadPoolExecutor
+
+        def tracked_executor(*args, **kwargs):
+            observed_lock_states.append(tracer._executor_lock._is_owned())
+            return real_executor(*args, **kwargs)
+
+        try:
+            with patch(
+                "context_builder.graph_tracer.concurrent.futures.ThreadPoolExecutor",
+                side_effect=tracked_executor,
+            ):
+                tracer._get_data_flow_executor(2)
+        finally:
+            tracer.close()
+
+        self.assertEqual(observed_lock_states, [True])
 
     @patch("context_builder.graph_tracer.extract_identifiers_with_positions")
     @patch("context_builder.graph_tracer.resolve_variable_definition")

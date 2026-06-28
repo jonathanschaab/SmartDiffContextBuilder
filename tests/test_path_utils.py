@@ -1,4 +1,5 @@
-# pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring,too-many-public-methods
+# pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
+# pylint: disable=too-many-public-methods,protected-access
 
 import os
 import subprocess
@@ -6,6 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
+from context_builder import path_utils
 from context_builder.config import CONFIG, reset_config
 from context_builder.path_utils import (
     _iter_case_override_candidates,  # pylint: disable=protected-access
@@ -88,6 +90,28 @@ class TestPathUtils(unittest.TestCase):
                 root_path=r"C:\Repo\CaseSensitive",
             )
         )
+
+    def test_compiled_path_case_rule_cache_holds_owner_lock(self):
+        observed_lock_states = []
+
+        class TrackingDict(dict):
+            def get(self, *args, **kwargs):
+                observed_lock_states.append(path_utils._PATH_CACHE_LOCK._is_owned())
+                return super().get(*args, **kwargs)
+
+            def setdefault(self, *args, **kwargs):
+                observed_lock_states.append(path_utils._PATH_CACHE_LOCK._is_owned())
+                return super().setdefault(*args, **kwargs)
+
+        original_cache = path_utils._PATH_CASE_RULE_CACHE
+        try:
+            path_utils._PATH_CASE_RULE_CACHE = TrackingDict()
+            path_utils._get_compiled_path_case_rule("src")
+        finally:
+            path_utils._PATH_CASE_RULE_CACHE = original_cache
+            clear_path_case_caches()
+
+        self.assertEqual(observed_lock_states, [True, True])
 
     @patch("context_builder.path_utils._run_git_probe_process")
     def test_detect_root_case_sensitivity_prefers_git_signal(self, mock_run):

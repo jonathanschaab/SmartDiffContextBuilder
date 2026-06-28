@@ -4,6 +4,7 @@ import json
 import os
 import re
 import subprocess
+import threading
 from collections import OrderedDict
 
 from .cache import get_global_cache
@@ -30,43 +31,47 @@ _PREPROCESSED_CACHE_MAX_ENTRIES = 4096
 _PREPROCESSED_CACHE = OrderedDict()
 _PREPROCESSED_CACHE_STATE = {"size_bytes": 0}
 _PREPROCESS_TIMEOUT_COUNTS = {}
+_PREPROCESSOR_LOCK = threading.RLock()
 
 
 def clear_preprocessed_cache():
     """Clear cached preprocessor output before starting a new repository scan."""
-    _PREPROCESSED_CACHE.clear()
-    _PREPROCESSED_CACHE_STATE["size_bytes"] = 0
-    _PREPROCESS_TIMEOUT_COUNTS.clear()
-    _run_clang_preprocessor._clang_missing = False  # pylint: disable=protected-access
+    with _PREPROCESSOR_LOCK:
+        _PREPROCESSED_CACHE.clear()
+        _PREPROCESSED_CACHE_STATE["size_bytes"] = 0
+        _PREPROCESS_TIMEOUT_COUNTS.clear()
+        _run_clang_preprocessor._clang_missing = False  # pylint: disable=protected-access
 
 
 def _cache_preprocessed_code(cache_key, signature, expanded_code):
     """Store successful preprocessor output in a bounded LRU cache."""
-    previous = _PREPROCESSED_CACHE.pop(cache_key, None)
-    if previous:
-        _PREPROCESSED_CACHE_STATE["size_bytes"] -= len(previous["code"])
+    with _PREPROCESSOR_LOCK:
+        previous = _PREPROCESSED_CACHE.pop(cache_key, None)
+        if previous:
+            _PREPROCESSED_CACHE_STATE["size_bytes"] -= len(previous["code"])
 
-    _PREPROCESSED_CACHE[cache_key] = {
-        "signature": signature,
-        "code": expanded_code,
-    }
-    _PREPROCESSED_CACHE_STATE["size_bytes"] += len(expanded_code)
+        _PREPROCESSED_CACHE[cache_key] = {
+            "signature": signature,
+            "code": expanded_code,
+        }
+        _PREPROCESSED_CACHE_STATE["size_bytes"] += len(expanded_code)
 
-    while (
-        _PREPROCESSED_CACHE
-        and (
-            _PREPROCESSED_CACHE_STATE["size_bytes"] > _PREPROCESSED_CACHE_MAX_BYTES
-            or len(_PREPROCESSED_CACHE) > _PREPROCESSED_CACHE_MAX_ENTRIES
-        )
-    ):
-        _, evicted = _PREPROCESSED_CACHE.popitem(last=False)
-        _PREPROCESSED_CACHE_STATE["size_bytes"] -= len(evicted["code"])
+        while (
+            _PREPROCESSED_CACHE
+            and (
+                _PREPROCESSED_CACHE_STATE["size_bytes"] > _PREPROCESSED_CACHE_MAX_BYTES
+                or len(_PREPROCESSED_CACHE) > _PREPROCESSED_CACHE_MAX_ENTRIES
+            )
+        ):
+            _, evicted = _PREPROCESSED_CACHE.popitem(last=False)
+            _PREPROCESSED_CACHE_STATE["size_bytes"] -= len(evicted["code"])
 
 
 def _run_clang_preprocessor(file_path):
     """Run clang preprocessing and distinguish retryable timeouts from results."""
-    if getattr(_run_clang_preprocessor, "_clang_missing", False):
-        return "", "failed"
+    with _PREPROCESSOR_LOCK:
+        if getattr(_run_clang_preprocessor, "_clang_missing", False):
+            return "", "failed"
 
     cmd = ["clang", "-E", file_path]
     try:
@@ -89,7 +94,8 @@ def _run_clang_preprocessor(file_path):
         # its normal tree-sitter/regex C/C++ analysis. Cache this scan-wide
         # capability failure so every remaining source file does not spawn the
         # same failing process; only generated macro linkages are unavailable.
-        _run_clang_preprocessor._clang_missing = True  # pylint: disable=protected-access
+        with _PREPROCESSOR_LOCK:
+            _run_clang_preprocessor._clang_missing = True  # pylint: disable=protected-access
         warn_once(
             "clang_missing",
             "clang is unavailable; continuing C/C++ analysis without macro expansion.",
@@ -111,16 +117,18 @@ def _get_preprocessed_code(file_path):
 
     cache_key = os.path.normcase(os.path.abspath(file_path))
     signature = (stat.st_mtime_ns, stat.st_size)
-    cached = _PREPROCESSED_CACHE.get(cache_key)
-    if cached and cached["signature"] == signature:
-        _PREPROCESSED_CACHE.move_to_end(cache_key)
-        return cached["code"]
+    with _PREPROCESSOR_LOCK:
+        cached = _PREPROCESSED_CACHE.get(cache_key)
+        if cached and cached["signature"] == signature:
+            _PREPROCESSED_CACHE.move_to_end(cache_key)
+            return cached["code"]
 
     expanded_code, status = _run_clang_preprocessor(file_path)
     timeout_key = (cache_key, signature)
     if status == "timeout":
-        timeout_count = _PREPROCESS_TIMEOUT_COUNTS.get(timeout_key, 0) + 1
-        _PREPROCESS_TIMEOUT_COUNTS[timeout_key] = timeout_count
+        with _PREPROCESSOR_LOCK:
+            timeout_count = _PREPROCESS_TIMEOUT_COUNTS.get(timeout_key, 0) + 1
+            _PREPROCESS_TIMEOUT_COUNTS[timeout_key] = timeout_count
         if timeout_count < 2:
             # Unlike a deterministic clang failure, a timeout may be transient.
             # Permit one recovery attempt, then favor bounded scan time over
@@ -130,7 +138,8 @@ def _get_preprocessed_code(file_path):
     # Successful empty output and deterministic failures are stable negative
     # results for this scan. A second timeout is also cached after its retry
     # allowance is exhausted, preventing repeated expensive subprocesses.
-    _PREPROCESS_TIMEOUT_COUNTS.pop(timeout_key, None)
+    with _PREPROCESSOR_LOCK:
+        _PREPROCESS_TIMEOUT_COUNTS.pop(timeout_key, None)
     _cache_preprocessed_code(cache_key, signature, expanded_code)
     return expanded_code
 
@@ -370,6 +379,15 @@ def trace_ffi_callers(func_name, repo_files, source_ext, file_cache=None):
 _COMPILE_COMMANDS_STATE = {"cache": None, "mtime": None, "path": None, "cwd": None}
 
 
+def clear_compile_commands_cache():
+    """Clear cached compile_commands.json state."""
+    with _PREPROCESSOR_LOCK:
+        _COMPILE_COMMANDS_STATE["cache"] = None
+        _COMPILE_COMMANDS_STATE["mtime"] = None
+        _COMPILE_COMMANDS_STATE["path"] = None
+        _COMPILE_COMMANDS_STATE["cwd"] = None
+
+
 def _process_compilation_entry(
     entry,
     include_pattern,
@@ -448,10 +466,12 @@ def analyze_compile_commands(target_file, file_cache=None, repo_root=None):
     if not target_base:
         return callers
     current_cwd = os.getcwd()
-    db_path = _COMPILE_COMMANDS_STATE["path"]
+    with _PREPROCESSOR_LOCK:
+        db_path = _COMPILE_COMMANDS_STATE["path"]
+        cached_cwd = _COMPILE_COMMANDS_STATE["cwd"]
     if (
         not db_path
-        or _COMPILE_COMMANDS_STATE["cwd"] != current_cwd
+        or cached_cwd != current_cwd
         or not os.path.isfile(db_path)
     ):
         db_path = find_artifact_path("compile_commands.json")
@@ -461,17 +481,27 @@ def analyze_compile_commands(target_file, file_cache=None, repo_root=None):
         # Cache the parsed database to avoid repeatedly reading/parsing it in a loop.
         abs_db_path = os.path.abspath(db_path)
         mtime = os.path.getmtime(db_path)
-        if (
-            _COMPILE_COMMANDS_STATE["cache"] is None
-            or _COMPILE_COMMANDS_STATE["path"] != abs_db_path
-            or _COMPILE_COMMANDS_STATE["mtime"] != mtime
-        ):
+        with _PREPROCESSOR_LOCK:
+            needs_load = (
+                _COMPILE_COMMANDS_STATE["cache"] is None
+                or _COMPILE_COMMANDS_STATE["path"] != abs_db_path
+                or _COMPILE_COMMANDS_STATE["mtime"] != mtime
+            )
+        if needs_load:
             with open(db_path, "r", encoding="utf-8") as f:
-                _COMPILE_COMMANDS_STATE["cache"] = json.load(f)
-            _COMPILE_COMMANDS_STATE["mtime"] = mtime
-            _COMPILE_COMMANDS_STATE["path"] = abs_db_path
-            _COMPILE_COMMANDS_STATE["cwd"] = current_cwd
-        db = _COMPILE_COMMANDS_STATE["cache"] or []
+                loaded_db = json.load(f)
+            with _PREPROCESSOR_LOCK:
+                if (
+                    _COMPILE_COMMANDS_STATE["cache"] is None
+                    or _COMPILE_COMMANDS_STATE["path"] != abs_db_path
+                    or _COMPILE_COMMANDS_STATE["mtime"] != mtime
+                ):
+                    _COMPILE_COMMANDS_STATE["cache"] = loaded_db
+                    _COMPILE_COMMANDS_STATE["mtime"] = mtime
+                    _COMPILE_COMMANDS_STATE["path"] = abs_db_path
+                    _COMPILE_COMMANDS_STATE["cwd"] = current_cwd
+        with _PREPROCESSOR_LOCK:
+            db = list(_COMPILE_COMMANDS_STATE["cache"] or [])
         # Build target pattern to allow line continuations between any characters
         # of the target base name. E.g. 'helper.h' -> 'h(?:\\\r?\n)?e...'
         # Space character is explicitly escaped because re.VERBOSE ignores unescaped space.

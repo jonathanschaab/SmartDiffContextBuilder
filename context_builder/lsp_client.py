@@ -366,6 +366,7 @@ class MinimalLSPClient:
         self.client = None
         self.progress = LSPProgressReporter(cmd[0])
         self.loop = get_lsp_loop()
+        self._lock = threading.RLock()
 
     def start(self) -> bool:
         """Start the language server subprocess and perform initialize handshake.
@@ -374,99 +375,129 @@ class MinimalLSPClient:
             bool: True if initialized successfully, False otherwise.
         """
         process_start_failed = False
-
-        async def _async_start():
-            nonlocal process_start_failed
-            self.client = LanguageClient(name="SmartDiffContextBuilder-LSP", version="1.0")
-            _register_notebook_filter_compatibility(self.client)
-            _register_lsp_progress_handlers(self.client, self.progress)
-            # pygls owns stdin/stdout/stderr for its JSON-RPC transport and
-            # captures stderr in a pipe. Supplying stderr here is not needed to
-            # keep the console clean and breaks pygls 2.x by passing the keyword
-            # twice to asyncio.create_subprocess_exec.
-            start_task = asyncio.create_task(
-                self.client.start_io(self.cmd[0], *self.cmd[1:])
-            )
-            try:
-                await asyncio.sleep(0.1)
-                if start_task.done():
-                    # start_io completing is healthy: it means pygls spawned the
-                    # process and installed background transport tasks. It does
-                    # not mean the language-server process itself has exited.
-                    try:
-                        start_task.result()
-                    except BaseException:
-                        process_start_failed = True
-                        raise
-
-                # Process state is independent of start_io task completion. A
-                # compatible client may keep start_io pending briefly while its
-                # subprocess has already crashed, so check the process on every
-                # startup pass instead of waiting for the task to finish.
-                server = _get_lsp_process(self.client)
-                returncode = getattr(server, "returncode", None)
-                if isinstance(returncode, int):
-                    # asyncio subprocess return codes are integers. Checking
-                    # the process directly avoids waiting for initialize_async
-                    # to time out against a transport that is already dead.
-                    process_start_failed = True
-                    raise RuntimeError(
-                        f"LSP process exited during startup with code {returncode}"
-                    )
-
-                params = types.InitializeParams(
-                    process_id=os.getpid(),
-                    root_uri=Path(".").absolute().as_uri(),
-                    capabilities=types.ClientCapabilities(
-                        window=types.WindowClientCapabilities(
-                            work_done_progress=True
-                        )
-                    ),
-                )
-                await asyncio.wait_for(
-                    self.client.initialize_async(params),
-                    timeout=self.init_timeout,
-                )
-                self.client.initialized(types.InitializedParams())
+        with self._lock:
+            if self.client and getattr(self.client, "stopped", False) is not True:
                 return True
-            except BaseException:
-                start_task.cancel()
-                try:
-                    await start_task
-                except Exception:  # pylint: disable=broad-exception-caught
-                    pass
-                except asyncio.CancelledError:
-                    pass
-                raise
 
-        try:
-            fut = asyncio.run_coroutine_threadsafe(_async_start(), self.loop)
-            return fut.result(timeout=self.init_timeout + 1.0)
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            if "fut" in locals():
-                fut.cancel()
-            is_timeout = _is_timeout_error(e)
-            if is_timeout:
-                warn_once(
-                    "lsp_init_timeout",
-                    f"LSP {self.cmd[0]} initialization timed out after "
-                    f"{self.init_timeout} seconds. You can increase this limit "
-                    "using --lsp-init-timeout or by setting 'lsp_init_timeout' "
-                    "in your config file.",
+            client = LanguageClient(name="SmartDiffContextBuilder-LSP", version="1.0")
+            self.client = client
+            _register_notebook_filter_compatibility(client)
+            _register_lsp_progress_handlers(client, self.progress)
+
+            async def _async_start():
+                nonlocal process_start_failed
+                # pygls owns stdin/stdout/stderr for its JSON-RPC transport and
+                # captures stderr in a pipe. Supplying stderr here is not needed
+                # to keep the console clean and breaks pygls 2.x by passing the
+                # keyword twice to asyncio.create_subprocess_exec.
+                start_task = asyncio.create_task(client.start_io(self.cmd[0], *self.cmd[1:]))
+                try:
+                    await asyncio.sleep(0.1)
+                    if start_task.done():
+                        # start_io completing is healthy: it means pygls spawned
+                        # the process and installed background transport tasks.
+                        # It does not mean the language-server process itself has
+                        # exited.
+                        try:
+                            start_task.result()
+                        except BaseException:
+                            process_start_failed = True
+                            raise
+
+                    # Process state is independent of start_io task completion. A
+                    # compatible client may keep start_io pending briefly while
+                    # its subprocess has already crashed, so check the process on
+                    # every startup pass instead of waiting for initialize_async
+                    # to time out against a transport that is already dead.
+                    server = _get_lsp_process(client)
+                    returncode = getattr(server, "returncode", None)
+                    if isinstance(returncode, int):
+                        # asyncio subprocess return codes are integers. Checking
+                        # the process directly avoids waiting for initialize_async
+                        # to time out against a transport that is already dead.
+                        process_start_failed = True
+                        raise RuntimeError(
+                            f"LSP process exited during startup with code {returncode}"
+                        )
+
+                    params = types.InitializeParams(
+                        process_id=os.getpid(),
+                        root_uri=Path(".").absolute().as_uri(),
+                        capabilities=types.ClientCapabilities(
+                            window=types.WindowClientCapabilities(
+                                work_done_progress=True
+                            )
+                        ),
+                    )
+                    await asyncio.wait_for(
+                        client.initialize_async(params),
+                        timeout=self.init_timeout,
+                    )
+                    client.initialized(types.InitializedParams())
+                    return True
+                except BaseException:
+                    start_task.cancel()
+                    try:
+                        await start_task
+                    except Exception:  # pylint: disable=broad-exception-caught
+                        pass
+                    except asyncio.CancelledError:
+                        pass
+                    raise
+
+            try:
+                fut = asyncio.run_coroutine_threadsafe(_async_start(), self.loop)
+                return fut.result(timeout=self.init_timeout + 1.0)
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                if "fut" in locals():
+                    fut.cancel()
+                is_timeout = _is_timeout_error(e)
+                if is_timeout:
+                    warn_once(
+                        "lsp_init_timeout",
+                        f"LSP {self.cmd[0]} initialization timed out after "
+                        f"{self.init_timeout} seconds. You can increase this limit "
+                        "using --lsp-init-timeout or by setting 'lsp_init_timeout' "
+                        "in your config file.",
+                    )
+                else:
+                    warn_once(
+                        "lsp_fail",
+                        f"Failed to start LSP {self.cmd[0]} "
+                        f"({type(e).__name__}): {e}",
+                    )
+                if process_start_failed:
+                    # No transport exists yet, so LSP shutdown notifications would
+                    # only produce secondary "no available transport" errors.
+                    self.client = None
+                else:
+                    self.cleanup(force_kill=is_timeout)
+                return False
+
+    def _run_query(self, query_factory, timeout, timeout_message, failure_message):
+        """Run one LSP request while holding this client's lifecycle lock."""
+        with self._lock:
+            client = self.client
+            if not client or getattr(client, "stopped", False):
+                return []
+
+            try:
+                fut = asyncio.run_coroutine_threadsafe(
+                    query_factory(client), self.loop
                 )
-            else:
-                warn_once(
-                    "lsp_fail",
-                    f"Failed to start LSP {self.cmd[0]} "
-                    f"({type(e).__name__}): {e}",
-                )
-            if process_start_failed:
-                # No transport exists yet, so LSP shutdown notifications would
-                # only produce secondary "no available transport" errors.
-                self.client = None
-            else:
-                self.cleanup(force_kill=is_timeout)
-            return False
+                return fut.result(timeout=timeout)
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                if "fut" in locals():
+                    fut.cancel()
+                if _is_timeout_error(e):
+                    warn_once("lsp_timeout", timeout_message)
+                    self.cleanup(force_kill=True)
+                else:
+                    warn_once(
+                        "lsp_query_fail",
+                        f"{failure_message} ({type(e).__name__}): {e}",
+                    )
+                return []
 
     def get_references(self, file_path, line_num, char_num, timeout) -> list:
         """Query references for a symbol at a specific file, line, and column position.
@@ -486,10 +517,7 @@ class MinimalLSPClient:
             "lsp_timeout",
             "--lsp-timeout",
         )
-        if not self.client or getattr(self.client, "stopped", False):
-            return []
-
-        async def _async_get_refs():
+        async def _async_get_refs(client):
             params = types.ReferenceParams(
                 context=types.ReferenceContext(include_declaration=False),
                 text_document=types.TextDocumentIdentifier(
@@ -497,7 +525,7 @@ class MinimalLSPClient:
                 ),
                 position=types.Position(line=line_num - 1, character=char_num),
             )
-            refs = await self.client.text_document_references_async(params)
+            refs = await client.text_document_references_async(params)
             if not refs:
                 return []
 
@@ -574,26 +602,17 @@ class MinimalLSPClient:
                     serialized.append(res)
             return serialized
 
-        try:
-            fut = asyncio.run_coroutine_threadsafe(_async_get_refs(), self.loop)
-            return fut.result(timeout=timeout)
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            if "fut" in locals():
-                fut.cancel()
-            if _is_timeout_error(e):
-                warn_once(
-                    "lsp_timeout",
-                    f"LSP query timed out after {timeout} seconds. You can "
-                    "increase this limit using --lsp-timeout or by setting "
-                    "'lsp_timeout' in your config file.",
-                )
-                self.cleanup(force_kill=True)
-            else:
-                warn_once(
-                    "lsp_query_fail",
-                    f"LSP query failed ({type(e).__name__}): {e}",
-                )
-            return []
+        timeout_message = (
+            f"LSP query timed out after {timeout} seconds. You can "
+            "increase this limit using --lsp-timeout or by setting "
+            "'lsp_timeout' in your config file."
+        )
+        return self._run_query(
+            _async_get_refs,
+            timeout,
+            timeout_message,
+            "LSP query failed",
+        )
 
     def get_definition(self, file_path, line_num, char_num, timeout) -> list:
         """Query definition for a symbol at a specific file, line, and column position.
@@ -613,42 +632,27 @@ class MinimalLSPClient:
             "lsp_timeout",
             "--lsp-timeout",
         )
-        if not self.client or getattr(self.client, "stopped", False):
-            return []
-
-        async def _async_get_def():
+        async def _async_get_def(client):
             params = types.DefinitionParams(
                 text_document=types.TextDocumentIdentifier(
                     uri=Path(file_path).absolute().as_uri()
                 ),
                 position=types.Position(line=line_num - 1, character=char_num),
             )
-            if hasattr(self.client, "text_document_definition_async"):
-                res = await self.client.text_document_definition_async(params)
+            if hasattr(client, "text_document_definition_async"):
+                res = await client.text_document_definition_async(params)
             else:
-                res = await self.client.lsp.send_request_async(  # pylint: disable=no-member
+                res = await client.lsp.send_request_async(  # pylint: disable=no-member
                     "textDocument/definition", params
                 )
             return _serialize_locations(res)
 
-        try:
-            fut = asyncio.run_coroutine_threadsafe(_async_get_def(), self.loop)
-            return fut.result(timeout=timeout)
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            if "fut" in locals():
-                fut.cancel()
-            if _is_timeout_error(e):
-                warn_once(
-                    "lsp_timeout",
-                    f"LSP query timed out after {timeout} seconds.",
-                )
-                self.cleanup(force_kill=True)
-            else:
-                warn_once(
-                    "lsp_query_fail",
-                    f"LSP definition query failed ({type(e).__name__}): {e}",
-                )
-            return []
+        return self._run_query(
+            _async_get_def,
+            timeout,
+            f"LSP query timed out after {timeout} seconds.",
+            "LSP definition query failed",
+        )
 
     def get_type_definition(self, file_path, line_num, char_num, timeout) -> list:
         """Query type definition for a symbol at a specific file, line, and column position.
@@ -668,78 +672,64 @@ class MinimalLSPClient:
             "lsp_timeout",
             "--lsp-timeout",
         )
-        if not self.client or getattr(self.client, "stopped", False):
-            return []
-
-        async def _async_get_type_def():
+        async def _async_get_type_def(client):
             params = types.TypeDefinitionParams(
                 text_document=types.TextDocumentIdentifier(
                     uri=Path(file_path).absolute().as_uri()
                 ),
                 position=types.Position(line=line_num - 1, character=char_num),
             )
-            if hasattr(self.client, "text_document_type_definition_async"):
-                res = await self.client.text_document_type_definition_async(params)
+            if hasattr(client, "text_document_type_definition_async"):
+                res = await client.text_document_type_definition_async(params)
             else:
-                res = await self.client.lsp.send_request_async(  # pylint: disable=no-member
+                res = await client.lsp.send_request_async(  # pylint: disable=no-member
                     "textDocument/typeDefinition", params
                 )
             return _serialize_locations(res)
 
-        try:
-            fut = asyncio.run_coroutine_threadsafe(_async_get_type_def(), self.loop)
-            return fut.result(timeout=timeout)
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            if "fut" in locals():
-                fut.cancel()
-            if _is_timeout_error(e):
-                warn_once(
-                    "lsp_timeout",
-                    f"LSP query timed out after {timeout} seconds.",
-                )
-                self.cleanup(force_kill=True)
-            else:
-                warn_once(
-                    "lsp_query_fail",
-                    f"LSP type definition query failed ({type(e).__name__}): {e}",
-                )
-            return []
+        return self._run_query(
+            _async_get_type_def,
+            timeout,
+            f"LSP query timed out after {timeout} seconds.",
+            "LSP type definition query failed",
+        )
 
     def cleanup(self, force_kill=False):
         """Shutdown the language client and terminate the server subprocess."""
-        client = self.client
-        if not client:
-            return
-        self.client = None
+        with self._lock:
+            client = self.client
+            if not client:
+                return
+            self.client = None
 
-        if force_kill:
-            _kill_lsp_process(client)
-            for method in ["shutdown_async", "shutdown", "exit"]:
-                if hasattr(client, method):
-                    try:
-                        setattr(client, method, lambda *args, **kwargs: None)
-                    except AttributeError:
-                        pass
+            if force_kill:
+                _kill_lsp_process(client)
+                for method in ["shutdown_async", "shutdown", "exit"]:
+                    if hasattr(client, method):
+                        try:
+                            setattr(client, method, lambda *args, **kwargs: None)
+                        except AttributeError:
+                            pass
 
-        async def _async_cleanup():
-            is_stopped = getattr(client, "stopped", False)
-            if not is_stopped:
-                if hasattr(client, "shutdown_async"):
-                    await _async_clean_method(client, "shutdown_async")
-                elif hasattr(client, "shutdown"):
-                    await _async_clean_method(client, "shutdown")
-                await _async_clean_method(client, "exit", use_wait_for=False)
-                await _async_clean_method(client, "stop")
+            async def _async_cleanup():
+                is_stopped = getattr(client, "stopped", False)
+                if not is_stopped:
+                    if hasattr(client, "shutdown_async"):
+                        await _async_clean_method(client, "shutdown_async")
+                    elif hasattr(client, "shutdown"):
+                        await _async_clean_method(client, "shutdown")
+                    await _async_clean_method(client, "exit", use_wait_for=False)
+                    await _async_clean_method(client, "stop")
 
-            _kill_lsp_process(client)
+                _kill_lsp_process(client)
 
-        try:
-            fut = asyncio.run_coroutine_threadsafe(_async_cleanup(), self.loop)
-            fut.result(timeout=2.0)
-        except Exception:  # pylint: disable=broad-exception-caught
-            if "fut" in locals():
-                fut.cancel()
-            _kill_lsp_process(client)
+            try:
+                fut = asyncio.run_coroutine_threadsafe(_async_cleanup(), self.loop)
+                fut.result(timeout=2.0)
+            except Exception:  # pylint: disable=broad-exception-caught
+                if "fut" in locals():
+                    fut.cancel()
+                _kill_lsp_process(client)
 
 
 async def _async_clean_method(client, method_name, use_wait_for=True):

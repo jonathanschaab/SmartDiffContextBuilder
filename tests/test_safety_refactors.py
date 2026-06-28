@@ -293,6 +293,41 @@ class TestSafetyRefactors(unittest.TestCase):
             ["line1\n", "line2\n"],
         )
 
+    def test_aligned_stripped_lines_custom_cache_without_size_accounting(self):
+        """Verify custom cache internals do not need LRU accounting attributes."""
+        from context_builder.ast_engine import _get_stripped_lines
+
+        class CustomCache:
+            """Minimal custom cache with entry storage but no size accounting."""
+
+            def __init__(self):
+                self.cache = {}
+
+            def _load(self, file_path):
+                entry = self.cache.setdefault(
+                    os.path.abspath(file_path),
+                    {
+                        "lines": ["before\n", "/* comment */\n", "after\n"],
+                        "content": "before\n/* comment */\nafter\n",
+                        "bytes": b"",
+                        "size_bytes": 0,
+                    },
+                )
+                return entry
+
+            def get_stripped_content(self, _file_path, _profile):
+                return "before\nafter\n"
+
+            def get_lines(self, _file_path):
+                return ["before\n", "/* comment */\n", "after\n"]
+
+        profile = SimpleNamespace(strip_block_comments=lambda _content: "before\nafter\n")
+
+        self.assertEqual(
+            _get_stripped_lines(CustomCache(), "custom.c", profile),
+            ["before\n", "\n", "after\n"],
+        )
+
     def test_fallback_strip_uses_best_line_alignment(self):
         """Verify substring matches do not greedily steal later stripped code."""
         from context_builder.ast_engine import _fallback_strip

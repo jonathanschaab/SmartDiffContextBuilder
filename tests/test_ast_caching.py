@@ -63,6 +63,26 @@ class TestAstCaching(unittest.TestCase):
         self.assertEqual(getattr(cache, "_entry_sizes")["new"], 18)
         self.assertEqual(getattr(cache, "_total_bytes"), original_total + 18)
 
+    def test_file_cache_helpers_estimate_size_uses_owner_lock(self):
+        from context_builder.ast_engine import _estimate_lru_cache_size, _get_lru_cache
+
+        class CountingRLock:
+            def __init__(self):
+                self.enter_count = 0
+
+            def __enter__(self):
+                self.enter_count += 1
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+        owner = SimpleNamespace(_lock=CountingRLock(), custom_cache={"key": "value"})
+        cache = _get_lru_cache(owner, "custom_cache")
+
+        self.assertGreater(_estimate_lru_cache_size(cache), 0)
+        self.assertGreaterEqual(getattr(owner, "_lock").enter_count, 2)
+
     def test_file_cache_helpers_upgrade_plain_dict_to_ordered_dict(self):
         from context_builder.ast_engine import _get_lru_cache
 
