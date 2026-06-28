@@ -475,29 +475,39 @@ class MinimalLSPClient:
                 return False
 
     def _run_query(self, query_factory, timeout, timeout_message, failure_message):
-        """Run one LSP request while holding this client's lifecycle lock."""
-        with self._lock:
-            client = self.client
-            if not client or getattr(client, "stopped", False):
-                return []
+        """Submit one LSP request against the active client and wait for its result."""
+        try:
+            with self._lock:
+                client = self.client
+                if not client or getattr(client, "stopped", False):
+                    return []
+                coro = query_factory(client)
+                fut = asyncio.run_coroutine_threadsafe(coro, self.loop)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            if "coro" in locals() and inspect.iscoroutine(coro):
+                try:
+                    coro.close()
+                except RuntimeError:
+                    pass
+            warn_once(
+                "lsp_query_fail",
+                f"{failure_message} ({type(e).__name__}): {e}",
+            )
+            return []
 
-            try:
-                fut = asyncio.run_coroutine_threadsafe(
-                    query_factory(client), self.loop
+        try:
+            return fut.result(timeout=timeout)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            fut.cancel()
+            if _is_timeout_error(e):
+                warn_once("lsp_timeout", timeout_message)
+                self.cleanup(force_kill=True)
+            else:
+                warn_once(
+                    "lsp_query_fail",
+                    f"{failure_message} ({type(e).__name__}): {e}",
                 )
-                return fut.result(timeout=timeout)
-            except Exception as e:  # pylint: disable=broad-exception-caught
-                if "fut" in locals():
-                    fut.cancel()
-                if _is_timeout_error(e):
-                    warn_once("lsp_timeout", timeout_message)
-                    self.cleanup(force_kill=True)
-                else:
-                    warn_once(
-                        "lsp_query_fail",
-                        f"{failure_message} ({type(e).__name__}): {e}",
-                    )
-                return []
+            return []
 
     def get_references(self, file_path, line_num, char_num, timeout) -> list:
         """Query references for a symbol at a specific file, line, and column position.

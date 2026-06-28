@@ -1,5 +1,6 @@
 # pylint: disable=import-outside-toplevel,too-few-public-methods,too-many-public-methods
 # pylint: disable=consider-using-from-import,missing-function-docstring
+# pylint: disable=protected-access
 
 """Unit tests covering dotted imports, UTF-8 BOM, config dictionary exceptions,
 and FFI None capture guards.
@@ -328,6 +329,47 @@ class TestSafetyRefactors(unittest.TestCase):
             ["before\n", "\n", "after\n"],
         )
 
+    def test_aligned_stripped_lines_custom_cache_releases_lock_during_alignment(self):
+        """Verify custom cache fallback does not hold the cache lock while computing."""
+        from context_builder.ast_engine import _get_stripped_lines
+        import threading
+
+        class CustomCache:
+            """Custom cache with a lock and no specialized aligned-lines helper."""
+
+            def __init__(self):
+                self.cache = {}
+                self._lock = threading.RLock()
+                self.observed_lock_states = []
+
+            def _load(self, file_path):
+                return self.cache.setdefault(
+                    os.path.abspath(file_path),
+                    {
+                        "lines": ["before\n", "/* comment */\n", "after\n"],
+                        "content": "before\n/* comment */\nafter\n",
+                        "bytes": b"",
+                        "size_bytes": 0,
+                    },
+                )
+
+            def get_lines(self, _file_path):
+                return ["before\n", "/* comment */\n", "after\n"]
+
+        cache = CustomCache()
+
+        def strip_block_comments(_content):
+            cache.observed_lock_states.append(cache._lock._is_owned())
+            return "before\nafter\n"
+
+        profile = SimpleNamespace(strip_block_comments=strip_block_comments)
+
+        self.assertEqual(
+            _get_stripped_lines(cache, "custom.c", profile),
+            ["before\n", "\n", "after\n"],
+        )
+        self.assertEqual(cache.observed_lock_states, [False])
+
     def test_fallback_strip_uses_best_line_alignment(self):
         """Verify substring matches do not greedily steal later stripped code."""
         from context_builder.ast_engine import _fallback_strip
@@ -356,8 +398,8 @@ class TestSafetyRefactors(unittest.TestCase):
         self.assertEqual(stripped, ["foo = 1;\n"])
         mock_matcher.assert_not_called()
 
-    def test_fallback_strip_lookahead_clamps_alignment_search(self):
-        """Verify fallback alignment limits lookahead and warns once."""
+    def test_fallback_strip_lookahead_warns_only_on_missed_alignment(self):
+        """Verify bounded lookahead warns only when stripped code cannot be placed."""
         from context_builder.ast_engine import _fallback_strip
 
         old_lookahead = CONFIG["fallback_strip_lookahead"]
@@ -379,6 +421,13 @@ class TestSafetyRefactors(unittest.TestCase):
         self.assertEqual(stripped, ["\n", "\n", "\n", "\n"])
         mock_warn.assert_called_once()
         self.assertIn("--fallback-strip-lookahead", mock_warn.call_args.args[1])
+
+        profile.strip_block_comments.return_value = "noise0\nnoise1\n"
+        with patch("context_builder.ast_engine.warn_once") as mock_warn:
+            stripped = _fallback_strip(lines, profile)
+
+        self.assertEqual(stripped, ["noise0\n", "noise1\n", "\n", "\n"])
+        mock_warn.assert_not_called()
 
     @patch("context_builder.ast_engine.AST_ENGINE")
     def test_ast_parse_helpers_return_early_without_source_bytes(self, mock_engine):

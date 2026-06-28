@@ -781,17 +781,24 @@ class TestLspClient(unittest.TestCase):
         self.assertEqual(client.cleanup.call_count, 2)
         client.cleanup.assert_any_call(force_kill=True)
 
-    def test_lsp_query_submission_holds_lifecycle_lock(self):
+    def test_lsp_query_submission_releases_lock_before_waiting(self):
         client = MinimalLSPClient(["some_lsp_binary"])
         client.client = MagicMock(stopped=False)
-        observed_lock_states = []
+        observed_submit_lock_states = []
+        observed_wait_lock_states = []
+
+        class TrackingFuture:
+            def result(self, timeout=None):
+                observed_wait_lock_states.append(client._lock._is_owned())
+                return []
+
+            def cancel(self):
+                return None
 
         def successful_query(coro, _loop):
-            observed_lock_states.append(client._lock._is_owned())
+            observed_submit_lock_states.append(client._lock._is_owned())
             coro.close()
-            future = concurrent.futures.Future()
-            future.set_result([])
-            return future
+            return TrackingFuture()
 
         with patch(
             "asyncio.run_coroutine_threadsafe",
@@ -799,7 +806,8 @@ class TestLspClient(unittest.TestCase):
         ):
             self.assertEqual(client.get_definition("file.py", 1, 0, timeout=1.0), [])
 
-        self.assertEqual(observed_lock_states, [True])
+        self.assertEqual(observed_submit_lock_states, [True])
+        self.assertEqual(observed_wait_lock_states, [False])
 
     def test_lsp_cleanup_holds_lifecycle_lock(self):
         client = MinimalLSPClient(["some_lsp_binary"])

@@ -252,17 +252,7 @@ def _align_stripped_to_original_lines(lines, stripped):
         ]
         search_start = 0
         lookahead = max(1, CONFIG.get('fallback_strip_lookahead', 20))
-        if lookahead < original_line_count and any(
-            stripped_line.strip() for stripped_line in stripped_lines
-        ):
-            warn_once(
-                "fallback_strip_lookahead_clamped",
-                "[SmartDiffContextBuilder Warning] Block-comment fallback "
-                f"alignment scanned only the next {lookahead} lines to avoid "
-                "quadratic work on large files. If this misses valid code, "
-                "raise the limit with --fallback-strip-lookahead N or set "
-                "'fallback_strip_lookahead' in your config file.",
-            )
+        missed_alignment = False
         for stripped_line in stripped_lines:
             stripped_text = stripped_line.strip()
             if not stripped_text:
@@ -279,6 +269,17 @@ def _align_stripped_to_original_lines(lines, stripped):
             if best_idx is not None and best_score >= 0.5:
                 aligned_lines[best_idx] = stripped_line
                 search_start = best_idx + 1
+            else:
+                missed_alignment = True
+        if missed_alignment:
+            warn_once(
+                "fallback_strip_alignment_missed",
+                "[SmartDiffContextBuilder Warning] Block-comment fallback "
+                f"alignment could not place some stripped lines within the next "
+                f"{lookahead} source lines. If valid code is missing, raise the "
+                "limit with --fallback-strip-lookahead N or set "
+                "'fallback_strip_lookahead' in your config file.",
+            )
         stripped_lines = aligned_lines
     elif len(stripped_lines) > original_line_count:
         stripped_lines = stripped_lines[:original_line_count]
@@ -317,17 +318,23 @@ def _get_cached_aligned_stripped_lines(file_cache, file_path, profile):  # pylin
         lines = entry.get("lines")
         if not isinstance(lines, (list, tuple)):
             return []
+        content = entry.get("content", "".join(lines))
         strip_block_comments = getattr(profile, "strip_block_comments", None)
         if not callable(strip_block_comments):
             return None
-        stripped = (
-            file_cache.get_stripped_content(abs_path, profile)
-            if hasattr(file_cache, "get_stripped_content")
-            else strip_block_comments(entry.get("content", "".join(lines)))
-        )
-        aligned_lines = _align_stripped_to_original_lines(lines, stripped)
+    stripped = (
+        file_cache.get_stripped_content(abs_path, profile)
+        if hasattr(file_cache, "get_stripped_content")
+        else strip_block_comments(content)
+    )
+    aligned_lines = _align_stripped_to_original_lines(lines, stripped)
+    added_bytes = _estimate_aligned_lines_size(aligned_lines)
+
+    with lock if lock is not None else nullcontext():
+        entry = load_func(abs_path)
+        if "aligned_stripped_lines" in entry:
+            return entry["aligned_stripped_lines"]
         entry["aligned_stripped_lines"] = aligned_lines
-        added_bytes = _estimate_aligned_lines_size(aligned_lines)
         entry["size_bytes"] = entry.get("size_bytes", 0) + added_bytes
         if (
             abs_path in cache
