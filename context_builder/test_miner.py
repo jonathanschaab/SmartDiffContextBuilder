@@ -117,7 +117,13 @@ def _mine_ast_tests(
                 file_path,
             )
         return True
-    except (RuntimeError, ValueError, TreeSitterQueryError) as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        # Broad catch: tree-sitter is a C extension that can raise AttributeError,
+        # TypeError, OSError, or other low-level errors across versions/platforms.
+        # MemoryError is re-raised as a critical non-recoverable error.
+        # KeyboardInterrupt/SystemExit are not subclasses of Exception and propagate normally.
+        if isinstance(exc, MemoryError):
+            raise
         warn_once("test_query_fail", f"AST test query failed on {file_path}: {exc}")
         return False
 

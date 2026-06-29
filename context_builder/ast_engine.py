@@ -652,6 +652,40 @@ def extract_function_bounds(file_path, line_num, file_cache=None):
     return extract_function_bounds_regex(file_path, line_num, file_cache=file_cache)
 
 
+def _query_and_record_callers(query, tree, source_bytes, func_name, file_path, lines, callers):
+    """Execute a tree-sitter query and record any matching call sites in callers."""
+    try:
+        captures = _execute_query(query, tree.root_node)
+        if lines is None:
+            return
+
+        for capture_node, _ in captures:
+            if capture_node.parent is None:
+                continue
+            node_text = source_bytes[
+                capture_node.parent.start_byte:capture_node.parent.end_byte
+            ].decode('utf-8', errors='ignore')
+            if func_name not in node_text:
+                continue
+
+            line_idx = capture_node.start_point[0]
+            if file_path not in callers:
+                callers[file_path] = []
+            if not any(c['line'] == line_idx + 1 for c in callers[file_path]):
+                callers[file_path].append({
+                    "line": line_idx + 1,
+                    "code": lines[line_idx].strip()
+                })
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        # Broad catch: tree-sitter is a C extension that can raise AttributeError,
+        # TypeError, OSError, or other low-level errors across versions/platforms.
+        # MemoryError is re-raised so callers can treat it as a fatal error.
+        # KeyboardInterrupt/SystemExit are not subclasses of Exception and propagate normally.
+        if isinstance(exc, MemoryError):
+            raise
+        warn_once("ast_query_fail", f"AST query failed on {file_path}: {exc}")
+
+
 def _trace_file_ast_dependencies(file_path, func_name, file_cache, callers):
     """Process a single file for AST dependency tracking."""
     ext = os.path.splitext(file_path)[1].lower()
@@ -679,32 +713,10 @@ def _trace_file_ast_dependencies(file_path, func_name, file_cache, callers):
 
     q_str = q_str.replace("{escaped_func_name}", escaped_func_name)
 
-    try:
-        query = AST_ENGINE.get_query(ext, q_str)
-        captures = _execute_query(query, tree.root_node)
-        lines = file_cache.get_lines(file_path)
-        if lines is None:
-            return
+    query = AST_ENGINE.get_query(ext, q_str)
+    lines = file_cache.get_lines(file_path)
+    _query_and_record_callers(query, tree, source_bytes, func_name, file_path, lines, callers)
 
-        for capture_node, _ in captures:
-            if capture_node.parent is None:
-                continue
-            node_text = source_bytes[
-                capture_node.parent.start_byte:capture_node.parent.end_byte
-            ].decode('utf-8', errors='ignore')
-            if func_name not in node_text:
-                continue
-
-            line_idx = capture_node.start_point[0]
-            if file_path not in callers:
-                callers[file_path] = []
-            if not any(c['line'] == line_idx + 1 for c in callers[file_path]):
-                callers[file_path].append({
-                    "line": line_idx + 1,
-                    "code": lines[line_idx].strip()
-                })
-    except (RuntimeError, ValueError, TreeSitterQueryError) as exc:
-        warn_once("ast_query_fail", f"AST query failed on {file_path}: {exc}")
 
 
 def trace_lexical_dependencies_ast(func_name, repo_files, file_cache=None):
@@ -873,9 +885,15 @@ def extract_callees_ast(file_path, start_line, end_line, ext, file_cache):  # py
                         "Please upgrade py-tree-sitter to version 0.21.0 or newer."
                     )
                 callees.add(node.text.decode('utf-8', errors='ignore'))
-    except AttributeError as ae:
-        raise ae
-    except (RuntimeError, ValueError, TypeError, TreeSitterQueryError) as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        # Broad catch: tree-sitter C extension can raise AttributeError, TypeError,
+        # OSError, or other low-level errors. We re-raise as RuntimeError so the
+        # caller (extract_callees) can trigger its regex fallback consistently.
+        # AttributeError is re-raised directly to preserve the specific error contract
+        # for missing node attributes (e.g. missing .text on older bindings).
+        # MemoryError is also re-raised as a critical non-recoverable error.
+        if isinstance(e, (AttributeError, MemoryError)):
+            raise
         raise RuntimeError(f"AST callee extraction failed: {e}") from e
     return callees
 
@@ -1060,7 +1078,12 @@ def extract_identifiers_with_positions_ast(file_path, line_numbers, file_cache=N
 
     try:
         tree = _parse_ast_bytes(ext, source_bytes)
-    except (RuntimeError, ValueError, TreeSitterQueryError):
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        # Broad catch: tree-sitter C extension can raise AttributeError, TypeError,
+        # or other low-level errors. Safe to return empty list here.
+        # MemoryError is re-raised as a critical non-recoverable error.
+        if isinstance(exc, MemoryError):
+            raise
         return []
 
     if tree is None or tree.root_node is None:
@@ -1185,7 +1208,12 @@ def extract_identifiers_with_positions(file_path, line_numbers, file_cache=None)
     if AST_ENGINE.is_supported(ext):
         try:
             return extract_identifiers_with_positions_ast(file_path, line_numbers, file_cache)
-        except (RuntimeError, ValueError, TreeSitterQueryError) as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            # Broad catch: tree-sitter C extension can raise AttributeError, TypeError,
+            # or other low-level errors. Fallback to regex is safe.
+            # MemoryError is re-raised as a critical non-recoverable error.
+            if isinstance(e, MemoryError):
+                raise
             print(f"\n[SmartDiffContextBuilder Warning] AST position extraction failed: {e}. "
                   "Falling back to regex-based position extraction.")
     return extract_identifiers_with_positions_regex(file_path, line_numbers, file_cache)
@@ -1218,7 +1246,12 @@ def extract_identifiers(file_path, line_numbers, file_cache=None):
     if AST_ENGINE.is_supported(ext):
         try:
             return extract_identifiers_ast(file_path, line_numbers, file_cache)
-        except (RuntimeError, ValueError, TreeSitterQueryError) as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            # Broad catch: tree-sitter C extension can raise AttributeError, TypeError,
+            # or other low-level errors. Fallback to regex is safe.
+            # MemoryError is re-raised as a critical non-recoverable error.
+            if isinstance(e, MemoryError):
+                raise
             print(f"\n[SmartDiffContextBuilder Warning] AST identifier extraction failed: {e}. "
                   "Falling back to regex-based identifier extraction.")
     return extract_identifiers_regex(file_path, line_numbers, file_cache)
@@ -1310,7 +1343,12 @@ def resolve_local_variable_ast(file_path, var_name, ref_line, file_cache=None): 
 
     try:
         tree = _parse_ast_bytes(ext, source_bytes)
-    except (RuntimeError, ValueError, TreeSitterQueryError):
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        # Broad catch: tree-sitter C extension can raise AttributeError, TypeError,
+        # or other low-level errors. Safe to return (None, None) here.
+        # MemoryError is re-raised as a critical non-recoverable error.
+        if isinstance(exc, MemoryError):
+            raise
         return None, None
 
     if tree is None or tree.root_node is None:
@@ -1325,7 +1363,12 @@ def resolve_local_variable_ast(file_path, var_name, ref_line, file_cache=None): 
         try:
             query = AST_ENGINE.get_query(ext, profile.declaration_query)
             captures = _execute_query(query, tree.root_node)
-        except (RuntimeError, ValueError, TreeSitterQueryError):
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            # Broad catch: tree-sitter C extension can raise AttributeError, TypeError,
+            # or other low-level errors. Fallback to manual AST traversal is safe.
+            # MemoryError is re-raised as a critical non-recoverable error.
+            if isinstance(exc, MemoryError):
+                raise
             use_fallback = True
 
     if use_fallback:
