@@ -1803,6 +1803,126 @@ class TestLspClient(unittest.TestCase):
 
         self.assertIs(client, started_clients[0])
 
+    def test_get_or_create_lsp_client_failure_caching_and_cooldown(self):
+        from context_builder import lsp_client
+
+        start_calls = 0
+
+        class FailingClient:  # pylint: disable=too-few-public-methods
+            def __init__(self, *_args, **_kwargs):
+                self.client = None
+
+            def start(self):
+                nonlocal start_calls
+                start_calls += 1
+                return False
+
+        instance_key = lsp_client._get_lsp_instance_key(["fail-lsp"])
+
+        with patch.dict(lsp_client.LSP_INSTANCES, {}, clear=True), \
+             patch.dict(lsp_client.LSP_FAILURES, {}, clear=True), \
+             patch.object(lsp_client, "MinimalLSPClient", FailingClient), \
+             patch("time.time", return_value=1000.0):
+
+            # First attempt should fail and call start
+            client = lsp_client._get_or_create_lsp_client(["fail-lsp"])
+            self.assertIsNone(client)
+            self.assertEqual(start_calls, 1)
+            self.assertIn(instance_key, lsp_client.LSP_FAILURES)
+            self.assertEqual(lsp_client.LSP_FAILURES[instance_key]["attempts"], 1)
+            self.assertEqual(lsp_client.LSP_FAILURES[instance_key]["last_attempt_time"], 1000.0)
+
+            # Second attempt immediately (same time) should return None without calling start
+            client2 = lsp_client._get_or_create_lsp_client(["fail-lsp"])
+            self.assertIsNone(client2)
+            self.assertEqual(start_calls, 1)
+
+            # Third attempt within cooldown window (e.g. 50s later) should still return None immediately
+            with patch("time.time", return_value=1050.0):
+                client3 = lsp_client._get_or_create_lsp_client(["fail-lsp"])
+                self.assertIsNone(client3)
+                self.assertEqual(start_calls, 1)
+
+            # Fourth attempt after cooldown (e.g. 61s later) should try again
+            with patch("time.time", return_value=1061.0):
+                client4 = lsp_client._get_or_create_lsp_client(["fail-lsp"])
+                self.assertIsNone(client4)
+                self.assertEqual(start_calls, 2)
+                self.assertEqual(lsp_client.LSP_FAILURES[instance_key]["attempts"], 2)
+                self.assertEqual(lsp_client.LSP_FAILURES[instance_key]["last_attempt_time"], 1061.0)
+
+    def test_get_or_create_lsp_client_retry_limit(self):
+        from context_builder import lsp_client
+
+        start_calls = 0
+
+        class FailingClient:  # pylint: disable=too-few-public-methods
+            def __init__(self, *_args, **_kwargs):
+                self.client = None
+
+            def start(self):
+                nonlocal start_calls
+                start_calls += 1
+                return False
+
+        instance_key = lsp_client._get_lsp_instance_key(["fail-lsp"])
+
+        with patch.dict(lsp_client.LSP_INSTANCES, {}, clear=True), \
+             patch.dict(lsp_client.LSP_FAILURES, {}, clear=True), \
+             patch.object(lsp_client, "MinimalLSPClient", FailingClient):
+
+            # Simulate 3 failures with cooldown between them
+            with patch("time.time", return_value=1000.0):
+                self.assertIsNone(lsp_client._get_or_create_lsp_client(["fail-lsp"]))
+            with patch("time.time", return_value=1100.0):
+                self.assertIsNone(lsp_client._get_or_create_lsp_client(["fail-lsp"]))
+            with patch("time.time", return_value=1200.0):
+                self.assertIsNone(lsp_client._get_or_create_lsp_client(["fail-lsp"]))
+
+            self.assertEqual(start_calls, 3)
+            self.assertEqual(lsp_client.LSP_FAILURES[instance_key]["attempts"], 3)
+
+            # 4th attempt after cooldown should NOT call start because attempts >= max (3)
+            with patch("time.time", return_value=1300.0):
+                client = lsp_client._get_or_create_lsp_client(["fail-lsp"])
+                self.assertIsNone(client)
+                self.assertEqual(start_calls, 3)
+
+    def test_get_or_create_lsp_client_resets_failures_on_success(self):
+        from context_builder import lsp_client
+
+        should_succeed = False
+        start_calls = 0
+
+        class ToggleClient:  # pylint: disable=too-few-public-methods
+            def __init__(self, *_args, **_kwargs):
+                self.client = MagicMock(stopped=False)
+
+            def start(self):
+                nonlocal start_calls
+                start_calls += 1
+                return should_succeed
+
+        instance_key = lsp_client._get_lsp_instance_key(["toggle-lsp"])
+
+        with patch.dict(lsp_client.LSP_INSTANCES, {}, clear=True), \
+             patch.dict(lsp_client.LSP_FAILURES, {}, clear=True), \
+             patch.object(lsp_client, "MinimalLSPClient", ToggleClient):
+
+            # 1. Fail first attempt
+            with patch("time.time", return_value=1000.0):
+                self.assertIsNone(lsp_client._get_or_create_lsp_client(["toggle-lsp"]))
+            self.assertEqual(start_calls, 1)
+            self.assertIn(instance_key, lsp_client.LSP_FAILURES)
+
+            # 2. Succeed on second attempt after cooldown
+            should_succeed = True
+            with patch("time.time", return_value=1100.0):
+                client = lsp_client._get_or_create_lsp_client(["toggle-lsp"])
+                self.assertIsNotNone(client)
+            self.assertEqual(start_calls, 2)
+            self.assertNotIn(instance_key, lsp_client.LSP_FAILURES)
+
     def test_serialize_locations(self):
         from context_builder.lsp_client import _serialize_locations
         from types import SimpleNamespace

@@ -12,6 +12,7 @@ import math
 import os
 import re
 import sys
+import time
 import urllib.parse
 from collections.abc import Mapping
 from pathlib import Path
@@ -29,6 +30,9 @@ from .sys_utils import warn_once
 
 USE_LSP = True
 LSP_INSTANCES = {}
+LSP_FAILURES = {}
+LSP_MAX_START_RETRIES = 3
+LSP_RETRY_COOLDOWN = 60.0
 _LSP_LOCK = threading.Lock()
 _LSP_PROGRESS_BAR_WIDTH = 24
 _find_lsp_func_start_character_ast = find_lsp_func_start_character_ast
@@ -767,6 +771,7 @@ def cleanup_zombie_lsps():
                 except Exception:  # pylint: disable=broad-exception-caught
                     pass
         LSP_INSTANCES.clear()
+        LSP_FAILURES.clear()
 
     with _LOOP_LOCK:
         thread = globals().get("_LOOP_THREAD")
@@ -879,6 +884,15 @@ def _get_or_create_lsp_client(
     """Retrieve or start a client shared by identical server invocations."""
     instance_key = _get_lsp_instance_key(command)
     with _LSP_LOCK:
+        failure_record = LSP_FAILURES.get(instance_key)
+        if failure_record:
+            attempts = failure_record.get("attempts", 0)
+            last_attempt = failure_record.get("last_attempt_time", 0.0)
+            if attempts >= LSP_MAX_START_RETRIES:
+                return None
+            if time.time() - last_attempt < LSP_RETRY_COOLDOWN:
+                return None
+
         cached_client = LSP_INSTANCES.get(instance_key)
         if not _is_lsp_client_alive(cached_client):
             if cached_client is not None:
@@ -887,7 +901,20 @@ def _get_or_create_lsp_client(
                 except Exception:  # pylint: disable=broad-exception-caught
                     pass
             client = MinimalLSPClient(command, init_timeout=init_timeout)
-            LSP_INSTANCES[instance_key] = client if client.start() else None
+            if client.start():
+                LSP_INSTANCES[instance_key] = client
+                LSP_FAILURES.pop(instance_key, None)
+            else:
+                now = time.time()
+                if failure_record:
+                    failure_record["attempts"] += 1
+                    failure_record["last_attempt_time"] = now
+                else:
+                    LSP_FAILURES[instance_key] = {
+                        "attempts": 1,
+                        "last_attempt_time": now,
+                    }
+                LSP_INSTANCES[instance_key] = None
         return LSP_INSTANCES.get(instance_key)
 
 
