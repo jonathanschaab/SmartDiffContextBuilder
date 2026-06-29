@@ -487,6 +487,8 @@ class AstEngine:
 
     def get_query(self, ext, query_string):
         """Return a cached compiled tree-sitter query for ext/query_string."""
+        if not query_string or not isinstance(query_string, str):
+            raise ValueError("Query string must be a non-empty string")
         with self._lock:
             self.initialize()
             ext = ext.lower()
@@ -882,7 +884,7 @@ def extract_callees_ast(file_path, start_line, end_line, ext, file_cache):  # py
                 callees.add(node.text.decode('utf-8', errors='ignore'))
     except AttributeError as ae:
         raise ae
-    except (RuntimeError, ValueError, TreeSitterQueryError) as e:
+    except (RuntimeError, ValueError, TypeError, TreeSitterQueryError) as e:
         raise RuntimeError(f"AST callee extraction failed: {e}") from e
     return callees
 

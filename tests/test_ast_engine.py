@@ -738,6 +738,38 @@ class TestAstEngine(unittest.TestCase):
         self.assertIn("Node object lacks '.text' attribute", str(ctx.exception))
 
     @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_extract_callees_ast_handles_type_error(self, mock_ast_engine):
+        mock_parser = MagicMock()
+        mock_tree = MagicMock()
+        mock_node = MagicMock()
+        mock_node.start_point = (1, 0)
+        mock_node.end_point = (2, 0)
+        mock_tree.root_node.children = [mock_node]
+        mock_parser.parse.return_value = mock_tree
+        mock_ast_engine.parsers = {".py": mock_parser}
+        mock_ast_engine.is_supported.return_value = True
+
+        # mock get_query to raise TypeError
+        mock_ast_engine.get_query.side_effect = TypeError("invalid query")
+
+        from context_builder.ast_engine import extract_callees_ast
+
+        mock_cache = MagicMock()
+        mock_cache.get_bytes.return_value = b"def foo():\n    bar()\n"
+
+        with self.assertRaises(RuntimeError) as ctx:
+            extract_callees_ast("dummy.py", 1, 3, ".py", mock_cache)
+
+        self.assertIn("AST callee extraction failed", str(ctx.exception))
+
+    def test_ast_engine_get_query_invalid_params_raise_value_error(self):
+        from context_builder.ast_engine import AST_ENGINE
+        with self.assertRaises(ValueError):
+            AST_ENGINE.get_query(".py", None)
+        with self.assertRaises(ValueError):
+            AST_ENGINE.get_query(".py", "")
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
     def test_split_massive_block_ast_multiline_signature(self, mock_ast_engine):
         source = (
             "@decorator\n"
