@@ -1329,10 +1329,15 @@ def resolve_local_variable_ast(file_path, var_name, ref_line, file_cache=None): 
     if profile is None:
         return None, None
     captures = []
-    try:
-        query = AST_ENGINE.get_query(ext, profile.declaration_query)
-        captures = query.captures(tree.root_node)
-    except (RuntimeError, ValueError, TreeSitterQueryError):
+    use_fallback = not profile.declaration_query
+    if profile.declaration_query:
+        try:
+            query = AST_ENGINE.get_query(ext, profile.declaration_query)
+            captures = query.captures(tree.root_node)
+        except (RuntimeError, ValueError, TreeSitterQueryError):
+            use_fallback = True
+
+    if use_fallback:
         # Fallback to manual AST traversal
         nodes = []
         stack = [tree.root_node]

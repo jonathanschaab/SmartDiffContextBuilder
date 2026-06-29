@@ -738,7 +738,7 @@ class TestLspClient(unittest.TestCase):
         def timeout_query(coro, _loop):
             coro.close()
             future = concurrent.futures.Future()
-            future.set_exception(TimeoutError())
+            future.set_exception(concurrent.futures.TimeoutError())
             return future
 
         with patch(
@@ -765,7 +765,7 @@ class TestLspClient(unittest.TestCase):
         def timeout_query(coro, _loop):
             coro.close()
             future = concurrent.futures.Future()
-            future.set_exception(TimeoutError())
+            future.set_exception(concurrent.futures.TimeoutError())
             return future
 
         with patch(

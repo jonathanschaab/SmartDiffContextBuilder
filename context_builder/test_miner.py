@@ -90,7 +90,7 @@ def _mine_ast_tests(
 
     try:
         tree = _parse_ast_bytes(ext, source_bytes, AST_ENGINE)
-        query = tree_sitter.Query(AST_ENGINE.get_language(ext), test_query)
+        query = AST_ENGINE.get_query(ext, test_query)
         captures = query.captures(tree.root_node)
         for node, _ in captures:
             _process_ast_capture(
