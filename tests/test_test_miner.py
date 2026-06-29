@@ -1,8 +1,9 @@
 # pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
-# pylint: disable=attribute-defined-outside-init,consider-using-with,line-too-long
+# pylint: disable=attribute-defined-outside-init,consider-using-with,line-too-long,too-many-public-methods
 # pylint: disable=protected-access
 
 import os
+import re
 import unittest
 import tempfile
 from types import SimpleNamespace
@@ -11,7 +12,9 @@ from unittest.mock import Mock, patch
 from context_builder.config import reset_config
 from context_builder.cache import LRUFileCache
 from context_builder import test_miner
-from context_builder.test_miner import get_coverage_data, mine_relevant_unit_tests
+from context_builder.test_miner import (
+    get_coverage_data, mine_relevant_unit_tests, _mine_ast_tests
+)
 
 class TestTestMiner(unittest.TestCase):
     def setUp(self):
@@ -436,3 +439,22 @@ class TestTestMiner(unittest.TestCase):
         # Should match the JS test that has both 'it(' and 'operator+' on the first line
         self.assertEqual(len(tests), 1)
         self.assertEqual(tests[0]["file"], file_path)
+
+    def test_mine_ast_tests_handles_none_tree(self):
+        """Verify that _mine_ast_tests handles None tree/missing root_node safely."""
+        file_path = "test_none_tree.py"
+        lines = ["def test_foo():\n", "    pass\n"]
+        discovered = []
+
+        with patch("context_builder.test_miner._parse_ast_bytes", return_value=None):
+            success = _mine_ast_tests(
+                file_path=file_path,
+                ext=".py",
+                test_pattern=re.compile("foo"),
+                source_bytes=b"def test_foo():\n    pass\n",
+                lines=lines,
+                seen_bodies=set(),
+                discovered_tests=discovered
+            )
+            self.assertFalse(success)
+            self.assertEqual(discovered, [])

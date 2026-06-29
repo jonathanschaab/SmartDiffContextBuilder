@@ -90,6 +90,8 @@ def _mine_ast_tests(
 
     try:
         tree = _parse_ast_bytes(ext, source_bytes, AST_ENGINE)
+        if not tree or not hasattr(tree, "root_node"):
+            return False
         query = AST_ENGINE.get_query(ext, test_query)
         if hasattr(query, "captures"):
             captures = query.captures(tree.root_node)

@@ -1985,3 +1985,24 @@ class TestLspClient(unittest.TestCase):
                     file_cache=file_cache,
                     decorator_lookahead=1,
                 )
+
+    def test_find_lsp_func_start_character_ast_handles_none_tree(self):
+        from context_builder.lsp_client import _find_lsp_func_start_character_ast
+
+        mock_engine = MagicMock()
+        mock_engine.is_supported.return_value = True
+        mock_engine.parse.return_value = None
+        file_cache = MagicMock()
+        file_cache.get_bytes.return_value = b"void target() {}"
+
+        with patch("context_builder.lsp_ast_utils._get_ast_engine", return_value=mock_engine):
+            res = _find_lsp_func_start_character_ast(
+                lines=["void target() {}"],
+                line_num=1,
+                func_name="target",
+                ext=".cpp",
+                file_path="dummy.cpp",
+                file_cache=file_cache,
+                decorator_lookahead=1,
+            )
+            self.assertEqual(res, (-1, 1))
