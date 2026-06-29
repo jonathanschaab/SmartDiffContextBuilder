@@ -3742,3 +3742,15 @@ class TestAstEngine(unittest.TestCase):
             self.assertEqual(res["path"], os.path.relpath(parent_file, os.getcwd()))
             self.assertEqual(res["line"], 2)
             self.assertEqual(res["code"], "int parent_val;")
+
+    def test_align_stripped_to_original_lines_advances_on_miss(self):
+        from context_builder.ast_engine import _align_stripped_to_original_lines
+        from context_builder.config import CONFIG
+
+        lines = ['A', 'B', 'C', 'D', 'E']
+        with patch.dict(CONFIG, {'fallback_strip_lookahead': 3}):
+            result = _align_stripped_to_original_lines(lines, "X\nD\n")
+            # With search_start pointer advancing by 1 on miss:
+            # - 'X' is searched in lines[0:3] and misses (search_start becomes 1)
+            # - 'D' is searched in lines[1:4] and hits at index 3.
+            self.assertEqual(result[3], "D\n")

@@ -278,6 +278,7 @@ def _align_stripped_to_original_lines(lines, stripped):
                 search_start = best_idx + 1
             else:
                 missed_alignment = True
+                search_start = min(original_line_count, search_start + 1)
         if missed_alignment:
             warn_once(
                 "fallback_strip_alignment_missed",
