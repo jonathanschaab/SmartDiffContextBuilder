@@ -254,7 +254,7 @@ def generate_commented_config(active_options):
             'ripgrep_timeout', 'git_timeout', 'git_probe_timeout',
             'no_language_server', 'compare',
             'skip_ffi', 'skip_macro_expansion', 'path_case_rules',
-            'caller_depth', 'callee_depth', 'commit_range', 'build_directories',
+            'caller_depth', 'callee_depth', 'data_depth', 'commit_range', 'build_directories',
             'ignored_directories'
         ],
         "Language Definitions": [

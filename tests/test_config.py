@@ -88,6 +88,9 @@ class TestConfig(unittest.TestCase):
         self.assertIn('// "max_mb": 2.0', config_str)
         self.assertIn('// "base_name": "SmartDiffContextBuilder"', config_str)
         self.assertIn('// "fallback_strip_lookahead": 20', config_str)
+        self.assertIn('// "caller_depth": 1', config_str)
+        self.assertIn('// "callee_depth": 1', config_str)
+        self.assertIn('// "data_depth": 1', config_str)
 
     def test_config_dict_proxy(self):
         from context_builder.config import ConfigDictProxy
