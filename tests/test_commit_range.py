@@ -2,6 +2,7 @@
 # pylint: disable=attribute-defined-outside-init,consider-using-with,line-too-long
 
 import os
+import sys
 import subprocess
 import tempfile
 import unittest
@@ -56,7 +57,7 @@ class TestCommitRangeIntegration(unittest.TestCase):
         # Commit A is print('A'). Commit C is print('C') + world().
         # Let's run with --commit-range CommitA..CommitC
         res = subprocess.run(
-            ["python", self.script_path, "--base-name", "LensDots", "--no-language-server", "--commit-range", f"{self.commit_a}..{self.commit_c}"],
+            [sys.executable, self.script_path, "--base-name", "LensDots", "--no-language-server", "--commit-range", f"{self.commit_a}..{self.commit_c}"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -82,7 +83,7 @@ class TestCommitRangeIntegration(unittest.TestCase):
     def test_range_minus_relative(self):
         # Format: -2 (from HEAD~2, which is Commit A, to HEAD, which is Commit C)
         res = subprocess.run(
-            ["python", self.script_path, "--base-name", "LensMinus", "--no-language-server", "--commit-range", "-2"],
+            [sys.executable, self.script_path, "--base-name", "LensMinus", "--no-language-server", "--commit-range", "-2"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -105,7 +106,7 @@ class TestCommitRangeIntegration(unittest.TestCase):
     def test_range_plus_relative(self):
         # Format: CommitA+2 (from Commit A, plus 2 chronological commits, which lands on Commit C)
         res = subprocess.run(
-            ["python", self.script_path, "--base-name", "LensPlus", "--no-language-server", "--commit-range", f"{self.commit_a}+2"],
+            [sys.executable, self.script_path, "--base-name", "LensPlus", "--no-language-server", "--commit-range", f"{self.commit_a}+2"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -128,7 +129,7 @@ class TestCommitRangeIntegration(unittest.TestCase):
     def test_range_end_minus_relative(self):
         # Format: CommitC-2 (Commit C minus 2 commits, starts at Commit A, ends at Commit C)
         res = subprocess.run(
-            ["python", self.script_path, "--base-name", "LensEndMinus", "--no-language-server", "--commit-range", f"{self.commit_c}-2"],
+            [sys.executable, self.script_path, "--base-name", "LensEndMinus", "--no-language-server", "--commit-range", f"{self.commit_c}-2"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -151,7 +152,7 @@ class TestCommitRangeIntegration(unittest.TestCase):
     def test_invalid_range_handling(self):
         # Invalid format or unresolved commit ref
         res = subprocess.run(
-            ["python", self.script_path, "--commit-range", "non_existent_ref..HEAD"],
+            [sys.executable, self.script_path, "--commit-range", "non_existent_ref..HEAD"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,

@@ -17,6 +17,10 @@ class BatchProfile(LanguageProfile):
     comment_prefix = "REM"
     line_comment = "REM"
     supports_block_comments = False
+    keywords = frozenset({
+        'echo', 'rem', 'set', 'if', 'else', 'for', 'in', 'do', 'goto', 'call',
+        'exit', 'pause', 'choice', 'shift', 'setlocal', 'endlocal', 'errorlevel'
+    })
 
     def strip_strings_and_comments(self, line):
         """Strip case-insensitive REM tokens and double-colon :: comments."""

@@ -5,6 +5,7 @@
 # pylint: disable=broad-exception-caught
 
 import os
+import concurrent.futures
 import subprocess
 import tempfile
 import unittest
@@ -1007,6 +1008,51 @@ class TestSysUtils(unittest.TestCase):
             if call.args == (expected_input,)
         ]
         self.assertEqual(len(normalized_calls), 1)
+
+    def test_normalized_search_path_cache_holds_owner_lock(self):
+        """Path cache reads and writes are synchronized by the module owner."""
+        observed_lock_states = []
+
+        class TrackingDict(dict):
+            def get(self, *args, **kwargs):
+                observed_lock_states.append(
+                    sys_utils._NORMALIZED_PATH_CACHE_LOCK._is_owned()
+                )
+                return super().get(*args, **kwargs)
+
+            def setdefault(self, *args, **kwargs):
+                observed_lock_states.append(
+                    sys_utils._NORMALIZED_PATH_CACHE_LOCK._is_owned()
+                )
+                return super().setdefault(*args, **kwargs)
+
+        original_cache = sys_utils._NORMALIZED_PATH_CACHE
+        try:
+            sys_utils._NORMALIZED_PATH_CACHE = TrackingDict()
+            sys_utils._get_cached_absolute_path("src/a.py", os.getcwd())
+        finally:
+            sys_utils._NORMALIZED_PATH_CACHE = original_cache
+            sys_utils._NORMALIZED_PATH_CACHE.clear()
+
+        self.assertEqual(observed_lock_states, [True, True])
+
+    def test_warn_once_is_thread_safe(self):
+        """Concurrent warning attempts still emit a single message."""
+        sys_utils.WARNED_MISSING_DEPS.clear()
+
+        try:
+            with patch("builtins.print") as mock_print:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+                    list(
+                        executor.map(
+                            lambda _: sys_utils.warn_once("shared_warning", "message"),
+                            range(32),
+                        )
+                    )
+
+            self.assertEqual(mock_print.call_count, 1)
+        finally:
+            sys_utils.WARNED_MISSING_DEPS.discard("shared_warning")
 
     def test_normalized_search_paths_resolve_relative_to_supplied_cwd(self):
         """Relative results use the search cwd, not the process cwd."""

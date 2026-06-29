@@ -8,7 +8,9 @@ import unittest
 import asyncio
 import concurrent.futures
 import io
+import threading
 import time
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch, AsyncMock
 
 import lsprotocol.types as types
@@ -27,6 +29,22 @@ from context_builder.lsp_client import (
 )
 
 class TestLspClient(unittest.TestCase):
+    @contextmanager
+    def _lsp_ast_cache(self, ext, parser, language):
+        mock_engine = MagicMock()
+        mock_engine.is_supported.return_value = True
+        mock_engine.parse.side_effect = lambda query_ext, source_bytes: (
+            parser.parse(source_bytes)
+            if query_ext == ext
+            else None
+        )
+        mock_engine.get_query.side_effect = lambda _query_ext, q_str: language.query(q_str)
+        try:
+            with patch("context_builder.lsp_ast_utils._get_ast_engine", return_value=mock_engine):
+                yield mock_engine
+        finally:
+            pass
+
     def test_lsp_progress_reporter_renders_non_tty_milestones(self):
         stream = io.StringIO()
         reporter = LSPProgressReporter("clangd")
@@ -283,6 +301,7 @@ class TestLspClient(unittest.TestCase):
         client = MinimalLSPClient(["some_lsp_binary"])
         client.client = mock_client
         client.start = MagicMock(return_value=True)
+        client.cleanup = MagicMock()
 
         def mock_run_coroutine(coro, _loop):
             coro.close()
@@ -301,6 +320,7 @@ class TestLspClient(unittest.TestCase):
 
         self.assertEqual(refs, [])
         self.assertTrue(duration < 0.5)
+        client.cleanup.assert_called_once_with(force_kill=True)
 
     @patch("context_builder.lsp_client.USE_LSP", True)
     @patch("context_builder.lsp_client.LSP_INSTANCES")
@@ -713,11 +733,12 @@ class TestLspClient(unittest.TestCase):
     def test_lsp_query_timeout_warning_explains_configuration(self, mock_warn):
         client = MinimalLSPClient(["some_lsp_binary"])
         client.client = MagicMock(stopped=False)
+        client.cleanup = MagicMock()
 
         def timeout_query(coro, _loop):
             coro.close()
             future = concurrent.futures.Future()
-            future.set_exception(TimeoutError())
+            future.set_exception(concurrent.futures.TimeoutError())
             return future
 
         with patch(
@@ -734,6 +755,86 @@ class TestLspClient(unittest.TestCase):
         self.assertIn("12.5 seconds", warning)
         self.assertIn("--lsp-timeout", warning)
         self.assertIn("'lsp_timeout'", warning)
+        client.cleanup.assert_called_once_with(force_kill=True)
+
+    def test_lsp_definition_timeouts_force_cleanup(self):
+        client = MinimalLSPClient(["some_lsp_binary"])
+        client.client = MagicMock(stopped=False)
+        client.cleanup = MagicMock()
+
+        def timeout_query(coro, _loop):
+            coro.close()
+            future = concurrent.futures.Future()
+            future.set_exception(concurrent.futures.TimeoutError())
+            return future
+
+        with patch(
+            "asyncio.run_coroutine_threadsafe",
+            side_effect=timeout_query,
+        ), patch("context_builder.lsp_client.warn_once"):
+            self.assertEqual(client.get_definition("file.py", 1, 0, timeout=1.0), [])
+            self.assertEqual(
+                client.get_type_definition("file.py", 1, 0, timeout=1.0),
+                [],
+            )
+
+        self.assertEqual(client.cleanup.call_count, 2)
+        client.cleanup.assert_any_call(force_kill=True)
+
+    def test_lsp_query_submission_releases_lock_before_waiting(self):
+        client = MinimalLSPClient(["some_lsp_binary"])
+        client.client = MagicMock(stopped=False)
+        observed_submit_lock_states = []
+        observed_wait_lock_states = []
+
+        class TrackingFuture:
+            def result(self, timeout=None):
+                observed_wait_lock_states.append(client._lock._is_owned())
+                return []
+
+            def cancel(self):
+                return None
+
+        def successful_query(coro, _loop):
+            observed_submit_lock_states.append(client._lock._is_owned())
+            coro.close()
+            return TrackingFuture()
+
+        with patch(
+            "asyncio.run_coroutine_threadsafe",
+            side_effect=successful_query,
+        ):
+            self.assertEqual(client.get_definition("file.py", 1, 0, timeout=1.0), [])
+
+        self.assertEqual(observed_submit_lock_states, [True])
+        self.assertEqual(observed_wait_lock_states, [False])
+
+    def test_lsp_cleanup_holds_lifecycle_lock(self):
+        client = MinimalLSPClient(["some_lsp_binary"])
+        client.client = MagicMock(stopped=True)
+        observed_lock_states = []
+
+        def fake_kill(_client):
+            observed_lock_states.append(client._lock._is_owned())
+
+        def successful_cleanup(coro, _loop):
+            observed_lock_states.append(client._lock._is_owned())
+            coro.close()
+            future = concurrent.futures.Future()
+            future.set_result(None)
+            return future
+
+        with patch(
+            "context_builder.lsp_client._kill_lsp_process",
+            side_effect=fake_kill,
+        ), patch(
+            "asyncio.run_coroutine_threadsafe",
+            side_effect=successful_cleanup,
+        ):
+            client.cleanup(force_kill=True)
+
+        self.assertGreaterEqual(len(observed_lock_states), 2)
+        self.assertTrue(all(observed_lock_states))
 
     @patch("context_builder.lsp_client.warn_once")
     def test_invalid_lsp_timeouts_warn_and_use_defaults(self, mock_warn):
@@ -1261,20 +1362,10 @@ class TestLspClient(unittest.TestCase):
                 self.assertFalse(success)
                 mock_cleanup.assert_called_once_with(force_kill=False)
 
-    @patch("context_builder.ast_engine.HAS_TREESITTER", True)
     def test_find_lsp_func_start_character_ast_matching_cpp(self):
-        from context_builder.ast_engine import AST_ENGINE
-
-        orig_init = AST_ENGINE._initialized
-        orig_parsers = AST_ENGINE.parsers.copy()
-        orig_languages = AST_ENGINE.languages.copy()
-        try:
-            AST_ENGINE._initialized = True
-            mock_parser = MagicMock()
-            mock_lang = MagicMock()
-            AST_ENGINE.parsers = {".cpp": mock_parser}
-            AST_ENGINE.languages = {".cpp": mock_lang}
-
+        mock_parser = MagicMock()
+        mock_lang = MagicMock()
+        with self._lsp_ast_cache(".cpp", mock_parser, mock_lang):
             mock_tree = MagicMock()
             mock_parser.parse.return_value = mock_tree
 
@@ -1293,36 +1384,23 @@ class TestLspClient(unittest.TestCase):
             file_cache = MagicMock()
             file_cache.get_bytes.return_value = b"Widget* WidgetFactory::Widget()"
 
-            actual_line, char_idx = _find_lsp_func_start_character(
-                lines,
-                line_num=1,
-                func_name="Widget",
-                ext=".cpp",
-                file_path="dummy.cpp",
-                file_cache=file_cache,
-            )
+            with patch("tree_sitter.Query", return_value=mock_query):
+                actual_line, char_idx = _find_lsp_func_start_character(
+                    lines,
+                    line_num=1,
+                    func_name="Widget",
+                    ext=".cpp",
+                    file_path="dummy.cpp",
+                    file_cache=file_cache,
+                )
 
             self.assertEqual(actual_line, 1)
             self.assertEqual(char_idx, 23)
-        finally:
-            AST_ENGINE._initialized = orig_init
-            AST_ENGINE.parsers = orig_parsers
-            AST_ENGINE.languages = orig_languages
 
-    @patch("context_builder.ast_engine.HAS_TREESITTER", True)
     def test_find_lsp_func_start_character_ast_matching_cpp_out_of_line_destructor(self):
-        from context_builder.ast_engine import AST_ENGINE
-
-        orig_init = AST_ENGINE._initialized
-        orig_parsers = AST_ENGINE.parsers.copy()
-        orig_languages = AST_ENGINE.languages.copy()
-        try:
-            AST_ENGINE._initialized = True
-            mock_parser = MagicMock()
-            mock_lang = MagicMock()
-            AST_ENGINE.parsers = {".cpp": mock_parser}
-            AST_ENGINE.languages = {".cpp": mock_lang}
-
+        mock_parser = MagicMock()
+        mock_lang = MagicMock()
+        with self._lsp_ast_cache(".cpp", mock_parser, mock_lang):
             mock_tree = MagicMock()
             mock_parser.parse.return_value = mock_tree
 
@@ -1341,36 +1419,23 @@ class TestLspClient(unittest.TestCase):
             file_cache = MagicMock()
             file_cache.get_bytes.return_value = b"MyClass::~MyClass()"
 
-            actual_line, char_idx = _find_lsp_func_start_character(
-                lines,
-                line_num=1,
-                func_name="~MyClass",
-                ext=".cpp",
-                file_path="dummy.cpp",
-                file_cache=file_cache,
-            )
+            with patch("tree_sitter.Query", return_value=mock_query):
+                actual_line, char_idx = _find_lsp_func_start_character(
+                    lines,
+                    line_num=1,
+                    func_name="~MyClass",
+                    ext=".cpp",
+                    file_path="dummy.cpp",
+                    file_cache=file_cache,
+                )
 
             self.assertEqual(actual_line, 1)
             self.assertEqual(char_idx, 9)
-        finally:
-            AST_ENGINE._initialized = orig_init
-            AST_ENGINE.parsers = orig_parsers
-            AST_ENGINE.languages = orig_languages
 
-    @patch("context_builder.ast_engine.HAS_TREESITTER", True)
     def test_find_lsp_func_start_character_ast_matching_rust(self):
-        from context_builder.ast_engine import AST_ENGINE
-
-        orig_init = AST_ENGINE._initialized
-        orig_parsers = AST_ENGINE.parsers.copy()
-        orig_languages = AST_ENGINE.languages.copy()
-        try:
-            AST_ENGINE._initialized = True
-            mock_parser = MagicMock()
-            mock_lang = MagicMock()
-            AST_ENGINE.parsers = {".rs": mock_parser}
-            AST_ENGINE.languages = {".rs": mock_lang}
-
+        mock_parser = MagicMock()
+        mock_lang = MagicMock()
+        with self._lsp_ast_cache(".rs", mock_parser, mock_lang):
             mock_tree = MagicMock()
             mock_parser.parse.return_value = mock_tree
 
@@ -1388,21 +1453,18 @@ class TestLspClient(unittest.TestCase):
             file_cache = MagicMock()
             file_cache.get_bytes.return_value = b"fn test() {}"
 
-            actual_line, char_idx = _find_lsp_func_start_character(
-                lines,
-                line_num=1,
-                func_name="test",
-                ext=".rs",
-                file_path="dummy.rs",
-                file_cache=file_cache,
-            )
+            with patch("tree_sitter.Query", return_value=mock_query):
+                actual_line, char_idx = _find_lsp_func_start_character(
+                    lines,
+                    line_num=1,
+                    func_name="test",
+                    ext=".rs",
+                    file_path="dummy.rs",
+                    file_cache=file_cache,
+                )
 
             self.assertEqual(actual_line, 1)
             self.assertEqual(char_idx, 3)
-        finally:
-            AST_ENGINE._initialized = orig_init
-            AST_ENGINE.parsers = orig_parsers
-            AST_ENGINE.languages = orig_languages
 
     def test_find_lsp_func_start_character_utf16_surrogate_pairs_regex(self):
         # 🦊 is 4 bytes in UTF-8, and occupies 2 code units in UTF-16.
@@ -1418,20 +1480,10 @@ class TestLspClient(unittest.TestCase):
         self.assertEqual(actual_line, 1)
         self.assertEqual(char_idx, 2)
 
-    @patch("context_builder.ast_engine.HAS_TREESITTER", True)
     def test_find_lsp_func_start_character_utf16_surrogate_pairs_ast(self):
-        from context_builder.ast_engine import AST_ENGINE
-
-        orig_init = AST_ENGINE._initialized
-        orig_parsers = AST_ENGINE.parsers.copy()
-        orig_languages = AST_ENGINE.languages.copy()
-        try:
-            AST_ENGINE._initialized = True
-            mock_parser = MagicMock()
-            mock_lang = MagicMock()
-            AST_ENGINE.parsers = {".cpp": mock_parser}
-            AST_ENGINE.languages = {".cpp": mock_lang}
-
+        mock_parser = MagicMock()
+        mock_lang = MagicMock()
+        with self._lsp_ast_cache(".cpp", mock_parser, mock_lang):
             mock_tree = MagicMock()
             mock_parser.parse.return_value = mock_tree
 
@@ -1449,21 +1501,18 @@ class TestLspClient(unittest.TestCase):
             file_cache = MagicMock()
             file_cache.get_bytes.return_value = "🦊_foo()".encode("utf-8")
 
-            actual_line, char_idx = _find_lsp_func_start_character(
-                lines,
-                line_num=1,
-                func_name="foo",
-                ext=".cpp",
-                file_path="dummy.cpp",
-                file_cache=file_cache,
-            )
+            with patch("tree_sitter.Query", return_value=mock_query):
+                actual_line, char_idx = _find_lsp_func_start_character(
+                    lines,
+                    line_num=1,
+                    func_name="foo",
+                    ext=".cpp",
+                    file_path="dummy.cpp",
+                    file_cache=file_cache,
+                )
 
             self.assertEqual(actual_line, 1)
             self.assertEqual(char_idx, 3)
-        finally:
-            AST_ENGINE._initialized = orig_init
-            AST_ENGINE.parsers = orig_parsers
-            AST_ENGINE.languages = orig_languages
 
     def test_find_lsp_func_start_character_fails_returns_minus_one(self):
         lines = ["void bar() {}"]
@@ -1506,6 +1555,7 @@ class TestLspClient(unittest.TestCase):
 
         self.assertIsNone(res)
         mock_warn.assert_called_once()
+        mock_get_profile.assert_called_once_with("dummy.cpp")
         # Ensure it didn't call the client to get references
         mock_client.get_references.assert_not_called()
 
@@ -1632,3 +1682,327 @@ class TestLspClient(unittest.TestCase):
                 if len(call[0]) > 0 and isinstance(call[0][0], str) and "db.py" in call[0][0]
             )
             self.assertEqual(db_py_calls, 1)
+
+    @patch("context_builder.lsp_client.USE_LSP", True)
+    @patch("context_builder.lsp_client.LSP_INSTANCES")
+    def test_get_lsp_definition_and_type_definition(self, mock_instances):
+        from context_builder.lsp_client import get_lsp_definition, get_lsp_type_definition
+
+        mock_client = MagicMock()
+        mock_instances.get.return_value = mock_client
+        mock_instances.__contains__.return_value = True
+
+        mock_client.get_definition.return_value = [{
+            "uri": "file:///c:/path/to/def.py",
+            "range": {
+                "start": {"line": 10, "character": 0},
+                "end": {"line": 10, "character": 10}
+            }
+        }]
+
+        mock_client.get_type_definition.return_value = [{
+            "uri": "file:///c:/path/to/type.py",
+            "range": {
+                "start": {"line": 20, "character": 0},
+                "end": {"line": 20, "character": 10}
+            }
+        }]
+
+        with patch("os.path.splitext", return_value=("", ".py")), \
+             patch("context_builder.lsp_client.get_language_profile") as mock_profile_getter:
+
+            mock_profile = MagicMock()
+            mock_profile.lsp_command = ["some-lsp"]
+            mock_profile_getter.return_value = mock_profile
+
+            defs = get_lsp_definition("dummy.py", 1, 5, timeout=5)
+            self.assertEqual(len(defs), 1)
+            self.assertEqual(defs[0]["uri"], "file:///c:/path/to/def.py")
+
+            type_defs = get_lsp_type_definition("dummy.py", 1, 5, timeout=5)
+            self.assertEqual(len(type_defs), 1)
+            self.assertEqual(type_defs[0]["uri"], "file:///c:/path/to/type.py")
+            self.assertEqual(
+                [call_args.args[0] for call_args in mock_profile_getter.call_args_list],
+                ["dummy.py", "dummy.py"],
+            )
+
+    def test_get_or_create_lsp_client_is_synchronized(self):
+        from context_builder import lsp_client
+
+        start_count = 0
+        start_lock = threading.Lock()
+
+        class SlowClient:  # pylint: disable=too-few-public-methods
+            def __init__(self, *_args, **_kwargs):
+                self.client = MagicMock(stopped=False)
+
+            def start(self):
+                nonlocal start_count
+                time.sleep(0.05)
+                with start_lock:
+                    start_count += 1
+                return True
+
+        with patch.dict(lsp_client.LSP_INSTANCES, {}, clear=True), patch.object(
+            lsp_client, "MinimalLSPClient", SlowClient
+        ):
+            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+                clients = list(
+                    executor.map(
+                        lambda _: lsp_client._get_or_create_lsp_client(["slow-lsp"]),
+                        range(4),
+                    )
+                )
+
+        self.assertEqual(start_count, 1)
+        self.assertTrue(all(client is clients[0] for client in clients))
+
+    def test_get_or_create_lsp_client_recreates_dead_cached_client(self):
+        from context_builder import lsp_client
+
+        cached_client = MagicMock()
+        cached_client.client = MagicMock(stopped=True)
+        started_clients = []
+
+        class ReplacementClient:  # pylint: disable=too-few-public-methods
+            def __init__(self, *_args, **_kwargs):
+                self.client = MagicMock(stopped=False)
+
+            def start(self):
+                started_clients.append(self)
+                return True
+
+        instance_key = lsp_client._get_lsp_instance_key(["dead-lsp"])
+        with patch.dict(
+            lsp_client.LSP_INSTANCES, {instance_key: cached_client}, clear=True
+        ), patch.object(lsp_client, "MinimalLSPClient", ReplacementClient):
+            client = lsp_client._get_or_create_lsp_client(["dead-lsp"])
+
+        self.assertIs(client, started_clients[0])
+        cached_client.cleanup.assert_called_once_with(force_kill=True)
+
+    def test_get_or_create_lsp_client_recreates_none_cached_client(self):
+        from context_builder import lsp_client
+
+        started_clients = []
+
+        class ReplacementClient:  # pylint: disable=too-few-public-methods
+            def __init__(self, *_args, **_kwargs):
+                self.client = MagicMock(stopped=False)
+
+            def start(self):
+                started_clients.append(self)
+                return True
+
+        instance_key = lsp_client._get_lsp_instance_key(["none-lsp"])
+        with patch.dict(
+            lsp_client.LSP_INSTANCES, {instance_key: None}, clear=True
+        ), patch.object(lsp_client, "MinimalLSPClient", ReplacementClient):
+            client = lsp_client._get_or_create_lsp_client(["none-lsp"])
+
+        self.assertIs(client, started_clients[0])
+
+    def test_get_or_create_lsp_client_failure_caching_and_cooldown(self):
+        from context_builder import lsp_client
+
+        start_calls = 0
+
+        class FailingClient:  # pylint: disable=too-few-public-methods
+            def __init__(self, *_args, **_kwargs):
+                self.client = None
+
+            def start(self):
+                nonlocal start_calls
+                start_calls += 1
+                return False
+
+        instance_key = lsp_client._get_lsp_instance_key(["fail-lsp"])
+
+        with patch.dict(lsp_client.LSP_INSTANCES, {}, clear=True), \
+             patch.dict(lsp_client.LSP_FAILURES, {}, clear=True), \
+             patch.object(lsp_client, "MinimalLSPClient", FailingClient), \
+             patch("time.time", return_value=1000.0):
+
+            # First attempt should fail and call start
+            client = lsp_client._get_or_create_lsp_client(["fail-lsp"])
+            self.assertIsNone(client)
+            self.assertEqual(start_calls, 1)
+            self.assertIn(instance_key, lsp_client.LSP_FAILURES)
+            self.assertEqual(lsp_client.LSP_FAILURES[instance_key]["attempts"], 1)
+            self.assertEqual(lsp_client.LSP_FAILURES[instance_key]["last_attempt_time"], 1000.0)
+
+            # Second attempt immediately (same time) should return None without calling start
+            client2 = lsp_client._get_or_create_lsp_client(["fail-lsp"])
+            self.assertIsNone(client2)
+            self.assertEqual(start_calls, 1)
+
+            # Third attempt within cooldown window (e.g. 50s later) should still return None immediately
+            with patch("time.time", return_value=1050.0):
+                client3 = lsp_client._get_or_create_lsp_client(["fail-lsp"])
+                self.assertIsNone(client3)
+                self.assertEqual(start_calls, 1)
+
+            # Fourth attempt after cooldown (e.g. 61s later) should try again
+            with patch("time.time", return_value=1061.0):
+                client4 = lsp_client._get_or_create_lsp_client(["fail-lsp"])
+                self.assertIsNone(client4)
+                self.assertEqual(start_calls, 2)
+                self.assertEqual(lsp_client.LSP_FAILURES[instance_key]["attempts"], 2)
+                self.assertEqual(lsp_client.LSP_FAILURES[instance_key]["last_attempt_time"], 1061.0)
+
+    def test_get_or_create_lsp_client_retry_limit(self):
+        from context_builder import lsp_client
+
+        start_calls = 0
+
+        class FailingClient:  # pylint: disable=too-few-public-methods
+            def __init__(self, *_args, **_kwargs):
+                self.client = None
+
+            def start(self):
+                nonlocal start_calls
+                start_calls += 1
+                return False
+
+        instance_key = lsp_client._get_lsp_instance_key(["fail-lsp"])
+
+        with patch.dict(lsp_client.LSP_INSTANCES, {}, clear=True), \
+             patch.dict(lsp_client.LSP_FAILURES, {}, clear=True), \
+             patch.object(lsp_client, "MinimalLSPClient", FailingClient):
+
+            # Simulate 3 failures with cooldown between them
+            with patch("time.time", return_value=1000.0):
+                self.assertIsNone(lsp_client._get_or_create_lsp_client(["fail-lsp"]))
+            with patch("time.time", return_value=1100.0):
+                self.assertIsNone(lsp_client._get_or_create_lsp_client(["fail-lsp"]))
+            with patch("time.time", return_value=1200.0):
+                self.assertIsNone(lsp_client._get_or_create_lsp_client(["fail-lsp"]))
+
+            self.assertEqual(start_calls, 3)
+            self.assertEqual(lsp_client.LSP_FAILURES[instance_key]["attempts"], 3)
+
+            # 4th attempt after cooldown should NOT call start because attempts >= max (3)
+            with patch("time.time", return_value=1300.0):
+                client = lsp_client._get_or_create_lsp_client(["fail-lsp"])
+                self.assertIsNone(client)
+                self.assertEqual(start_calls, 3)
+
+    def test_get_or_create_lsp_client_resets_failures_on_success(self):
+        from context_builder import lsp_client
+
+        should_succeed = False
+        start_calls = 0
+
+        class ToggleClient:  # pylint: disable=too-few-public-methods
+            def __init__(self, *_args, **_kwargs):
+                self.client = MagicMock(stopped=False)
+
+            def start(self):
+                nonlocal start_calls
+                start_calls += 1
+                return should_succeed
+
+        instance_key = lsp_client._get_lsp_instance_key(["toggle-lsp"])
+
+        with patch.dict(lsp_client.LSP_INSTANCES, {}, clear=True), \
+             patch.dict(lsp_client.LSP_FAILURES, {}, clear=True), \
+             patch.object(lsp_client, "MinimalLSPClient", ToggleClient):
+
+            # 1. Fail first attempt
+            with patch("time.time", return_value=1000.0):
+                self.assertIsNone(lsp_client._get_or_create_lsp_client(["toggle-lsp"]))
+            self.assertEqual(start_calls, 1)
+            self.assertIn(instance_key, lsp_client.LSP_FAILURES)
+
+            # 2. Succeed on second attempt after cooldown
+            should_succeed = True
+            with patch("time.time", return_value=1100.0):
+                client = lsp_client._get_or_create_lsp_client(["toggle-lsp"])
+                self.assertIsNotNone(client)
+            self.assertEqual(start_calls, 2)
+            self.assertNotIn(instance_key, lsp_client.LSP_FAILURES)
+
+    def test_serialize_locations(self):
+        from context_builder.lsp_client import _serialize_locations
+        from types import SimpleNamespace
+
+        loc = SimpleNamespace(
+            uri="file:///a.py",
+            range=SimpleNamespace(
+                start=SimpleNamespace(line=1, character=2),
+                end=SimpleNamespace(line=3, character=4)
+            )
+        )
+        res = _serialize_locations(loc)
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0]["uri"], "file:///a.py")
+        self.assertEqual(res[0]["range"]["start"]["line"], 1)
+
+        link = SimpleNamespace(
+            target_uri="file:///b.py",
+            target_range=SimpleNamespace(
+                start=SimpleNamespace(line=5, character=6),
+                end=SimpleNamespace(line=7, character=8)
+            )
+        )
+        res2 = _serialize_locations(link)
+        self.assertEqual(len(res2), 1)
+        self.assertEqual(res2[0]["targetUri"], "file:///b.py")
+
+    def test_find_lsp_func_start_character_ast_no_treesitter(self):
+        from context_builder.lsp_client import _find_lsp_func_start_character_ast
+
+        with patch("context_builder.lsp_ast_utils.tree_sitter", None):
+            res = _find_lsp_func_start_character_ast(
+                lines=["def foo():"],
+                line_num=10,
+                func_name="foo",
+                ext=".py",
+                file_path="dummy.py",
+                file_cache=MagicMock(),
+                decorator_lookahead=0
+            )
+            self.assertEqual(res, (-1, 10))
+
+    def test_find_lsp_func_start_character_ast_propagates_memory_error(self):
+        from context_builder.lsp_client import _find_lsp_func_start_character_ast
+
+        mock_engine = MagicMock()
+        mock_engine.is_supported.return_value = True
+        mock_engine.parse.side_effect = MemoryError("out of memory")
+        file_cache = MagicMock()
+        file_cache.get_bytes.return_value = b"void target() {}"
+
+        with patch("context_builder.lsp_ast_utils._get_ast_engine", return_value=mock_engine):
+            with self.assertRaises(MemoryError):
+                _find_lsp_func_start_character_ast(
+                    lines=["void target() {}"],
+                    line_num=1,
+                    func_name="target",
+                    ext=".cpp",
+                    file_path="dummy.cpp",
+                    file_cache=file_cache,
+                    decorator_lookahead=1,
+                )
+
+    def test_find_lsp_func_start_character_ast_handles_none_tree(self):
+        from context_builder.lsp_client import _find_lsp_func_start_character_ast
+
+        mock_engine = MagicMock()
+        mock_engine.is_supported.return_value = True
+        mock_engine.parse.return_value = None
+        file_cache = MagicMock()
+        file_cache.get_bytes.return_value = b"void target() {}"
+
+        with patch("context_builder.lsp_ast_utils._get_ast_engine", return_value=mock_engine):
+            res = _find_lsp_func_start_character_ast(
+                lines=["void target() {}"],
+                line_num=1,
+                func_name="target",
+                ext=".cpp",
+                file_path="dummy.cpp",
+                file_cache=file_cache,
+                decorator_lookahead=1,
+            )
+            self.assertEqual(res, (-1, 1))

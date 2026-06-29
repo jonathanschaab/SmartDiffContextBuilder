@@ -35,6 +35,14 @@ class LanguageProfile:
     lsp_command = None
     test_query = None
     tests_can_share_source_file = False
+    keywords = frozenset()
+    # Subset of keywords that are flow-control / statement keywords and can
+    # never appear as a type name before a variable declaration.  Used by
+    # is_line_definition_of_var to avoid false positives like `return x;`
+    # being treated as a definition of `x`.  Each language profile should
+    # override this with the appropriate set.
+    flow_keywords = frozenset()
+    declaration_query = "[(variable_declaration) @decl (assignment_expression) @assign]"
     multiline_string_delimiters = ()
     supports_cpp_raw_strings = False
     supports_rust_raw_strings = False

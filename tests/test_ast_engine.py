@@ -6,6 +6,7 @@
 
 import os
 import unittest
+from collections import OrderedDict
 from unittest.mock import ANY, patch, MagicMock
 import tempfile
 from types import SimpleNamespace
@@ -29,6 +30,33 @@ class TestAstEngine(unittest.TestCase):
 
     def tearDown(self):
         self.temp_dir.cleanup()
+
+    def test_tree_sitter_query_cache_reuses_compiled_queries(self):
+        from context_builder import ast_engine
+
+        orig_initialized = ast_engine.AST_ENGINE._initialized
+        orig_languages = ast_engine.AST_ENGINE.languages.copy()
+        orig_queries = ast_engine.AST_ENGINE.queries.copy()
+        try:
+            ast_engine.AST_ENGINE._initialized = True
+            ast_engine.AST_ENGINE.languages = {".py": MagicMock()}
+            ast_engine.AST_ENGINE.queries = OrderedDict()
+
+            compiled_query = MagicMock()
+            with patch(
+                "context_builder.ast_engine.tree_sitter.Query",
+                return_value=compiled_query,
+            ) as mock_query:
+                first = ast_engine.AST_ENGINE.get_query(".PY", "(identifier) @name")
+                second = ast_engine.AST_ENGINE.get_query(".py", "(identifier) @name")
+
+            self.assertIs(first, compiled_query)
+            self.assertIs(second, compiled_query)
+            mock_query.assert_called_once()
+        finally:
+            ast_engine.AST_ENGINE._initialized = orig_initialized
+            ast_engine.AST_ENGINE.languages = orig_languages
+            ast_engine.AST_ENGINE.queries = orig_queries
 
     def test_strip_strings_and_comments(self):
         self.assertEqual(
@@ -116,19 +144,22 @@ class TestAstEngine(unittest.TestCase):
         self.assertEqual(result[0]["suffix"], " (Truncated)")
         self.assertIn("line1\nline2", result[0]["text"])
 
-    def test_split_massive_block_ast_python_fallback(self):
+    @patch("context_builder.ast_engine.AST_ENGINE.is_supported", return_value=False)
+    def test_split_massive_block_ast_python_fallback(self, _mock_is_supported):
         source = "line1\nline2\nline3\nline4\n"
         result = split_massive_block_ast(source, "file.py", max_lines=2)
         self.assertEqual(result[0]["suffix"], " (Truncated)")
         self.assertIn("# ... [Lines Omitted due to size] ...", result[0]["text"])
 
-    def test_split_massive_block_ast_cpp_fallback(self):
+    @patch("context_builder.ast_engine.AST_ENGINE.is_supported", return_value=False)
+    def test_split_massive_block_ast_cpp_fallback(self, _mock_is_supported):
         source = "line1\nline2\nline3\nline4\n"
         result = split_massive_block_ast(source, "file.cpp", max_lines=2)
         self.assertEqual(result[0]["suffix"], " (Truncated)")
         self.assertIn("/* ... [Lines Omitted due to size] ... */", result[0]["text"])
 
-    def test_split_massive_block_ast_java_fallback(self):
+    @patch("context_builder.ast_engine.AST_ENGINE.is_supported", return_value=False)
+    def test_split_massive_block_ast_java_fallback(self, _mock_is_supported):
         source = "line1\nline2\nline3\nline4\n"
         result = split_massive_block_ast(source, "file.java", max_lines=2)
         self.assertEqual(result[0]["suffix"], " (Truncated)")
@@ -656,8 +687,8 @@ class TestAstEngine(unittest.TestCase):
         mock_lang = MagicMock()
         mock_query = MagicMock()
         mock_query.captures.return_value = [(mock_node, "id")]
-        mock_lang.query.return_value = mock_query
         mock_ast_engine.languages = {".py": mock_lang}
+        mock_ast_engine.get_query.return_value = mock_query
 
         from context_builder.ast_engine import extract_callees_ast
 
@@ -668,6 +699,121 @@ class TestAstEngine(unittest.TestCase):
             extract_callees_ast("dummy.py", 1, 3, ".py", mock_cache)
 
         self.assertIn("Node object lacks '.text' attribute", str(ctx.exception))
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_extract_callees_node_malformed_start_point(self, mock_ast_engine):
+        mock_parser = MagicMock()
+        mock_tree = MagicMock()
+        mock_node = MagicMock()
+
+        # Make start_point throw AttributeError / TypeError
+        del mock_node.start_point
+        del mock_node.end_point
+
+        mock_tree.root_node.children = [mock_node]
+        mock_parser.parse.return_value = mock_tree
+        mock_ast_engine.parsers = {".py": mock_parser}
+        mock_ast_engine.is_supported.return_value = True
+
+        mock_lang = MagicMock()
+        mock_query = MagicMock()
+
+        # Create a separate node for the query capture that has valid start_point but no text attribute
+        mock_capture_node = MagicMock()
+        mock_capture_node.start_point = (2, 0)
+        del mock_capture_node.text
+
+        # Ensure it returns captured node so it reaches the text check
+        mock_query.captures.return_value = [(mock_capture_node, "id")]
+        mock_ast_engine.languages = {".py": mock_lang}
+        mock_ast_engine.get_query.return_value = mock_query
+
+        from context_builder.ast_engine import extract_callees_ast
+
+        mock_cache = MagicMock()
+        mock_cache.get_bytes.return_value = b"def foo():\n    bar()\n"
+
+        # It should not fail during traversal due to missing start_point,
+        # but should still raise AttributeError for .text later.
+        with self.assertRaises(AttributeError) as ctx:
+            extract_callees_ast("dummy.py", 1, 3, ".py", mock_cache)
+
+        self.assertIn("Node object lacks '.text' attribute", str(ctx.exception))
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_extract_callees_ast_handles_type_error(self, mock_ast_engine):
+        mock_parser = MagicMock()
+        mock_tree = MagicMock()
+        mock_node = MagicMock()
+        mock_node.start_point = (1, 0)
+        mock_node.end_point = (2, 0)
+        mock_tree.root_node.children = [mock_node]
+        mock_parser.parse.return_value = mock_tree
+        mock_ast_engine.parsers = {".py": mock_parser}
+        mock_ast_engine.is_supported.return_value = True
+
+        # mock get_query to raise TypeError
+        mock_ast_engine.get_query.side_effect = TypeError("invalid query")
+
+        from context_builder.ast_engine import extract_callees_ast
+
+        mock_cache = MagicMock()
+        mock_cache.get_bytes.return_value = b"def foo():\n    bar()\n"
+
+        with self.assertRaises(RuntimeError) as ctx:
+            extract_callees_ast("dummy.py", 1, 3, ".py", mock_cache)
+
+        self.assertIn("AST callee extraction failed", str(ctx.exception))
+
+    def test_ast_engine_get_query_invalid_params_raise_value_error(self):
+        from context_builder.ast_engine import AST_ENGINE
+        with self.assertRaises(ValueError):
+            AST_ENGINE.get_query(".py", None)
+        with self.assertRaises(ValueError):
+            AST_ENGINE.get_query(".py", "")
+
+    def test_ast_engine_mixed_case_bindings(self):
+        from context_builder.ast_engine import AstEngine
+        from context_builder.config import CONFIG
+        import context_builder.ast_engine
+
+        mock_tree_sitter = MagicMock()
+        with patch.dict(CONFIG, {
+            "bindings": {
+                ".JS": ("tests.mock_binding", "mock_func"),
+                ".Cpp": ("tests.mock_binding", "mock_func")
+            }
+        }), patch("importlib.import_module") as mock_import, \
+           patch.object(context_builder.ast_engine, "tree_sitter", mock_tree_sitter):
+            # Setup mock module and binding
+            mock_mod = MagicMock()
+            mock_binding = MagicMock()
+            mock_mod.mock_func = mock_binding
+            mock_import.return_value = mock_mod
+
+            engine = AstEngine()
+            # It should not fail during initialize and should populate lowercased keys in parsers and languages
+            engine.initialize()
+
+            self.assertIn(".js", engine.parsers)
+            self.assertIn(".cpp", engine.parsers)
+            self.assertIn(".js", engine.languages)
+            self.assertIn(".cpp", engine.languages)
+
+    def test_split_massive_block_ast_handles_none_profile(self):
+        from context_builder.ast_pruning import split_massive_block_ast as _split_massive_block_ast
+
+        source = "def foo():\n    pass\n"
+        # Using an unsupported extension or mock engine so it falls back to plain truncation
+        mock_ast_engine = MagicMock()
+        mock_ast_engine.is_supported.return_value = False
+
+        # pass profile_getter returning None
+        res = _split_massive_block_ast(
+            source, "dummy.xyz", 1, mock_ast_engine, lambda p: None
+        )
+        self.assertEqual(len(res), 1)
+        self.assertIn("def foo()", res[0]["text"])
 
     @patch("context_builder.ast_engine.AST_ENGINE")
     def test_split_massive_block_ast_multiline_signature(self, mock_ast_engine):
@@ -1007,9 +1153,9 @@ class TestAstEngine(unittest.TestCase):
         mock_ast_engine.is_supported.return_value = True
 
         mock_lang = MagicMock()
-        # Raise an exception (e.g. tree-sitter QuerySyntaxError or similar) when compiling query
-        mock_lang.query.side_effect = Exception("Query syntax error")
         mock_ast_engine.languages = {".py": mock_lang}
+        # Raise an exception (e.g. tree-sitter QuerySyntaxError or similar) when compiling query
+        mock_ast_engine.get_query.side_effect = RuntimeError("Query syntax error")
 
         mock_parser = MagicMock()
         mock_parser.parse.return_value = MagicMock()
@@ -1048,8 +1194,8 @@ class TestAstEngine(unittest.TestCase):
         mock_lang = MagicMock()
         mock_query = MagicMock()
         mock_query.captures.return_value = []
-        mock_lang.query.return_value = mock_query
         mock_ast_engine.languages = {".cpp": mock_lang}
+        mock_ast_engine.get_query.return_value = mock_query
 
         mock_cache = MagicMock()
         mock_cache.get_bytes.return_value = b"void operator+();"
@@ -1060,9 +1206,9 @@ class TestAstEngine(unittest.TestCase):
         ):
             trace_lexical_dependencies_ast("operator+", ["file.cpp"], file_cache=mock_cache)
 
-        # Verify that AST_ENGINE.languages[".cpp"].query was called with double-escaped operator\\+
-        mock_lang.query.assert_called_once()
-        query_str = mock_lang.query.call_args[0][0]
+        # Verify that the cached query lookup used double-escaped operator\\+
+        mock_ast_engine.get_query.assert_called_once()
+        query_str = mock_ast_engine.get_query.call_args[0][1]
         self.assertIn("operator\\\\+", query_str)
 
     def test_trace_lexical_dependencies_regex_operators(self):
@@ -1283,12 +1429,13 @@ class TestAstEngine(unittest.TestCase):
         mock_parser = MagicMock()
 
         from context_builder.ast_engine import AST_ENGINE
-        with patch.dict(AST_ENGINE.languages, {".cpp": mock_lang}), \
+        with patch("tree_sitter.Query", return_value=mock_query) as mock_query_class, \
+             patch.dict(AST_ENGINE.languages, {".cpp": mock_lang}), \
              patch.dict(AST_ENGINE.parsers, {".cpp": mock_parser}), \
              patch.object(AST_ENGINE, "is_supported", return_value=True):
             trace_lexical_dependencies_ast("foo", [file_path], file_cache=self.cache)
-            mock_lang.query.assert_called_once()
-            query_arg = mock_lang.query.call_args[0][0]
+            mock_query_class.assert_called_once()
+            query_arg = mock_query_class.call_args[0][1]
             self.assertIn("foo", query_arg)
             self.assertIn("[a-z]{1,3}", query_arg)
 
@@ -2124,3 +2271,1486 @@ class TestAstEngine(unittest.TestCase):
         start, end = extract_function_bounds_regex(file_path, 1, self.cache)
         self.assertEqual(start, 0)
         self.assertEqual(end, 6)
+
+    def test_extract_identifiers_regex(self):
+        from context_builder.ast_engine import extract_identifiers_regex
+
+        code = (
+            "int x = 42;\n"
+            "auto y = 100;\n"
+            "if (x > y) {\n"
+            "    my_func(x, y);\n"
+            "    std::cout << x;\n"
+            "    while (true) { return x; }\n"
+            "}\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "regex_vars.cpp")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        self.cache.get_content(file_path)
+
+        ids_line_1 = extract_identifiers_regex(file_path, [1], file_cache=self.cache)
+        self.assertEqual(ids_line_1, {"x"})
+
+        ids_line_2 = extract_identifiers_regex(file_path, [2], file_cache=self.cache)
+        self.assertEqual(ids_line_2, {"y"})
+
+        ids_line_3 = extract_identifiers_regex(file_path, [3], file_cache=self.cache)
+        self.assertEqual(ids_line_3, {"x", "y"})
+
+        ids_line_4 = extract_identifiers_regex(file_path, [4], file_cache=self.cache)
+        self.assertEqual(ids_line_4, {"x", "y"})
+
+        ids_line_5 = extract_identifiers_regex(file_path, [5], file_cache=self.cache)
+        self.assertEqual(ids_line_5, {"cout", "x"})
+
+        ids_line_6 = extract_identifiers_regex(file_path, [6], file_cache=self.cache)
+        self.assertEqual(ids_line_6, {"true", "x"})
+
+        ids_multi = extract_identifiers_regex(file_path, [1, 2], file_cache=self.cache)
+        self.assertEqual(ids_multi, {"x", "y"})
+
+    def test_extract_identifiers_regex_ignores_member_properties(self):
+        from context_builder.ast_engine import extract_identifiers_regex
+
+        code = (
+            "obj.x = local;\n"
+            "ptr->x = other;\n"
+            "ns::x(value);\n"
+            "x = obj.y + ptr->z;\n"
+            "spaced . prop = value;\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "regex_member_props.cpp")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        self.cache.get_content(file_path)
+
+        ids = extract_identifiers_regex(file_path, [1, 2, 3, 4, 5], file_cache=self.cache)
+        self.assertIn("obj", ids)
+        self.assertIn("ptr", ids)
+        self.assertIn("spaced", ids)
+        self.assertIn("local", ids)
+        self.assertIn("other", ids)
+        self.assertIn("value", ids)
+        self.assertIn("x", ids)
+        self.assertNotIn("y", ids)
+        self.assertNotIn("z", ids)
+        self.assertNotIn("prop", ids)
+
+    def test_is_line_definition_of_var_ignores_member_assignments(self):
+        from context_builder.ast_engine import is_line_definition_of_var
+        from context_builder.languages.python import PYTHON
+        from context_builder.languages.c_family import C_FAMILY
+
+        self.assertFalse(is_line_definition_of_var("self.x = 1", "x", PYTHON))
+        self.assertFalse(is_line_definition_of_var("obj.x = 1", "x", PYTHON))
+        self.assertFalse(is_line_definition_of_var("ptr->x = 1", "x", C_FAMILY))
+        self.assertFalse(is_line_definition_of_var("ns::x = 1", "x", C_FAMILY))
+        self.assertTrue(is_line_definition_of_var("x = 1", "x", PYTHON))
+
+    def test_is_line_definition_of_var_ignores_language_declarations(self):
+        from context_builder.ast_engine import is_line_definition_of_var
+        from context_builder.languages.c_family import C_FAMILY
+        from context_builder.languages.go import GO
+        from context_builder.languages.java import JAVA
+        from context_builder.languages.javascript import JAVASCRIPT, TYPESCRIPT
+        from context_builder.languages.python import PYTHON
+        from context_builder.languages.rust import RUST
+
+        cases = [
+            (C_FAMILY, "namespace app {", "app"),
+            (C_FAMILY, "using Name = other::Name;", "Name"),
+            (C_FAMILY, "template <typename T>", "T"),
+            (C_FAMILY, "typename T value;", "T"),
+            (GO, "package main", "main"),
+            (GO, 'import fmt "fmt"', "fmt"),
+            (JAVA, "package app;", "app"),
+            (JAVA, "import app.Widget;", "app"),
+            (JAVASCRIPT, "import thing from './thing';", "thing"),
+            (JAVASCRIPT, "export value;", "value"),
+            (TYPESCRIPT, "export type User = {}", "type"),
+            (PYTHON, "import os", "os"),
+            (PYTHON, "from pkg import item", "pkg"),
+            (RUST, "use crate::thing;", "crate"),
+            (RUST, "mod app;", "app"),
+        ]
+
+        for profile, line, var_name in cases:
+            with self.subTest(profile=profile.name, line=line, var_name=var_name):
+                self.assertFalse(is_line_definition_of_var(line, var_name, profile))
+
+    def test_is_line_definition_of_var_matches_common_augmented_assignments(self):
+        from context_builder.ast_engine import is_line_definition_of_var
+        from context_builder.languages.c_family import C_FAMILY
+        from context_builder.languages.go import GO
+        from context_builder.languages.python import PYTHON
+
+        cases = [
+            (PYTHON, "x //= y", "x"),
+            (PYTHON, "x **= y", "x"),
+            (PYTHON, "x @= y", "x"),
+            (C_FAMILY, "x %= y;", "x"),
+            (C_FAMILY, "x <<= y;", "x"),
+            (C_FAMILY, "x >>= y;", "x"),
+            (C_FAMILY, "x &= y;", "x"),
+            (C_FAMILY, "x |= y;", "x"),
+            (C_FAMILY, "x ^= y;", "x"),
+            (GO, "x &^= y", "x"),
+        ]
+
+        for profile, line, var_name in cases:
+            with self.subTest(profile=profile.name, line=line):
+                self.assertTrue(is_line_definition_of_var(line, var_name, profile))
+
+    def test_is_line_definition_of_var_allows_short_decl_in_flow_statement(self):
+        from context_builder.ast_engine import is_line_definition_of_var
+        from context_builder.languages.go import GO
+        from context_builder.languages.python import PYTHON
+
+        self.assertTrue(is_line_definition_of_var("if x := 1; x < 2 {", "x", GO))
+        self.assertTrue(is_line_definition_of_var("for i := 0; i < 10; i++ {", "i", GO))
+        self.assertTrue(is_line_definition_of_var("if (x := value):", "x", PYTHON))
+
+    def test_is_line_definition_of_var_checks_statements_after_flow_control(self):
+        from context_builder.ast_engine import is_line_definition_of_var
+        from context_builder.languages.c_family import C_FAMILY
+
+        self.assertTrue(is_line_definition_of_var("if (ready); x = 1;", "x", C_FAMILY))
+        self.assertTrue(is_line_definition_of_var("while (ready); x += 1;", "x", C_FAMILY))
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_extract_identifiers_ast(self, mock_engine):
+        from context_builder.ast_engine import extract_identifiers_ast
+
+        class FakeNode:
+            def __init__(self, node_type, start_line, text=None, children=None, parent=None, fields=None):
+                self.type = node_type
+                self.start_point = (start_line - 1, 0)
+                self.text = text.encode('utf-8') if isinstance(text, str) else text
+                self.children = children or []
+                self.parent = parent
+                self.fields = fields or {}
+                for child in self.children:
+                    child.parent = self
+
+            def child_by_field_name(self, name):
+                return self.fields.get(name)
+
+        var_node = FakeNode("identifier", 2, "my_var")
+
+        # func_call(x)
+        call_id = FakeNode("identifier", 3, "func_call")
+        arg_id = FakeNode("identifier", 3, "x")
+        call_expr = FakeNode(
+            "call_expression", 3,
+            children=[call_id, arg_id],
+            fields={"function": call_id}
+        )
+
+        # obj.foo
+        obj_id = FakeNode("identifier", 4, "obj")
+        foo_id = FakeNode("identifier", 4, "foo")
+        member_expr = FakeNode(
+            "member_expression", 4,
+            children=[obj_id, foo_id],
+            fields={"object": obj_id, "property": foo_id}
+        )
+
+        # void my_func()
+        decl_id = FakeNode("identifier", 5, "my_func")
+        func_decl = FakeNode(
+            "function_declarator", 5,
+            children=[decl_id],
+            fields={"declarator": decl_id}
+        )
+
+        root = FakeNode("module", 1, children=[var_node, call_expr, member_expr, func_decl])
+
+        parser = MagicMock()
+        parser.parse.return_value = SimpleNamespace(root_node=root)
+        mock_engine.parsers = {".py": parser}
+        mock_engine.is_supported.return_value = True
+
+        cache = MagicMock()
+        cache.get_bytes.return_value = b"some code"
+
+        res = extract_identifiers_ast("file.py", [2, 3, 4, 5], file_cache=cache)
+        self.assertEqual(res, {"my_var", "x", "obj"})
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_extract_identifiers_ast_normalizes_uppercase_extension(self, mock_engine):
+        from context_builder.ast_engine import extract_identifiers_ast
+
+        class FakeNode:
+            type = "module"
+            children = []
+            root_node = None
+
+        root = FakeNode()
+        root.root_node = root
+        parser = MagicMock()
+        parser.parse.return_value = SimpleNamespace(root_node=root)
+        mock_engine.parsers = {".py": parser}
+        mock_engine.is_supported.return_value = True
+
+        cache = MagicMock()
+        cache.get_bytes.return_value = b"some code"
+        cache.get_lines.return_value = []
+
+        extract_identifiers_ast("file.PY", [1], file_cache=cache)
+
+        mock_engine.is_supported.assert_called_once_with(".py")
+        parser.parse.assert_called_once_with(b"some code")
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_extract_identifiers_ast_skips_sparse_nonintersecting_subtrees(self, mock_engine):
+        from context_builder.ast_engine import extract_identifiers_ast
+
+        class FakeNode:
+            def __init__(
+                    self, node_type, start_line, end_line=None, text=None,
+                    children=None, fail_on_children=False
+            ):
+                self.type = node_type
+                self.start_point = (start_line - 1, 0)
+                self.end_point = ((end_line or start_line) - 1, 0)
+                self.text = text.encode('utf-8') if isinstance(text, str) else text
+                self._children = children or []
+                self.fail_on_children = fail_on_children
+                self.parent = None
+                for child in self._children:
+                    child.parent = self
+
+            @property
+            def children(self):
+                if self.fail_on_children:
+                    raise AssertionError("non-intersecting subtree was traversed")
+                return self._children
+
+            def child_by_field_name(self, _name):
+                return None
+
+        target_a = FakeNode("identifier", 10, text="line_ten")
+        ignored_subtree = FakeNode(
+            "block", 20, 30, children=[FakeNode("identifier", 25, text="ignored")],
+            fail_on_children=True
+        )
+        target_b = FakeNode("identifier", 100, text="line_hundred")
+        root = FakeNode("module", 1, 120, children=[target_a, ignored_subtree, target_b])
+
+        parser = MagicMock()
+        parser.parse.return_value = SimpleNamespace(root_node=root)
+        mock_engine.parsers = {".py": parser}
+        mock_engine.is_supported.return_value = True
+
+        cache = MagicMock()
+        cache.get_bytes.return_value = b"some code"
+        cache.get_lines.return_value = [""] * 120
+
+        res = extract_identifiers_ast("file.py", [10, 100], file_cache=cache)
+
+        self.assertEqual(res, {"line_ten", "line_hundred"})
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_extract_identifiers_unified(self, mock_engine):
+        from context_builder.ast_engine import extract_identifiers
+
+        mock_engine.is_supported.return_value = True
+
+        with patch("context_builder.ast_engine.extract_identifiers_ast") as mock_ast:
+            mock_ast.return_value = {"ast_var"}
+            res = extract_identifiers("file.py", [1], file_cache=self.cache)
+            self.assertEqual(res, {"ast_var"})
+            mock_ast.assert_called_once()
+
+        with patch("context_builder.ast_engine.extract_identifiers_ast") as mock_ast, \
+             patch("context_builder.ast_engine.extract_identifiers_regex") as mock_regex:
+            mock_ast.side_effect = RuntimeError("AST parsing error")
+            mock_regex.return_value = {"regex_var"}
+
+            res = extract_identifiers("file.py", [1], file_cache=self.cache)
+            self.assertEqual(res, {"regex_var"})
+            mock_regex.assert_called_once()
+
+        mock_engine.is_supported.return_value = False
+        with patch("context_builder.ast_engine.extract_identifiers_regex") as mock_regex:
+            mock_regex.return_value = {"regex_var_only"}
+            res = extract_identifiers("file.py", [1], file_cache=self.cache)
+            self.assertEqual(res, {"regex_var_only"})
+            mock_regex.assert_called_once()
+
+    def test_get_lhs_identifiers(self):
+        from context_builder.ast_engine import get_lhs_identifiers
+
+        class FakeNode:
+            def __init__(self, node_type, children=None, parent=None, text=None):
+                self.type = node_type
+                self.children = children or []
+                self.parent = parent
+                self.text = text.encode('utf-8') if isinstance(text, str) else text
+                for child in self.children:
+                    child.parent = self
+            def child_by_field_name(self, name):
+                if name == "right" and len(self.children) > 2:
+                    return self.children[2]
+                return None
+
+        x_node = FakeNode("identifier", text="x")
+        op_node = FakeNode("=", text="=")
+        y_node = FakeNode("identifier", text="y")
+        assign_node = FakeNode("assignment_expression", children=[x_node, op_node, y_node])
+
+        lhs_ids = get_lhs_identifiers(assign_node)
+        self.assertEqual(lhs_ids, ["x"])
+
+    def test_get_lhs_identifiers_handles_nodes_without_field_lookup(self):
+        from context_builder.ast_engine import get_lhs_identifiers
+
+        class MinimalNode:
+            def __init__(self, node_type, children=None, text=None):
+                self.type = node_type
+                self.children = children or []
+                self.text = text.encode('utf-8') if isinstance(text, str) else text
+
+        x_node = MinimalNode("identifier", text="x")
+        op_node = MinimalNode("=", text="=")
+        y_node = MinimalNode("identifier", text="y")
+        assign_node = MinimalNode("assignment_expression", children=[x_node, op_node, y_node])
+
+        lhs_ids = get_lhs_identifiers(assign_node)
+        self.assertEqual(lhs_ids, ["x"])
+
+    def test_get_lhs_identifiers_stops_at_common_augmented_assignment(self):
+        from context_builder.ast_engine import get_lhs_identifiers
+
+        class MinimalNode:
+            def __init__(self, node_type, children=None, text=None):
+                self.type = node_type
+                self.children = children or []
+                self.text = text.encode('utf-8') if isinstance(text, str) else text
+
+        x_node = MinimalNode("identifier", text="x")
+        op_node = MinimalNode("**=", text="**=")
+        y_node = MinimalNode("identifier", text="y")
+        assign_node = MinimalNode("assignment_expression", children=[x_node, op_node, y_node])
+
+        lhs_ids = get_lhs_identifiers(assign_node)
+        self.assertEqual(lhs_ids, ["x"])
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_resolve_local_variable_ast(self, mock_engine):
+        from context_builder.ast_engine import resolve_local_variable_ast
+
+        class FakeNode:
+            def __init__(self, node_type, start_line, text=None, children=None, parent=None):
+                self.type = node_type
+                self.start_point = (start_line - 1, 0)
+                self.text = text.encode('utf-8') if isinstance(text, str) else text
+                self.children = children or []
+                self.parent = parent
+                for child in self.children:
+                    child.parent = self
+            def child_by_field_name(self, _name):
+                return None
+
+        x_node = FakeNode("identifier", 2, "my_var")
+        op_node = FakeNode("=", 2, "=")
+        val_node = FakeNode("number", 2, "42")
+        assign_node = FakeNode("assignment_expression", 2, children=[x_node, op_node, val_node])
+
+        root = FakeNode("module", 1, children=[assign_node])
+        parser = MagicMock()
+        parser.parse.return_value = SimpleNamespace(root_node=root)
+        mock_engine.parsers = {".py": parser}
+        mock_engine.is_supported.return_value = True
+        mock_engine.languages = {}
+        mock_engine.get_query.side_effect = RuntimeError("fall back to manual traversal")
+
+        cache = MagicMock()
+        cache.get_bytes.return_value = b"some code"
+        cache.get_lines.return_value = ["line 1", "my_var = 42", "line 3"]
+
+        with patch("context_builder.ast_engine.extract_function_bounds") as mock_bounds:
+            mock_bounds.return_value = (0, 3)
+
+            line, code = resolve_local_variable_ast("file.py", "my_var", 3, file_cache=cache)
+            self.assertEqual(line, 2)
+            self.assertEqual(code, "my_var = 42")
+
+    @patch("context_builder.ast_engine.resolve_local_variable_ast")
+    @patch("context_builder.lsp_client.get_lsp_definition")
+    @patch("context_builder.lsp_client.get_lsp_type_definition")
+    def test_resolve_variable_definition(self, mock_type_def, mock_def, mock_local):
+        from context_builder.ast_engine import resolve_variable_definition
+
+        mock_local.return_value = (2, "my_var = 42")
+        res = resolve_variable_definition("file.py", "my_var", 3, 10, file_cache=self.cache)
+        self.assertEqual(res["resolved_type"], "local")
+        self.assertEqual(res["definitions"][0]["line"], 2)
+
+        mock_local.return_value = (None, None)
+
+        mock_def.return_value = [{
+            "uri": "file:///c:/path/to/global.py",
+            "range": {
+                "start": {"line": 4, "character": 5},
+                "end": {"line": 4, "character": 15}
+            }
+        }]
+        mock_type_def.return_value = [{
+            "uri": "file:///c:/path/to/type.py",
+            "range": {
+                "start": {"line": 9, "character": 2},
+                "end": {"line": 9, "character": 12}
+            }
+        }]
+
+        with patch("os.path.exists") as mock_exists:
+            mock_exists.return_value = True
+
+            cache = MagicMock()
+            cache.get_lines.side_effect = lambda path: ["code 1", "code 2", "code 3", "code 4", "global_var = 10", "code 6", "code 7", "code 8", "code 9", "class User {}"]
+
+            res = resolve_variable_definition("file.py", "my_var", 3, 10, file_cache=cache)
+            self.assertEqual(res["resolved_type"], "global_and_type")
+            self.assertEqual(len(res["definitions"]), 2)
+            self.assertEqual(res["definitions"][0]["code"], "global_var = 10")
+            self.assertEqual(res["definitions"][1]["code"], "class User {}")
+
+    def test_regex_scope_building(self):
+        from context_builder.ast_engine import build_scopes
+        from context_builder.languages.python import PYTHON
+        from context_builder.languages.c_family import C_FAMILY
+        from context_builder.cache import LRUFileCache
+
+        cache = LRUFileCache(capacity=5)
+        # Test Python indentation scopes
+        py_code = (
+            "def foo():\n"
+            "    x = 1\n"
+            "    if True:\n"
+            "        y = 2\n"
+            "    return x\n"
+        )
+        py_file = os.path.join(self.temp_dir.name, "scopes_test.py")
+        with open(py_file, "w", encoding="utf-8") as f:
+            f.write(py_code)
+
+        _, all_scopes = build_scopes(py_file, PYTHON, cache)
+        # Global scope + def scope + if scope
+        self.assertEqual(len(all_scopes), 3)
+        self.assertEqual(all_scopes[1].start_line, 1)  # def foo():
+        self.assertEqual(all_scopes[2].start_line, 3)  # if True:
+        self.assertEqual(all_scopes[2].end_line, 4)
+
+        # Test C++ brace scopes
+        cpp_code = (
+            "void foo() {\n"
+            "    int x = 1;\n"
+            "    if (true) {\n"
+            "        int y = 2;\n"
+            "    }\n"
+            "}\n"
+        )
+        cpp_file = os.path.join(self.temp_dir.name, "scopes_test.cpp")
+        with open(cpp_file, "w", encoding="utf-8") as f:
+            f.write(cpp_code)
+
+        _, all_scopes_cpp = build_scopes(cpp_file, C_FAMILY, cache)
+        self.assertEqual(len(all_scopes_cpp), 3)
+        self.assertEqual(all_scopes_cpp[1].start_line, 1)  # void foo() {
+        self.assertEqual(all_scopes_cpp[2].start_line, 3)  # if (true) {
+        self.assertEqual(all_scopes_cpp[2].end_line, 5)
+
+    def test_regex_fallback_local_resolution(self):
+        from context_builder.ast_engine import resolve_variable_definition
+        from context_builder.cache import LRUFileCache
+
+        cache = LRUFileCache(capacity=5)
+        py_code = (
+            "x = 100\n"  # line 1 (global)
+            "def foo():\n"  # line 2
+            "    x = 1\n"  # line 3
+            "    if True:\n"  # line 4
+            "        y = 2\n"  # line 5
+            "        print(x)\n"  # line 6 (ref to x)
+        )
+        py_file = os.path.join(self.temp_dir.name, "local_test.py")
+        with open(py_file, "w", encoding="utf-8") as f:
+            f.write(py_code)
+
+        # Mock AST check to fail to force regex fallback
+        with patch("context_builder.ast_engine.resolve_local_variable_ast") as mock_ast, \
+             patch("context_builder.lsp_client.get_lsp_definition") as mock_lsp, \
+             patch("context_builder.lsp_client.get_lsp_type_definition") as mock_type_lsp:
+            mock_ast.return_value = (None, None)
+            mock_lsp.return_value = []
+            mock_type_lsp.return_value = []
+
+            # Resolve 'x' referenced at line 6
+            res = resolve_variable_definition(py_file, "x", 6, 14, file_cache=cache)
+            self.assertEqual(res["resolved_type"], "local_regex")
+            self.assertEqual(len(res["definitions"]), 1)
+            self.assertEqual(res["definitions"][0]["line"], 3)  # local definition in foo()
+
+            # Resolve 'y' referenced at line 6 (should not find since it's defined in child 'if' scope)
+            # Wait, y is defined at line 5 (which is inside the if block).
+            # But line 6 is also inside the same if block! So it should find it!
+            res_y = resolve_variable_definition(py_file, "y", 6, 14, file_cache=cache)
+            self.assertEqual(res_y["resolved_type"], "local_regex")
+            self.assertEqual(res_y["definitions"][0]["line"], 5)
+
+    def test_regex_fallback_member_and_inheritance(self):
+        from context_builder.ast_engine import resolve_variable_definition
+        from context_builder.cache import LRUFileCache
+
+        cache = LRUFileCache(capacity=5)
+        # Multiple files to test member crawling and parent inheritance
+        parent_code = (
+            "class Base:\n"
+            "    base_val = 42\n"
+        )
+        child_code = (
+            "from parent import Base\n"
+            "class Child(Base):\n"
+            "    child_val = 24\n"
+            "    def method(self):\n"
+            "        print(self.base_val)\n"  # line 5
+        )
+
+        parent_file = os.path.join(self.temp_dir.name, "parent.py")
+        child_file = os.path.join(self.temp_dir.name, "child.py")
+        with open(parent_file, "w", encoding="utf-8") as f:
+            f.write(parent_code)
+        with open(child_file, "w", encoding="utf-8") as f:
+            f.write(child_code)
+
+        with patch("context_builder.ast_engine.resolve_local_variable_ast") as mock_ast, \
+             patch("context_builder.lsp_client.get_lsp_definition") as mock_lsp, \
+             patch("context_builder.lsp_client.get_lsp_type_definition") as mock_type_lsp, \
+             patch("context_builder.sys_utils.get_git_tracked_files") as mock_tracked:
+            mock_ast.return_value = (None, None)
+            mock_lsp.return_value = []
+            mock_type_lsp.return_value = []
+            mock_tracked.return_value = [parent_file, child_file]
+
+            # Resolve base_val on child class instance referenced in child_file
+            res = resolve_variable_definition(child_file, "base_val", 5, 19, file_cache=cache)
+            self.assertEqual(res["resolved_type"], "member_regex")
+            self.assertEqual(len(res["definitions"]), 1)
+            self.assertEqual(res["definitions"][0]["line"], 2)
+            self.assertEqual(res["definitions"][0]["code"], "base_val = 42")
+
+    def test_regex_fallback_global_search(self):
+        from context_builder.ast_engine import resolve_variable_definition
+        from context_builder.cache import LRUFileCache
+
+        cache = LRUFileCache(capacity=5)
+        lib_code = (
+            "GLOBAL_CONST = 'HELLO'\n"
+            "def helper():\n"
+            "    non_global = 'FAIL'\n"
+        )
+        main_code = (
+            "import lib\n"
+            "def run():\n"
+            "    print(GLOBAL_CONST)\n"
+        )
+
+        lib_file = os.path.join(self.temp_dir.name, "lib.py")
+        main_file = os.path.join(self.temp_dir.name, "main.py")
+        with open(lib_file, "w", encoding="utf-8") as f:
+            f.write(lib_code)
+        with open(main_file, "w", encoding="utf-8") as f:
+            f.write(main_code)
+
+        with patch("context_builder.ast_engine.resolve_local_variable_ast") as mock_ast, \
+             patch("context_builder.lsp_client.get_lsp_definition") as mock_lsp, \
+             patch("context_builder.lsp_client.get_lsp_type_definition") as mock_type_lsp, \
+             patch("context_builder.sys_utils.get_git_tracked_files") as mock_tracked:
+            mock_ast.return_value = (None, None)
+            mock_lsp.return_value = []
+            mock_type_lsp.return_value = []
+            mock_tracked.return_value = [lib_file, main_file]
+
+            # Should find GLOBAL_CONST in lib_file since it's global
+            res = resolve_variable_definition(main_file, "GLOBAL_CONST", 3, 10, file_cache=cache)
+            self.assertEqual(res["resolved_type"], "global_regex")
+            self.assertEqual(len(res["definitions"]), 1)
+            self.assertEqual(res["definitions"][0]["line"], 1)
+            self.assertEqual(res["definitions"][0]["code"], "GLOBAL_CONST = 'HELLO'")
+
+            # Should ignore non_global because it is inside helper() scope
+            res_fail = resolve_variable_definition(main_file, "non_global", 3, 10, file_cache=cache)
+            self.assertEqual(res_fail["resolved_type"], "none")
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_extract_identifiers_with_positions_ast_unicode(self, mock_engine):
+        from context_builder.ast_engine import extract_identifiers_with_positions_ast
+
+        class FakeNode:
+            def __init__(self, node_type, start_line, byte_col, text=None, children=None):
+                self.type = node_type
+                self.start_point = (start_line - 1, byte_col)
+                self.text = text.encode('utf-8') if isinstance(text, str) else text
+                self.children = children or []
+                self.parent = None
+                for child in self.children:
+                    child.parent = self
+
+        # 🌟 is 4 bytes in UTF-8, but 2 character units in UTF-16 surrogate pairs.
+        # "🌟_x" at byte offset 4 is "_x" at UTF-16 character offset 2.
+        x_node = FakeNode("identifier", 2, 4, "_x")
+        op_node = FakeNode("=", 2, 8, "=")
+        assign_node = FakeNode("assignment_expression", 2, 0, children=[x_node, op_node])
+
+        root = FakeNode("module", 1, 0, children=[assign_node])
+        parser = MagicMock()
+        parser.parse.return_value = SimpleNamespace(root_node=root)
+        mock_engine.parsers = {".py": parser}
+        mock_engine.is_supported.return_value = True
+
+        cache = MagicMock()
+        cache.get_bytes.return_value = "line 1\n🌟_x = 1".encode("utf-8")
+        cache.get_lines.return_value = ["line 1", "🌟_x = 1"]
+
+        res = extract_identifiers_with_positions_ast("file.py", [2], file_cache=cache)
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0][0], "_x")
+        self.assertEqual(res[0][1], 2)
+        self.assertEqual(res[0][2], 2)  # Column character offset in UTF-16
+
+    def test_get_directly_included_files_relative_imports(self):
+        from context_builder.ast_engine import get_directly_included_files
+        from context_builder.languages.python import PYTHON
+        from context_builder.cache import LRUFileCache
+
+        cache = LRUFileCache(capacity=5)
+        # Create a subdirectory for containment safety
+        subdir = os.path.join(self.temp_dir.name, "subdir")
+        os.makedirs(subdir, exist_ok=True)
+
+        # Python relative imports with dots
+        py_code = (
+            "from .sys_utils import something\n"
+            "from ..other_module import something_else\n"
+        )
+        py_file = os.path.join(subdir, "relative_test.py")
+        with open(py_file, "w", encoding="utf-8") as f:
+            f.write(py_code)
+
+        # Mock get_git_tracked_files
+        with patch("context_builder.sys_utils.get_git_tracked_files") as mock_tracked:
+            # We want tracked files to include sys_utils.py and other_module.py
+            sys_utils_path = os.path.join(subdir, "sys_utils.py")
+            other_module_path = os.path.join(self.temp_dir.name, "other_module.py")
+            with open(sys_utils_path, "w", encoding="utf-8") as f:
+                f.write("")
+            with open(other_module_path, "w", encoding="utf-8") as f:
+                f.write("")
+            mock_tracked.return_value = [sys_utils_path, other_module_path]
+
+            res = get_directly_included_files(py_file, PYTHON, cache)
+            self.assertIn(os.path.abspath(sys_utils_path), res)
+            self.assertIn(os.path.abspath(other_module_path), res)
+
+    def test_get_directly_included_files_nested_python_imports(self):
+        from context_builder.ast_engine import get_directly_included_files
+        from context_builder.languages.python import PYTHON
+        from context_builder.cache import LRUFileCache
+
+        cache = LRUFileCache(capacity=5)
+        # Test code containing nested absolute and relative Python imports
+        py_code = (
+            "import my_package.subpackage.my_module\n"
+            "from my_package.subpackage.other_module import x\n"
+            "from .sub.nested_module import y\n"
+        )
+        py_file = os.path.join(self.temp_dir.name, "nested_import_test.py")
+        with open(py_file, "w", encoding="utf-8") as f:
+            f.write(py_code)
+
+        # Set up directories and files simulating the tracked package structure
+        my_package_dir = os.path.join(self.temp_dir.name, "my_package", "subpackage")
+        os.makedirs(my_package_dir, exist_ok=True)
+        sub_dir = os.path.join(self.temp_dir.name, "sub")
+        os.makedirs(sub_dir, exist_ok=True)
+
+        my_module_path = os.path.join(my_package_dir, "my_module.py")
+        other_module_path = os.path.join(my_package_dir, "other_module.py")
+        nested_module_path = os.path.join(sub_dir, "nested_module.py")
+
+        for path in (my_module_path, other_module_path, nested_module_path):
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("")
+
+        # Mock get_git_tracked_files to include these paths
+        with patch("context_builder.sys_utils.get_git_tracked_files") as mock_tracked:
+            mock_tracked.return_value = [my_module_path, other_module_path, nested_module_path]
+            res = get_directly_included_files(py_file, PYTHON, cache)
+
+        self.assertIn(os.path.abspath(my_module_path), res)
+        self.assertIn(os.path.abspath(other_module_path), res)
+        self.assertIn(os.path.abspath(nested_module_path), res)
+
+    def test_resolve_variable_definition_regex_fallback_empty_file(self):
+        from context_builder.ast_engine import resolve_variable_definition_regex_fallback
+        from context_builder.languages.python import PYTHON
+
+        cache = MagicMock()
+        cache.get_lines.return_value = []
+
+        res = resolve_variable_definition_regex_fallback(
+            "empty.py", "my_var", 1, cache, PYTHON
+        )
+        self.assertEqual(res["resolved_type"], "none")
+        self.assertEqual(res["definitions"], [])
+
+    @patch("context_builder.ast_engine.ripgrep_filter")
+    @patch("context_builder.sys_utils.get_git_tracked_files")
+    def test_find_class_definition_uses_ripgrep_filter(self, mock_tracked, mock_filter):
+        from context_builder.ast_engine import find_class_definition
+        from context_builder.languages.python import PYTHON
+
+        mock_tracked.return_value = ["file1.py", "file2.py"]
+        mock_filter.return_value = ["file2.py"]
+
+        cache = MagicMock()
+        cache.get_lines.side_effect = lambda path: (
+            [] if path == "file1.py" else ["class TargetClass:", "    pass"]
+        )
+
+        with patch("os.path.exists", return_value=True):
+            res_file, res_line = find_class_definition(
+                "file1.py", "TargetClass", PYTHON, cache
+            )
+
+        self.assertEqual(res_file, "file2.py")
+        self.assertEqual(res_line, 1)
+
+        # Verify ripgrep_filter was called to pre-filter file1.py out
+        mock_filter.assert_called_once_with(
+            ["file2.py"], "TargetClass", fallback_hint="class/struct definition of 'TargetClass'"
+        )
+
+    @patch("context_builder.ast_engine.ripgrep_filter")
+    @patch("context_builder.sys_utils.get_git_tracked_files")
+    def test_resolve_global_definition_uses_ripgrep_filter(self, mock_tracked, mock_filter):
+        from context_builder.ast_engine import resolve_global_definition
+        from context_builder.languages.python import PYTHON
+
+        mock_tracked.return_value = ["file1.py", "file2.py"]
+        mock_filter.return_value = ["file2.py"]
+
+        cache = MagicMock()
+        cache.get_lines.side_effect = lambda path: (
+            [] if path == "file1.py" else ["GLOBAL_VAR = 42"]
+        )
+
+        # Mock build_scopes to return a dummy global scope
+        from context_builder.ast_engine import RegexScope
+        dummy_scope = RegexScope(1)
+        dummy_scope.end_line = 2
+
+        with patch("os.path.exists", return_value=True), \
+             patch("context_builder.ast_engine.build_scopes", return_value=(dummy_scope, [dummy_scope])), \
+             patch("context_builder.ast_engine.get_lines_directly_in_scope", return_value=[1]):
+            res = resolve_global_definition(
+                "file1.py", "GLOBAL_VAR", PYTHON, cache
+            )
+
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0]["path"], "file2.py")
+        self.assertEqual(res[0]["line"], 1)
+
+        # Verify ripgrep_filter was called
+        mock_filter.assert_called_once_with(
+            ["file1.py", "file2.py"], "GLOBAL_VAR", fallback_hint="global definition of 'GLOBAL_VAR'"
+        )
+
+    def test_align_clean_to_original(self):
+        from context_builder.ast_engine import _align_clean_to_original
+
+        # Test basic alignment where nothing is stripped
+        orig1 = "foo bar"
+        clean1 = "foo bar"
+        self.assertEqual(_align_clean_to_original(orig1, clean1), [0, 1, 2, 3, 4, 5, 6])
+
+        # Test alignment with inline comment stripped
+        orig2 = "foo // comment\n"
+        clean2 = "foo \n"
+        mapping2 = _align_clean_to_original(orig2, clean2)
+        # Expected mapping length = len(clean2) = 5
+        # 'f' -> 0, 'o' -> 1, 'o' -> 2, ' ' -> 3, '\n' -> 14
+        self.assertEqual(mapping2, [0, 1, 2, 3, 14])
+
+        # Test alignment with string literal stripped
+        orig3 = 'foo("hello") + bar'
+        clean3 = 'foo() + bar'
+        mapping3 = _align_clean_to_original(orig3, clean3)
+        # Check that characters match correctly
+        # clean3[6] is '+' -> should map to orig3[13] which is '+'
+        self.assertEqual(mapping3[6], 13)
+        # clean3[7] is ' ' -> should map to orig3[14]
+        self.assertEqual(mapping3[7], 14)
+        # clean3[8] is 'b' -> should map to orig3[15]
+        self.assertEqual(mapping3[8], 15)
+
+    def test_align_clean_to_original_equal_length_bypasses_difflib(self):
+        from context_builder.ast_engine import _align_clean_to_original
+
+        original = "foo # comment"
+        clean = "foo          "
+
+        with patch("context_builder.ast_engine.difflib.SequenceMatcher") as mock_matcher:
+            mapping = _align_clean_to_original(original, clean)
+
+        self.assertEqual(mapping, list(range(len(clean))))
+        mock_matcher.assert_not_called()
+
+    def test_extract_identifiers_with_positions_regex_alignment(self):
+        from context_builder.ast_engine import extract_identifiers_with_positions_regex
+
+        cache = MagicMock()
+        # Original line has comment and string stripped
+        # "    foo = 'value' # comment"
+        # Identifier is "foo"
+        cache.get_lines.return_value = ["    foo = 'value' # comment"]
+
+        # Let's test using PYTHON profile (since it strips comments and strings)
+        res = extract_identifiers_with_positions_regex("file.py", [1], file_cache=cache)
+        # "foo" should start at index 4 in original (UTF-16 code units = 4)
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0][0], "foo")
+        self.assertEqual(res[0][1], 1)
+        self.assertEqual(res[0][2], 4)
+
+        # Let's test with unicode characters and surrogate pairs to verify UTF-16 conversion
+        # "🌟_foo = 'val' // comment"
+        # "🌟" is 1 char in Python, but 2 UTF-16 code units.
+        # "_foo" starts at char index 1, which is UTF-16 index 2.
+        cache.get_lines.return_value = ["🌟_foo = 'val' # comment"]
+        res_unicode = extract_identifiers_with_positions_regex("file.py", [1], file_cache=cache)
+        self.assertEqual(len(res_unicode), 1)
+        self.assertEqual(res_unicode[0][0], "_foo")
+        self.assertEqual(res_unicode[0][1], 1)
+        self.assertEqual(res_unicode[0][2], 2)
+
+    def test_get_class_members_new_line_brace(self):
+        from context_builder.ast_engine import get_class_members
+        from context_builder.languages.c_family import C_FAMILY
+
+        cache = MagicMock()
+        # Class with brace on the next line
+        cache.get_lines.return_value = [
+            "class TargetClass",
+            "{",
+            "    int myVar;",
+            "};"
+        ]
+
+        res = get_class_members("file.cpp", "TargetClass", C_FAMILY, cache)
+        self.assertEqual(res, [("myVar", 3)])
+
+    def test_get_class_members_common_augmented_assignment(self):
+        from context_builder.ast_engine import get_class_members
+        from context_builder.languages.c_family import C_FAMILY
+
+        cache = MagicMock()
+        lines = [
+            "class TargetClass {",
+            "    flags &^= mask;",
+            "};"
+        ]
+        cache.get_lines.return_value = lines
+        cache.get_stripped_lines.return_value = lines
+
+        res = get_class_members("file.cpp", "TargetClass", C_FAMILY, cache)
+        self.assertIn(("flags", 2), res)
+        self.assertNotIn(("mask", 2), res)
+
+    def test_get_class_members_ignores_default_argument_signatures(self):
+        from context_builder.ast_engine import get_class_members
+        from context_builder.languages.c_family import C_FAMILY
+
+        cache = MagicMock()
+        lines = [
+            "class TargetClass {",
+            "    void myMethod(int x = 0);",
+            "    int realMember = 1;",
+            "};"
+        ]
+        cache.get_lines.return_value = lines
+        cache.get_stripped_lines.return_value = lines
+
+        res = get_class_members("file.cpp", "TargetClass", C_FAMILY, cache)
+
+        self.assertIn(("realMember", 3), res)
+        self.assertNotIn(("myMethod", 2), res)
+        self.assertNotIn(("x", 2), res)
+
+    def test_get_class_members_ignores_python_self_comparisons(self):
+        from context_builder.ast_engine import get_class_members
+        from context_builder.languages.python import PYTHON
+
+        cache = MagicMock()
+        lines = [
+            "class TargetClass:",
+            "    def method(self):",
+            "        if self.foo == 1:",
+            "            self.bar = 2",
+        ]
+        cache.get_lines.return_value = lines
+        cache.get_stripped_lines.return_value = lines
+
+        res = get_class_members("file.py", "TargetClass", PYTHON, cache)
+
+        self.assertIn(("bar", 4), res)
+        self.assertNotIn(("foo", 3), res)
+
+    def test_go_type_struct_class_like_helpers(self):
+        from context_builder.ast_engine import (
+            find_class_definition,
+            get_class_members,
+            get_parent_classes,
+        )
+        from context_builder.languages.go import GO
+
+        cache = MagicMock()
+        lines = [
+            "package main",
+            "type User struct {",
+            "    Name string",
+            "}",
+            "type Reader interface {",
+            "    Read() error",
+            "}",
+        ]
+        cache.get_lines.return_value = lines
+        cache.get_stripped_lines.return_value = lines
+        cache.find_class_definition_cache = {}
+        cache.class_members_cache = {}
+
+        members = get_class_members("file.go", "User", GO, cache)
+        self.assertIn(("Name", 3), members)
+        self.assertEqual(get_parent_classes("file.go", "User", GO, cache), [])
+        self.assertEqual(find_class_definition("file.go", "User", GO, cache), ("file.go", 2))
+        self.assertEqual(find_class_definition("file.go", "Reader", GO, cache), ("file.go", 5))
+
+    @patch("context_builder.ast_engine.AST_ENGINE.is_supported", return_value=False)
+    def test_resolve_variable_definition_regex_fallback_new_line_brace(self, _mock_is_supported):
+        from context_builder.ast_engine import resolve_variable_definition
+
+        cache = MagicMock()
+        # Function/Class member variable resolution with braces on next lines
+        lines = [
+            "class TargetClass",
+            "{",
+            "    int myVar;",
+            "    void myFunc()",
+            "    {",
+            "        myVar = 42;",
+            "    }",
+            "};"
+        ]
+        cache.get_lines.return_value = lines
+        cache.get_stripped_lines.return_value = lines
+        cache.get_bytes.return_value = "\n".join(lines).encode('utf-8')
+
+        # We try to resolve "myVar" from line 6 (inside myFunc)
+        res = resolve_variable_definition("file.cpp", "myVar", 6, 8, file_cache=cache)
+        self.assertEqual(res["resolved_type"], "member_regex")
+        self.assertEqual(res["definitions"][0]["line"], 3)
+
+    def test_resolve_variable_definition_regex_fallback_parameter(self):
+        from context_builder.ast_engine import resolve_variable_definition
+
+        cache = MagicMock()
+        # Function header with parameter in brace-based language (brace on new line)
+        lines = [
+            "void myFunc(",
+            "    int myParam",
+            ")",
+            "{",
+            "    int x = myParam;",
+            "}"
+        ]
+        cache.get_lines.return_value = lines
+        cache.get_stripped_lines.return_value = lines
+        cache.get_bytes.return_value = "\n".join(lines).encode('utf-8')
+
+        # We try to resolve "myParam" from line 5 (inside myFunc)
+        res = resolve_variable_definition("file.cpp", "myParam", 5, 6, file_cache=cache)
+        self.assertEqual(res["resolved_type"], "local_regex")
+        self.assertEqual(res["definitions"][0]["line"], 2)
+
+    def test_get_directly_included_files_python_as_alias(self):
+        from context_builder.ast_engine import get_directly_included_files
+        from context_builder.languages.python import PYTHON
+        from context_builder.cache import LRUFileCache
+
+        cache = LRUFileCache(capacity=5)
+        py_code = (
+            "import my_module as alias\n"
+            "import package.nested_module as nested_alias, other_module\n"
+        )
+        py_file = os.path.join(self.temp_dir.name, "python_alias_test.py")
+        with open(py_file, "w", encoding="utf-8") as f:
+            f.write(py_code)
+
+        my_module_path = os.path.join(self.temp_dir.name, "my_module.py")
+        other_module_path = os.path.join(self.temp_dir.name, "other_module.py")
+        package_dir = os.path.join(self.temp_dir.name, "package")
+        os.makedirs(package_dir, exist_ok=True)
+        nested_module_path = os.path.join(package_dir, "nested_module.py")
+
+        for path in (my_module_path, other_module_path, nested_module_path):
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("")
+
+        with patch("context_builder.sys_utils.get_git_tracked_files") as mock_tracked:
+            mock_tracked.return_value = [my_module_path, other_module_path, nested_module_path]
+            res = get_directly_included_files(py_file, PYTHON, cache)
+
+        self.assertIn(os.path.abspath(my_module_path), res)
+        self.assertIn(os.path.abspath(other_module_path), res)
+        self.assertIn(os.path.abspath(nested_module_path), res)
+
+    def test_get_directly_included_files_go_alias(self):
+        from context_builder.ast_engine import get_directly_included_files
+        from context_builder.languages.go import GO
+        from context_builder.cache import LRUFileCache
+
+        cache = LRUFileCache(capacity=5)
+        go_code = (
+            "package main\n"
+            "import m \"math\"\n"
+            "import . \"other/pkg\"\n"
+        )
+        go_file = os.path.join(self.temp_dir.name, "go_alias_test.go")
+        with open(go_file, "w", encoding="utf-8") as f:
+            f.write(go_code)
+
+        math_path = os.path.join(self.temp_dir.name, "math.go")
+        pkg_dir = os.path.join(self.temp_dir.name, "other", "pkg")
+        os.makedirs(pkg_dir, exist_ok=True)
+        pkg_path = os.path.join(pkg_dir, "pkg.go")
+
+        for path in (math_path, pkg_path):
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("")
+
+        with patch("context_builder.sys_utils.get_git_tracked_files") as mock_tracked:
+            mock_tracked.return_value = [math_path, pkg_path]
+            res = get_directly_included_files(go_file, GO, cache)
+
+        self.assertIn(os.path.abspath(math_path), res)
+        self.assertIn(os.path.abspath(pkg_path), res)
+
+    def test_get_directly_included_files_go_grouped_imports(self):
+        from context_builder.ast_engine import get_directly_included_files
+        from context_builder.languages.go import GO
+        from context_builder.cache import LRUFileCache
+
+        cache = LRUFileCache(capacity=5)
+        go_code = (
+            "package main\n"
+            "import (\n"
+            "    \"fmt\"\n"
+            "    alias \"example.com/project/pkg\"\n"
+            "    . \"example.com/project/other\"\n"
+            ")\n"
+        )
+        go_file = os.path.join(self.temp_dir.name, "go_grouped_imports.go")
+        with open(go_file, "w", encoding="utf-8") as f:
+            f.write(go_code)
+
+        fmt_path = os.path.join(self.temp_dir.name, "fmt.go")
+        pkg_dir = os.path.join(self.temp_dir.name, "example.com", "project", "pkg")
+        other_dir = os.path.join(self.temp_dir.name, "example.com", "project", "other")
+        os.makedirs(pkg_dir, exist_ok=True)
+        os.makedirs(other_dir, exist_ok=True)
+        pkg_path = os.path.join(pkg_dir, "pkg.go")
+        other_path = os.path.join(other_dir, "other.go")
+
+        for path in (fmt_path, pkg_path, other_path):
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("")
+
+        with patch("context_builder.sys_utils.get_git_tracked_files") as mock_tracked:
+            mock_tracked.return_value = [fmt_path, pkg_path, other_path]
+            res = get_directly_included_files(go_file, GO, cache)
+
+        self.assertIn(os.path.abspath(fmt_path), res)
+        self.assertIn(os.path.abspath(pkg_path), res)
+        self.assertIn(os.path.abspath(other_path), res)
+
+    def test_get_directly_included_files_rust_crate_and_grouped_imports(self):
+        from context_builder.ast_engine import get_directly_included_files
+        from context_builder.languages.rust import RUST
+        from context_builder.cache import LRUFileCache
+
+        cache = LRUFileCache(capacity=5)
+        src_dir = os.path.join(self.temp_dir.name, "src")
+        nested_dir = os.path.join(src_dir, "nested")
+        os.makedirs(nested_dir, exist_ok=True)
+        rust_code = (
+            "use crate::foo::Thing;\n"
+            "use crate::{bar::Bar, nested::{qux::Qux}};\n"
+        )
+        rust_file = os.path.join(src_dir, "main.rs")
+        with open(rust_file, "w", encoding="utf-8") as f:
+            f.write(rust_code)
+
+        foo_path = os.path.join(src_dir, "foo.rs")
+        bar_path = os.path.join(src_dir, "bar.rs")
+        qux_path = os.path.join(nested_dir, "qux.rs")
+        for path in (foo_path, bar_path, qux_path):
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("")
+
+        with patch("context_builder.sys_utils.get_git_tracked_files") as mock_tracked:
+            mock_tracked.return_value = [foo_path, bar_path, qux_path]
+            res = get_directly_included_files(rust_file, RUST, cache)
+
+        self.assertIn(os.path.abspath(foo_path), res)
+        self.assertIn(os.path.abspath(bar_path), res)
+        self.assertIn(os.path.abspath(qux_path), res)
+
+    def test_get_directly_included_files_python_relative_sibling_and_submodule(self):
+        from context_builder.ast_engine import get_directly_included_files
+        from context_builder.languages.python import PYTHON
+        from context_builder.cache import LRUFileCache
+
+        cache = LRUFileCache(capacity=5)
+        # Create a subdirectory for containment safety
+        subdir = os.path.join(self.temp_dir.name, "subdir")
+        os.makedirs(subdir, exist_ok=True)
+
+        py_code = (
+            "from . import sibling_module\n"
+            "from package import submodule\n"
+            "from .package import nested_submodule\n"
+        )
+        py_file = os.path.join(subdir, "import_test.py")
+        with open(py_file, "w", encoding="utf-8") as f:
+            f.write(py_code)
+
+        sibling_path = os.path.join(subdir, "sibling_module.py")
+        package_dir = os.path.join(subdir, "package")
+        os.makedirs(package_dir, exist_ok=True)
+        submodule_path = os.path.join(subdir, "package", "submodule.py")
+        nested_submodule_path = os.path.join(package_dir, "nested_submodule.py")
+
+        for path in (sibling_path, submodule_path, nested_submodule_path):
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("")
+
+        with patch("context_builder.sys_utils.get_git_tracked_files") as mock_tracked:
+            mock_tracked.return_value = [sibling_path, submodule_path, nested_submodule_path]
+            res = get_directly_included_files(py_file, PYTHON, cache)
+
+        self.assertIn(os.path.abspath(sibling_path), res)
+        self.assertIn(os.path.abspath(submodule_path), res)
+        self.assertIn(os.path.abspath(nested_submodule_path), res)
+
+    def test_build_scopes_ignores_braces_in_block_comments(self):
+        from context_builder.ast_engine import build_scopes
+        from context_builder.languages.c_family import C_FAMILY
+
+        # C++ code with braces inside a multiline block comment
+        code = (
+            "class MyClass {\n"
+            "/*\n"
+            "    void dummy() {\n"
+            "        if (true) {\n"
+            "        }\n"
+            "    }\n"
+            "*/\n"
+            "    int realVar;\n"
+            "};\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "scopes_comments.cpp")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        cache = LRUFileCache(capacity=5)
+        _, all_scopes = build_scopes(file_path, C_FAMILY, cache)
+
+        # The block comment is stripped, so we should only have:
+        # 1. Global scope
+        # 2. MyClass scope
+        # If the block comment wasn't stripped, we would have 3 or more nested scopes.
+        self.assertEqual(len(all_scopes), 2)
+
+    def test_get_class_members_ignores_commented_out_members(self):
+        from context_builder.ast_engine import get_class_members
+        from context_builder.languages.c_family import C_FAMILY
+
+        code = (
+            "class MyClass {\n"
+            "/*\n"
+            "    int commentedVar;\n"
+            "*/\n"
+            "    int realVar;\n"
+            "};\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "members_comments.cpp")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        cache = LRUFileCache(capacity=5)
+        members = get_class_members(file_path, "MyClass", C_FAMILY, cache)
+        names = [m[0] for m in members]
+        self.assertIn("realVar", names)
+        self.assertNotIn("commentedVar", names)
+
+    def test_get_parent_classes_ignores_commented_out_inheritance(self):
+        from context_builder.ast_engine import get_parent_classes
+        from context_builder.languages.c_family import C_FAMILY
+
+        code = (
+            "/*\n"
+            "class MyClass : public CommentedParent {};\n"
+            "*/\n"
+            "class MyClass : public RealParent {};\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "parent_comments.cpp")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        cache = LRUFileCache(capacity=5)
+        parents = get_parent_classes(file_path, "MyClass", C_FAMILY, cache)
+        self.assertEqual(parents, ["RealParent"])
+
+    def test_find_class_definition_ignores_commented_out_class(self):
+        from context_builder.ast_engine import find_class_definition
+        from context_builder.languages.c_family import C_FAMILY
+
+        code = (
+            "/*\n"
+            "class MyClass {};\n"
+            "*/\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "find_comments.cpp")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        cache = LRUFileCache(capacity=5)
+        # Suppress global git search
+        with patch("context_builder.sys_utils.get_git_tracked_files", return_value=[file_path]):
+            f_path, line = find_class_definition(file_path, "MyClass", C_FAMILY, cache)
+            self.assertIsNone(f_path)
+            self.assertIsNone(line)
+
+    def test_resolve_global_definition_ignores_commented_out_globals(self):
+        from context_builder.ast_engine import resolve_global_definition
+        from context_builder.languages.c_family import C_FAMILY
+
+        code = (
+            "/*\n"
+            "int commentedGlobal = 42;\n"
+            "*/\n"
+            "int realGlobal = 100;\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "global_comments.cpp")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        cache = LRUFileCache(capacity=5)
+        with patch("context_builder.sys_utils.get_git_tracked_files", return_value=[file_path]):
+            defs1 = resolve_global_definition(file_path, "commentedGlobal", C_FAMILY, cache)
+            self.assertEqual(defs1, [])
+
+            defs2 = resolve_global_definition(file_path, "realGlobal", C_FAMILY, cache)
+            self.assertEqual(len(defs2), 1)
+            self.assertEqual(defs2[0]["code"], "int realGlobal = 100;")
+
+    def test_get_directly_included_files_ignores_commented_out_imports(self):
+        from context_builder.ast_engine import get_directly_included_files
+        from context_builder.languages.python import PYTHON
+
+        code = (
+            "\"\"\"\n"
+            "import commented_module\n"
+            "\"\"\"\n"
+            "import real_module\n"
+        )
+        file_path = os.path.join(self.temp_dir.name, "import_comments.py")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        real_module_path = os.path.join(self.temp_dir.name, "real_module.py")
+        commented_module_path = os.path.join(self.temp_dir.name, "commented_module.py")
+        for p in (real_module_path, commented_module_path):
+            with open(p, "w", encoding="utf-8") as f:
+                f.write("")
+
+        cache = LRUFileCache(capacity=5)
+        with patch("context_builder.sys_utils.get_git_tracked_files", return_value=[real_module_path, commented_module_path]):
+            res = get_directly_included_files(file_path, PYTHON, cache)
+            self.assertIn(os.path.abspath(real_module_path), res)
+            self.assertNotIn(os.path.abspath(commented_module_path), res)
+
+    def test_get_stripped_lines_defensive_null_cache(self):
+        from context_builder.ast_engine import _get_stripped_lines
+        from context_builder.languages.c_family import C_FAMILY
+        from context_builder.cache import get_global_cache
+
+        # Setup C++ file in temp dir
+        cpp_file = os.path.join(self.temp_dir.name, "test_null_cache.cpp")
+        with open(cpp_file, "w", encoding="utf-8") as f:
+            f.write("/* comment */\nx = 1;")
+
+        # When file_cache is None, it should default to get_global_cache()
+        global_cache = get_global_cache()
+        global_cache.get_lines(cpp_file)
+
+        # Call with file_cache=None
+        lines = _get_stripped_lines(None, cpp_file, C_FAMILY)
+        # The block comment is stripped, leaving only the line ending
+        self.assertIn(lines[0], ("\n", "\r\n"))
+        self.assertEqual(lines[1], "x = 1;")
+
+    def test_deeply_nested_ast_traversal_no_recursion_error(self):
+        from context_builder.ast_engine import extract_identifiers_with_positions_ast, get_lhs_identifiers
+
+        class FakeNode:
+            def __init__(self, node_type, start_line, byte_col, text=None, children=None):
+                self.type = node_type
+                self.start_point = (start_line - 1, byte_col)
+                self.text = text.encode('utf-8') if isinstance(text, str) else text
+                self.children = children or []
+                self.parent = None
+                for child in self.children:
+                    child.parent = self
+
+            def child_by_field_name(self, _name):
+                return None
+
+        # Build a deeply nested structure of depth 2000
+        # If it were recursive, it would throw RecursionError
+        curr = FakeNode("identifier", 1, 0, "target_var")
+        for _ in range(2000):
+            curr = FakeNode("nested_block", 1, 0, children=[curr])
+
+        # Test get_lhs_identifiers
+        res_lhs = get_lhs_identifiers(curr)
+        self.assertEqual(res_lhs, ["target_var"])
+
+        # Test extract_identifiers_with_positions_ast with mocked parser
+        with patch("context_builder.ast_engine.AST_ENGINE") as mock_engine:
+            parser = MagicMock()
+            parser.parse.return_value = SimpleNamespace(root_node=curr)
+            mock_engine.parsers = {".py": parser}
+            mock_engine.is_supported.return_value = True
+
+            cache = MagicMock()
+            cache.get_bytes.return_value = b"target_var"
+            cache.get_lines.return_value = ["target_var"]
+
+            res_pos = extract_identifiers_with_positions_ast("file.py", [1], file_cache=cache)
+            self.assertEqual(len(res_pos), 1)
+            self.assertEqual(res_pos[0][0], "target_var")
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_ast_engine_functions_graceful_null_root_node(self, mock_engine):
+        from context_builder.ast_engine import (
+            extract_function_bounds_ast,
+            _trace_file_ast_dependencies,
+            split_massive_block_ast,
+            extract_callees_ast,
+            extract_identifiers_with_positions_ast,
+            resolve_local_variable_ast,
+        )
+
+        # Mock the parser to return a tree where root_node is None
+        mock_tree = MagicMock()
+        mock_tree.root_node = None
+
+        mock_parser = MagicMock()
+        mock_parser.parse.return_value = mock_tree
+
+        mock_engine.parsers = {".py": mock_parser}
+        mock_engine.is_supported.return_value = True
+
+        cache = MagicMock()
+        cache.get_bytes.return_value = b"some code"
+        cache.get_lines.return_value = ["some code"]
+
+        # 1. extract_function_bounds_ast
+        bounds = extract_function_bounds_ast("file.py", 1, ".py", file_cache=cache)
+        self.assertEqual(bounds, (None, None))
+
+        # 2. _trace_file_ast_dependencies
+        callers = []
+        _trace_file_ast_dependencies("file.py", "my_func", cache, callers)
+        # Should return early without modifying callers list
+        self.assertEqual(callers, [])
+
+        # 3. split_massive_block_ast
+        res_split = split_massive_block_ast("some lines\n" * 10, "file.py", 5)
+        self.assertEqual(res_split[0]["suffix"], " (Truncated)")
+
+        # 4. extract_callees_ast
+        callees = extract_callees_ast("file.py", 1, 5, ".py", cache)
+        self.assertEqual(callees, set())
+
+        # 5. extract_identifiers_with_positions_ast
+        ids = extract_identifiers_with_positions_ast("file.py", [1], file_cache=cache)
+        self.assertEqual(ids, [])
+
+        # 6. resolve_local_variable_ast
+        loc_res = resolve_local_variable_ast("file.py", "x", 5, cache)
+        self.assertEqual(loc_res, (None, None))
+
+    def test_resolve_class_member_definition_dynamic_parent_profile(self):
+        from context_builder.ast_engine import resolve_class_member_definition
+        from context_builder.languages.python import PYTHON
+        from context_builder.cache import LRUFileCache
+
+        child_code = (
+            "class Child(Base):\n"
+            "    def method(self):\n"
+            "        pass\n"
+        )
+        parent_code = (
+            "class Base {\n"
+            "    int parent_val;\n"
+            "};\n"
+        )
+
+        child_file = os.path.join(self.temp_dir.name, "child.py")
+        parent_file = os.path.join(self.temp_dir.name, "parent.cpp")
+        with open(child_file, "w", encoding="utf-8") as f:
+            f.write(child_code)
+        with open(parent_file, "w", encoding="utf-8") as f:
+            f.write(parent_code)
+
+        cache = LRUFileCache(capacity=5)
+
+        with patch("context_builder.ast_engine.find_class_definition") as mock_find:
+            # When looking up "Base" starting from child_file, return parent_file (line 1)
+            mock_find.return_value = (parent_file, 1)
+
+            res = resolve_class_member_definition(
+                child_file, "Child", "parent_val", PYTHON, cache
+            )
+            self.assertIsNotNone(res)
+            self.assertEqual(res["path"], os.path.relpath(parent_file, os.getcwd()))
+            self.assertEqual(res["line"], 2)
+            self.assertEqual(res["code"], "int parent_val;")
+
+    def test_align_stripped_to_original_lines_advances_on_miss(self):
+        from context_builder.ast_engine import _align_stripped_to_original_lines
+        from context_builder.config import CONFIG
+
+        lines = ['A', 'B', 'C', 'D', 'E']
+        with patch.dict(CONFIG, {'fallback_strip_lookahead': 3}):
+            result = _align_stripped_to_original_lines(lines, "X\nD\n")
+            # With search_start pointer advancing by 1 on miss:
+            # - 'X' is searched in lines[0:3] and misses (search_start becomes 1)
+            # - 'D' is searched in lines[1:4] and hits at index 3.
+            self.assertEqual(result[3], "D\n")

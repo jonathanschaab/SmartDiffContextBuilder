@@ -5,11 +5,16 @@ modified files and tracing callers/callees.
 """
 
 import os
+import concurrent.futures
+import threading
+from collections import deque
 from .ast_engine import (
     AST_ENGINE,
     extract_callees,
     extract_function_bounds,
+    extract_identifiers_with_positions,
     find_callee_definition,
+    resolve_variable_definition,
     split_massive_block_ast,
     trace_lexical_dependencies_ast,
     trace_lexical_dependencies_regex,
@@ -19,6 +24,8 @@ from .languages import get_language_profile
 from .lsp_client import get_lsp_references
 from .preprocessor import trace_ffi_callers, trace_macro_expansion
 from .sys_utils import is_in_repo
+
+DEFAULT_DATA_FLOW_BATCH_SIZE = 32
 
 
 def extract_function_name(cleaned_chunk, start, end, file_path=None):
@@ -40,6 +47,15 @@ class CallGraphTracer:
         self.cpp_linkages = cpp_linkages if cpp_linkages is not None else {}
         self.vm = vm
         self.args = args
+        self._data_flow_executor = None
+        self._executor_lock = threading.RLock()
+
+    def close(self):
+        """Release persistent worker resources owned by the tracer."""
+        with self._executor_lock:
+            if self._data_flow_executor is not None:
+                self._data_flow_executor.shutdown(wait=True)
+                self._data_flow_executor = None
 
     def _arg_or_default(self, name, default):
         """Return an argument value, treating absent args and values alike."""
@@ -50,6 +66,17 @@ class CallGraphTracer:
             return default
         value = getattr(self.args, name, None)
         return default if value is None else value
+
+    def _positive_int_arg_or_default(self, name, default):
+        """Return a positive integer argument value or default."""
+        value = self._arg_or_default(name, default)
+        if isinstance(value, bool):
+            return default
+        try:
+            value = int(value)
+        except (TypeError, ValueError):
+            return default
+        return value if value > 0 else default
 
     def _process_single_caller_reference(
         self, ref_path, occurrences, processed_spans, queue, depth
@@ -115,11 +142,11 @@ class CallGraphTracer:
                 )
         return callers
 
-    def _merge_macro_and_build_linkages(self, curr_file, curr_func, ext, callers):
+    def _merge_macro_and_build_linkages(self, curr_file, curr_func, callers):
         """Merge macro expansion and C++ build system compilation linkages into callers."""
         if (
             not self._arg_or_default("skip_macro_expansion", False)
-            and get_language_profile(ext).supports_macro_expansion
+            and get_language_profile(curr_file).supports_macro_expansion
         ):
             macro_results = trace_macro_expansion(
                 curr_func, self.all_repo_files, file_cache=self.file_cache
@@ -140,7 +167,7 @@ class CallGraphTracer:
         """Trace callers for a single queue item at the current depth step."""
         callers = self._resolve_references(curr_file, curr_line, curr_func)
         ext = os.path.splitext(curr_file)[1].lower()
-        self._merge_macro_and_build_linkages(curr_file, curr_func, ext, callers)
+        self._merge_macro_and_build_linkages(curr_file, curr_func, callers)
 
         filtered_callers = {}
         for fp, occs in callers.items():
@@ -243,3 +270,135 @@ class CallGraphTracer:
                     self._process_single_callee(
                         callee_name, depth, processed_callee_spans, callee_queue
                     )
+
+    def _enqueue_identifiers(self, file_path, line_numbers, queue, processed_vars, depth):
+        """Extract identifiers from lines in a file and enqueue them for tracing."""
+        abs_path = os.path.abspath(file_path)
+        pos_ids = extract_identifiers_with_positions(abs_path, line_numbers, self.file_cache)
+        for var_name, ln, char_off in pos_ids:
+            var_key = (abs_path, var_name, ln, char_off)
+            if var_key not in processed_vars:
+                processed_vars.add(var_key)
+                queue.append((abs_path, var_name, ln, char_off, depth))
+
+    def _resolve_data_flow_item(self, item, lsp_timeout):
+        """Resolve one queued data-flow identifier, capturing failures."""
+        file_path, var_name, line_num, char_offset, _ = item
+        try:
+            res = resolve_variable_definition(
+                file_path,
+                var_name,
+                line_num,
+                char_offset,
+                file_cache=self.file_cache,
+                timeout=lsp_timeout,
+            )
+            return item, res, None
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            return item, None, exc
+
+    def _resolve_data_flow_batch(self, batch, lsp_timeout):
+        """Resolve a bounded batch of data-flow identifiers concurrently."""
+        if len(batch) == 1:
+            return [self._resolve_data_flow_item(batch[0], lsp_timeout)]
+        executor = self._get_data_flow_executor()
+        return list(
+            executor.map(
+                lambda item: self._resolve_data_flow_item(item, lsp_timeout),
+                batch,
+            )
+        )
+
+    def _get_data_flow_executor(self):
+        """Lazily create or reuse a persistent data-flow executor."""
+        with self._executor_lock:
+            if self._data_flow_executor is None:
+                batch_size = self._positive_int_arg_or_default(
+                    "data_flow_batch_size", DEFAULT_DATA_FLOW_BATCH_SIZE
+                )
+                self._data_flow_executor = concurrent.futures.ThreadPoolExecutor(
+                    max_workers=batch_size
+                )
+            return self._data_flow_executor
+
+    def _process_data_flow_result(
+        self, item, res, exc, processed_defs, processed_vars, queue, data_depth
+    ):
+        """Add resolved definitions and enqueue follow-up identifiers."""
+        _file_path, var_name, _line_num, _char_offset, depth = item
+        if exc is not None:
+            print(
+                f"\n[SmartDiffContextBuilder Warning] Failed to resolve "
+                f"variable definition for {var_name}: {exc}"
+            )
+            return
+        if not res:
+            return
+
+        for definition in res.get("definitions", []):
+            def_path = definition["path"]
+            def_line = definition["line"]
+            def_code = definition["code"]
+
+            abs_def_path = os.path.abspath(def_path)
+            def_key = (abs_def_path, def_line)
+            if def_key in processed_defs:
+                continue
+            processed_defs.add(def_key)
+
+            try:
+                rel_path = os.path.relpath(abs_def_path, os.getcwd())
+            except ValueError:
+                rel_path = abs_def_path
+            self.vm.add_data_state(rel_path, def_line, def_code)
+
+            if depth + 1 >= data_depth or not os.path.exists(abs_def_path):
+                continue
+
+            self._enqueue_identifiers(
+                abs_def_path, [def_line], queue, processed_vars, depth + 1
+            )
+
+    @staticmethod
+    def _next_data_flow_batch(queue, batch_size):
+        """Pop the next same-depth batch from the BFS queue."""
+        batch = []
+        while queue and not batch:
+            batch.append(queue.popleft())
+        if not batch:
+            return batch
+
+        depth = batch[0][4]
+        while queue and len(batch) < batch_size and queue[0][4] == depth:
+            batch.append(queue.popleft())
+        return batch
+
+    def trace_data_flow(self, diff_files_lines):
+        """Trace data flow / variable definitions recursively from modified diff lines."""
+        data_depth = self._arg_or_default("data_depth", 1)
+        if data_depth <= 0:
+            return
+
+        queue = deque()
+        processed_vars = set()  # set of (file_path, var_name, line_num, char_offset)
+        processed_defs = set()  # set of (path, line) to avoid duplicate resolution output
+
+        # 1. Initialize queue with identifiers from modified diff lines
+        for file_path, line_numbers in diff_files_lines.items():
+            self._enqueue_identifiers(file_path, line_numbers, queue, processed_vars, 0)
+
+        # 2. BFS queue traversal
+        lsp_timeout = self._arg_or_default("lsp_timeout", DEFAULT_LSP_QUERY_TIMEOUT)
+        batch_size = self._positive_int_arg_or_default(
+            "data_flow_batch_size", DEFAULT_DATA_FLOW_BATCH_SIZE
+        )
+
+        while queue:
+            batch = self._next_data_flow_batch(queue, batch_size)
+            if not batch:
+                continue
+            results = self._resolve_data_flow_batch(batch, lsp_timeout)
+            for item, res, exc in results:
+                self._process_data_flow_result(
+                    item, res, exc, processed_defs, processed_vars, queue, data_depth
+                )

@@ -2,6 +2,7 @@
 # pylint: disable=attribute-defined-outside-init,consider-using-with,line-too-long
 
 import os
+import sys
 import subprocess
 import tempfile
 import unittest
@@ -54,7 +55,7 @@ class TestIntegration(unittest.TestCase):
 
         # Run with default settings (caller-depth = 1)
         res = subprocess.run(
-            ["python", script_path, "--base-name", "LensIntegration", "--no-language-server"],
+            [sys.executable, script_path, "--base-name", "LensIntegration", "--no-language-server"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -112,7 +113,7 @@ class TestIntegration(unittest.TestCase):
         # 5. Invoke SmartDiffContextBuilder with --caller-depth 0
         script_path = os.path.join(self.old_cwd, "smart_diff_context_builder.py")
         res = subprocess.run(
-            ["python", script_path, "--base-name", "LensDepthZero", "--no-language-server", "--caller-depth", "0"],
+            [sys.executable, script_path, "--base-name", "LensDepthZero", "--no-language-server", "--caller-depth", "0"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,

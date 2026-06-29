@@ -1000,17 +1000,13 @@ class TestCLI(unittest.TestCase):
 
     @patch("context_builder.cli._process_single_diff_line")
     @patch("context_builder.cli.os.path.exists", return_value=False)
-    @patch("context_builder.cli._extract_line_numbers_from_diff")
     def test_process_diff_files_skips_unmodified_and_missing_files(
-        self, mock_line_numbers, _mock_exists, mock_process
+        self, _mock_exists, mock_process
     ):
         from context_builder.cli import _process_diff_files
 
-        mock_line_numbers.side_effect = [[], [3]]
         _process_diff_files(
-            ["unchanged.py", "missing.py"],
-            None,
-            None,
+            {"unchanged.py": [], "missing.py": [3]},
             MagicMock(),
             {},
             set(),
@@ -1440,11 +1436,13 @@ class TestCLI(unittest.TestCase):
         mock_args = CliNamespace()
         mock_args.max_lines = 3300
         mock_args.lang_map = '{".overridden": "overridden_lang"}'
+        mock_args.data_flow_batch_size = 16
         mock_parse_args.return_value = mock_args
 
         main()
 
         self.assertEqual(CONFIG["max_lines"], 3300)
+        self.assertEqual(CONFIG["data_flow_batch_size"], 16)
         self.assertEqual(CONFIG["lang_map"][".overridden"], "overridden_lang")
         # Default keys should remain intact since dictionary merges are used
         self.assertEqual(CONFIG["lang_map"][".py"], "python")
@@ -1452,6 +1450,7 @@ class TestCLI(unittest.TestCase):
         passed_args = mock_run_scan.call_args[0][0]
         self.assertEqual(passed_args.max_lines, 3300)
         self.assertEqual(passed_args.lang_map[".overridden"], "overridden_lang")
+        self.assertEqual(passed_args.data_flow_batch_size, 16)
         reset_config()
 
     @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
@@ -1759,6 +1758,22 @@ class TestCLI(unittest.TestCase):
         args_passed = mock_run_scan.call_args.args[0]
         self.assertEqual(args_passed.lsp_init_timeout, 72.5)
         self.assertEqual(args_passed.lsp_timeout, 185.5)
+        reset_config()
+
+    @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
+    @patch("context_builder.cli.run_scan")
+    def test_cli_fallback_strip_lookahead_mapping(self, mock_run_scan, mock_parse_args):
+        from context_builder.config import CONFIG, reset_config
+
+        reset_config()
+        mock_args = CliNamespace(fallback_strip_lookahead=55)
+        mock_parse_args.return_value = mock_args
+
+        main()
+
+        self.assertEqual(CONFIG["fallback_strip_lookahead"], 55)
+        args_passed = mock_run_scan.call_args.args[0]
+        self.assertEqual(args_passed.fallback_strip_lookahead, 55)
         reset_config()
 
     @patch("context_builder.cli.argparse.ArgumentParser.parse_args")

@@ -18,6 +18,23 @@ class CFamilyProfile(LanguageProfile):
     uses_c_style_definitions = True
     supports_cpp_raw_strings = True
     lsp_command = ("clangd", "--background-index")
+    keywords = frozenset({
+        'auto', 'break', 'case', 'char', 'const', 'continue', 'default', 'do',
+        'double', 'else', 'enum', 'extern', 'float', 'for', 'goto', 'if',
+        'int', 'long', 'register', 'return', 'short', 'signed', 'sizeof', 'static',
+        'struct', 'switch', 'typedef', 'union', 'unsigned', 'void', 'volatile', 'while',
+        'class', 'namespace', 'using', 'public', 'private', 'protected', 'template',
+        'typename', 'this', 'friend', 'virtual', 'inline', 'explicit', 'operator',
+        'mutable', 'constexpr', 'decltype', 'thread_local', 'consteval', 'constinit',
+        'alignas', 'alignof', 'noexcept', 'static_assert', 'try', 'catch', 'throw'
+    })
+    flow_keywords = frozenset({
+        'return', 'if', 'else', 'for', 'while', 'do', 'switch', 'case',
+        'break', 'continue', 'goto', 'try', 'catch', 'throw', 'default',
+        'sizeof', 'new', 'delete', 'namespace', 'using', 'template', 'typename',
+    })
+    declaration_query = "[(variable_declaration) @decl (assignment_expression) @assign]"
+
 
     def _get_boundaries(self, func_name):
         """Return the C-family specific regex boundary patterns (lead_b, trail_b) for func_name."""

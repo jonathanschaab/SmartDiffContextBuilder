@@ -4,12 +4,14 @@ import os
 import stat
 import subprocess
 import sys
+import threading
 import time
 
 from .config import CONFIG, DEFAULT_GIT_TIMEOUT
 from .languages import get_language_profile
 
 WARNED_MISSING_DEPS = set()
+_WARNED_MISSING_DEPS_LOCK = threading.Lock()
 
 _IGNORED_DIRS = {
     "node_modules",
@@ -34,6 +36,7 @@ class _IgnoredDirsCache:  # pylint: disable=too-few-public-methods
         self.config_copy = None
         self.case_sensitive = None
         self.ignored_dirs = None
+        self._lock = threading.RLock()
 
 
 _IGNORED_DIRS_CACHE = _IgnoredDirsCache()
@@ -46,9 +49,10 @@ def warn_once(key, message):
         key (str): Unique key for the warning.
         message (str): Warning message to display.
     """
-    if key not in WARNED_MISSING_DEPS:
-        print(f"\n[Notice] {message}")
-        WARNED_MISSING_DEPS.add(key)
+    with _WARNED_MISSING_DEPS_LOCK:
+        if key not in WARNED_MISSING_DEPS:
+            print(f"\n[Notice] {message}")
+            WARNED_MISSING_DEPS.add(key)
 
 
 def validate_timeout_setting(value, default, config_key, cli_option):
@@ -226,21 +230,23 @@ class RipgrepChecker:  # pylint: disable=too-few-public-methods
     def __init__(self):
         """Initialize the checker with cached result set to None."""
         self._has_rg = None
+        self._lock = threading.RLock()
 
     def __bool__(self):
         """Evaluate truthiness by checking if rg is present, warning once if missing."""
-        if self._has_rg is None:
-            try:
-                self._has_rg = bool(run_command(["rg", "--version"], timeout=5.0))
-            except Exception:  # pylint: disable=broad-exception-caught
-                self._has_rg = False
-            if not self._has_rg:
-                warn_once(
-                    "ripgrep_missing",
-                    "ripgrep is not installed on the system. For significantly faster context "
-                    "construction in large repositories, please install ripgrep (rg)."
-                )
-        return self._has_rg
+        with self._lock:
+            if self._has_rg is None:
+                try:
+                    self._has_rg = bool(run_command(["rg", "--version"], timeout=5.0))
+                except Exception:  # pylint: disable=broad-exception-caught
+                    self._has_rg = False
+                if not self._has_rg:
+                    warn_once(
+                        "ripgrep_missing",
+                        "ripgrep is not installed on the system. For significantly faster context "
+                        "construction in large repositories, please install ripgrep (rg)."
+                    )
+            return self._has_rg
 
 HAS_RG = RipgrepChecker()
 
@@ -248,6 +254,7 @@ HAS_RG = RipgrepChecker()
 _PROGRESS_BAR_WIDTH = 25
 _RG_COMMAND_MAX_CHARS = 24000
 _NORMALIZED_PATH_CACHE = {}
+_NORMALIZED_PATH_CACHE_LOCK = threading.RLock()
 
 
 def _stream_is_tty(stream):
@@ -384,11 +391,13 @@ def _fallback_candidates(files, fallback_hint):
 def _get_cached_absolute_path(file_path, cwd):
     """Return a normalized absolute path, caching repeated repository paths."""
     cache_key = (cwd, file_path)
-    abs_path = _NORMALIZED_PATH_CACHE.get(cache_key)
-    if abs_path is None:
-        abs_path = os.path.normcase(os.path.abspath(os.path.join(cwd, file_path)))
-        _NORMALIZED_PATH_CACHE[cache_key] = abs_path
-    return abs_path
+    with _NORMALIZED_PATH_CACHE_LOCK:
+        abs_path = _NORMALIZED_PATH_CACHE.get(cache_key)
+        if abs_path is not None:
+            return abs_path
+    abs_path = os.path.normcase(os.path.abspath(os.path.join(cwd, file_path)))
+    with _NORMALIZED_PATH_CACHE_LOCK:
+        return _NORMALIZED_PATH_CACHE.setdefault(cache_key, abs_path)
 
 
 def _normalize_search_result(file_path, cwd):
@@ -576,32 +585,33 @@ def is_in_repo(file_path):  # pylint: disable=too-many-branches
 
         ignored_dirs_config = CONFIG.get("ignored_directories")
 
-        if (
-            _IGNORED_DIRS_CACHE.config_copy == ignored_dirs_config
-            and _IGNORED_DIRS_CACHE.case_sensitive == case_sensitive
-        ):
-            ignored_dirs = _IGNORED_DIRS_CACHE.ignored_dirs
-        else:
-            if ignored_dirs_config is not None:
-                # Copy the list/tuple/set to detect in-place mutations safely
-                if isinstance(ignored_dirs_config, list):
-                    _IGNORED_DIRS_CACHE.config_copy = list(ignored_dirs_config)
-                elif isinstance(ignored_dirs_config, set):
-                    _IGNORED_DIRS_CACHE.config_copy = set(ignored_dirs_config)
-                elif isinstance(ignored_dirs_config, tuple):
-                    _IGNORED_DIRS_CACHE.config_copy = tuple(ignored_dirs_config)
-                else:
-                    _IGNORED_DIRS_CACHE.config_copy = ignored_dirs_config
-
-                if not case_sensitive:
-                    ignored_dirs = {str(d).lower() for d in ignored_dirs_config}
-                else:
-                    ignored_dirs = {str(d) for d in ignored_dirs_config}
+        with _IGNORED_DIRS_CACHE._lock:  # pylint: disable=protected-access
+            if (
+                _IGNORED_DIRS_CACHE.config_copy == ignored_dirs_config
+                and _IGNORED_DIRS_CACHE.case_sensitive == case_sensitive
+            ):
+                ignored_dirs = _IGNORED_DIRS_CACHE.ignored_dirs
             else:
-                _IGNORED_DIRS_CACHE.config_copy = None
-                ignored_dirs = _IGNORED_DIRS
-            _IGNORED_DIRS_CACHE.case_sensitive = case_sensitive
-            _IGNORED_DIRS_CACHE.ignored_dirs = ignored_dirs
+                if ignored_dirs_config is not None:
+                    # Copy the list/tuple/set to detect in-place mutations safely
+                    if isinstance(ignored_dirs_config, list):
+                        _IGNORED_DIRS_CACHE.config_copy = list(ignored_dirs_config)
+                    elif isinstance(ignored_dirs_config, set):
+                        _IGNORED_DIRS_CACHE.config_copy = set(ignored_dirs_config)
+                    elif isinstance(ignored_dirs_config, tuple):
+                        _IGNORED_DIRS_CACHE.config_copy = tuple(ignored_dirs_config)
+                    else:
+                        _IGNORED_DIRS_CACHE.config_copy = ignored_dirs_config
+
+                    if not case_sensitive:
+                        ignored_dirs = {str(d).lower() for d in ignored_dirs_config}
+                    else:
+                        ignored_dirs = {str(d) for d in ignored_dirs_config}
+                else:
+                    _IGNORED_DIRS_CACHE.config_copy = None
+                    ignored_dirs = _IGNORED_DIRS
+                _IGNORED_DIRS_CACHE.case_sensitive = case_sensitive
+                _IGNORED_DIRS_CACHE.ignored_dirs = ignored_dirs
 
         if any(c in ignored_dirs for c in dir_components):
             return False

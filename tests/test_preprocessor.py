@@ -29,10 +29,7 @@ class TestPreprocessor(unittest.TestCase):
         # Reset the module-level compile_commands.json cache so each test
         # starts with a clean state and cannot be contaminated by a previous
         # test's cached mtime/content/path.
-        _preprocessor_mod._COMPILE_COMMANDS_STATE["cache"] = None
-        _preprocessor_mod._COMPILE_COMMANDS_STATE["mtime"] = None
-        _preprocessor_mod._COMPILE_COMMANDS_STATE["path"] = None
-        _preprocessor_mod._COMPILE_COMMANDS_STATE["cwd"] = None
+        _preprocessor_mod.clear_compile_commands_cache()
         _preprocessor_mod.clear_preprocessed_cache()
 
     def tearDown(self):
@@ -74,6 +71,54 @@ class TestPreprocessor(unittest.TestCase):
             callers["main.cpp"][0]["code"],
             "// [Compilation Link via compile_commands.json]"
         )
+
+    def test_clear_compile_commands_cache_resets_cached_state(self):
+        _preprocessor_mod._COMPILE_COMMANDS_STATE["cache"] = [{"file": "main.cpp"}]
+        _preprocessor_mod._COMPILE_COMMANDS_STATE["mtime"] = 1
+        _preprocessor_mod._COMPILE_COMMANDS_STATE["path"] = "compile_commands.json"
+        _preprocessor_mod._COMPILE_COMMANDS_STATE["cwd"] = os.getcwd()
+
+        _preprocessor_mod.clear_compile_commands_cache()
+
+        self.assertEqual(
+            _preprocessor_mod._COMPILE_COMMANDS_STATE,
+            {"cache": None, "mtime": None, "path": None, "cwd": None},
+        )
+
+    def test_preprocessed_cache_store_holds_owner_lock(self):
+        observed_lock_states = []
+
+        class TrackingOrderedDict(dict):
+            def pop(self, *args, **kwargs):
+                observed_lock_states.append(
+                    _preprocessor_mod._PREPROCESSOR_LOCK._is_owned()
+                )
+                return super().pop(*args, **kwargs)
+
+            def __setitem__(self, key, value):
+                observed_lock_states.append(
+                    _preprocessor_mod._PREPROCESSOR_LOCK._is_owned()
+                )
+                return super().__setitem__(key, value)
+
+            def popitem(self, *args, **kwargs):
+                observed_lock_states.append(
+                    _preprocessor_mod._PREPROCESSOR_LOCK._is_owned()
+                )
+                return super().popitem()
+
+        original_cache = _preprocessor_mod._PREPROCESSED_CACHE
+        try:
+            _preprocessor_mod._PREPROCESSED_CACHE = TrackingOrderedDict()
+            _preprocessor_mod._cache_preprocessed_code(
+                "main.cpp", (1, 2), "expanded"
+            )
+        finally:
+            _preprocessor_mod._PREPROCESSED_CACHE = original_cache
+            _preprocessor_mod.clear_preprocessed_cache()
+
+        self.assertTrue(observed_lock_states)
+        self.assertTrue(all(observed_lock_states))
 
     def test_analyze_compile_commands_in_build_directory(self):
         # Create a build directory
@@ -448,6 +493,7 @@ class TestPreprocessor(unittest.TestCase):
         self.assertEqual(result["my_header.h"][0]["code"], "// [Macro Expansion Link] #define MY_MACRO 10")
 
         # Test case-insensitivity of macro expansion
+        _preprocessor_mod.clear_preprocessed_cache()
         header_path_upper = "MY_HEADER.H"
         with open(header_path_upper, "w") as f:
             f.write("#define JOIN(a, b) a ## b\n")

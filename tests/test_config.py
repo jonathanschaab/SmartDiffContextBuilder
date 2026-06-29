@@ -73,6 +73,7 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(CONFIG["lsp_timeout"], 150)
         self.assertEqual(CONFIG["git_timeout"], 30.0)
         self.assertEqual(CONFIG["git_probe_timeout"], 5.0)
+        self.assertEqual(CONFIG["fallback_strip_lookahead"], 20)
 
     def test_generate_commented_config(self):
         reset_config()
@@ -86,6 +87,11 @@ class TestConfig(unittest.TestCase):
         # Check inactive fields are commented out
         self.assertIn('// "max_mb": 2.0', config_str)
         self.assertIn('// "base_name": "SmartDiffContextBuilder"', config_str)
+        self.assertIn('// "fallback_strip_lookahead": 20', config_str)
+        self.assertIn('// "caller_depth": 1', config_str)
+        self.assertIn('// "callee_depth": 1', config_str)
+        self.assertIn('// "data_depth": 1', config_str)
+        self.assertIn('// "data_flow_batch_size": 32', config_str)
 
     def test_config_dict_proxy(self):
         from context_builder.config import ConfigDictProxy

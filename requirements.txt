@@ -3,12 +3,11 @@ pytest-cov>=5.0.0
 pygls>=2.1.1
 lsprotocol>=2025.0.0
 
-# Optional AST Support dependencies (for syntax-aware function boundary extraction and queries)
-# tree-sitter>=0.21.0
-# tree-sitter-python
-# tree-sitter-rust
-# tree-sitter-javascript
-# tree-sitter-typescript
-# tree-sitter-c
-# tree-sitter-cpp
-
+# AST Support dependencies (for syntax-aware function boundary extraction and queries)
+tree-sitter>=0.21.0
+tree-sitter-python
+tree-sitter-rust
+tree-sitter-javascript
+tree-sitter-typescript
+tree-sitter-c
+tree-sitter-cpp

@@ -1,8 +1,9 @@
 # pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
-# pylint: disable=attribute-defined-outside-init,consider-using-with,line-too-long
+# pylint: disable=attribute-defined-outside-init,consider-using-with,line-too-long,too-many-public-methods
 # pylint: disable=protected-access
 
 import os
+import re
 import unittest
 import tempfile
 from types import SimpleNamespace
@@ -11,7 +12,9 @@ from unittest.mock import Mock, patch
 from context_builder.config import reset_config
 from context_builder.cache import LRUFileCache
 from context_builder import test_miner
-from context_builder.test_miner import get_coverage_data, mine_relevant_unit_tests
+from context_builder.test_miner import (
+    get_coverage_data, mine_relevant_unit_tests, _mine_ast_tests
+)
 
 class TestTestMiner(unittest.TestCase):
     def setUp(self):
@@ -279,7 +282,8 @@ class TestTestMiner(unittest.TestCase):
         parser.parse.return_value = SimpleNamespace(root_node=object())
         mock_profile.return_value.test_query = "(function_item) @test"
 
-        with patch.dict(test_miner.AST_ENGINE.parsers, {".rs": parser}), \
+        with patch("tree_sitter.Query", return_value=query) as mock_query_class, \
+                patch.dict(test_miner.AST_ENGINE.parsers, {".rs": parser}), \
                 patch.dict(test_miner.AST_ENGINE.languages, {".rs": language}):
             discovered = []
             success = test_miner._mine_ast_tests(
@@ -294,7 +298,8 @@ class TestTestMiner(unittest.TestCase):
 
         self.assertTrue(success)
         self.assertEqual(discovered[0]["line"], 1)
-        language.query.assert_called_once_with("(function_item) @test")
+        mock_profile.assert_called_once_with("tests.rs")
+        mock_query_class.assert_called_once_with(language, "(function_item) @test")
 
     @patch("context_builder.test_miner.warn_once")
     @patch("context_builder.test_miner.get_language_profile")
@@ -302,18 +307,34 @@ class TestTestMiner(unittest.TestCase):
         parser = Mock()
         parser.parse.return_value = SimpleNamespace(root_node=object())
         language = Mock()
-        language.query.side_effect = RuntimeError("bad query")
         mock_profile.return_value.test_query = "(broken"
 
-        with patch.dict(test_miner.AST_ENGINE.parsers, {".py": parser}), \
+        with patch("tree_sitter.Query", side_effect=RuntimeError("bad query")), \
+                patch.dict(test_miner.AST_ENGINE.parsers, {".py": parser}), \
                 patch.dict(test_miner.AST_ENGINE.languages, {".py": language}):
             success = test_miner._mine_ast_tests(
                 "test_bad.py", ".py", Mock(), b"", [], set(), []
             )
 
         self.assertFalse(success)
+        mock_profile.assert_called_once_with("test_bad.py")
         mock_warn.assert_called_once()
         self.assertIn("test_bad.py", mock_warn.call_args.args[1])
+
+    @patch("context_builder.test_miner.get_language_profile")
+    def test_mine_ast_tests_propagates_memory_error(self, mock_profile):
+        parser = Mock()
+        parser.parse.side_effect = MemoryError("out of memory")
+        language = Mock()
+        mock_profile.return_value.test_query = "(function_definition) @test"
+
+        with patch.dict(test_miner.AST_ENGINE.parsers, {".py": parser}), \
+                patch.dict(test_miner.AST_ENGINE.languages, {".py": language}):
+            with self.assertRaises(MemoryError):
+                test_miner._mine_ast_tests(
+                    "test_bad.py", ".py", Mock(), b"", [], set(), []
+                )
+        mock_profile.assert_called_once_with("test_bad.py")
 
     @patch("context_builder.test_miner._mine_regex_tests")
     @patch("context_builder.test_miner._mine_ast_tests", return_value=False)
@@ -418,3 +439,22 @@ class TestTestMiner(unittest.TestCase):
         # Should match the JS test that has both 'it(' and 'operator+' on the first line
         self.assertEqual(len(tests), 1)
         self.assertEqual(tests[0]["file"], file_path)
+
+    def test_mine_ast_tests_handles_none_tree(self):
+        """Verify that _mine_ast_tests handles None tree/missing root_node safely."""
+        file_path = "test_none_tree.py"
+        lines = ["def test_foo():\n", "    pass\n"]
+        discovered = []
+
+        with patch("context_builder.test_miner._parse_ast_bytes", return_value=None):
+            success = _mine_ast_tests(
+                file_path=file_path,
+                ext=".py",
+                test_pattern=re.compile("foo"),
+                source_bytes=b"def test_foo():\n    pass\n",
+                lines=lines,
+                seen_bodies=set(),
+                discovered_tests=discovered
+            )
+            self.assertFalse(success)
+            self.assertEqual(discovered, [])

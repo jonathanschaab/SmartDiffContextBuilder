@@ -7,11 +7,18 @@ import os
 import re
 import xml.etree.ElementTree as ET
 
-from .ast_engine import AST_ENGINE, extract_function_bounds_regex
+from .ast_engine import AST_ENGINE, _parse_ast_bytes, extract_function_bounds_regex
 from .cache import get_global_cache
 from .languages import get_language_profile
 from .sys_utils import iter_scan_progress, ripgrep_filter, warn_once
 from .path_utils import find_artifact_path
+
+try:
+    import tree_sitter
+    TreeSitterQueryError = tree_sitter.QueryError
+except ImportError:
+    tree_sitter = None
+    TreeSitterQueryError = ValueError
 
 
 def get_coverage_data():
@@ -74,14 +81,31 @@ def _mine_ast_tests(
     file_path, ext, test_pattern, source_bytes, lines, seen_bodies, discovered_tests
 ):
     """Scan file using AST query to find tests."""
-    tree = AST_ENGINE.parsers[ext].parse(source_bytes)
-    test_query = get_language_profile(ext).test_query
+    test_query = get_language_profile(file_path).test_query
     if not test_query:
         return False
 
+    if tree_sitter is None:
+        return False
+
     try:
-        query = AST_ENGINE.languages[ext].query(test_query)
-        captures = query.captures(tree.root_node)
+        tree = _parse_ast_bytes(ext, source_bytes, AST_ENGINE)
+        if not tree or not hasattr(tree, "root_node"):
+            return False
+        query = AST_ENGINE.get_query(ext, test_query)
+        if hasattr(query, "captures"):
+            captures = query.captures(tree.root_node)
+        else:
+            cursor = tree_sitter.QueryCursor(query)
+            res = cursor.captures(tree.root_node)
+            if isinstance(res, dict):
+                captures_list = []
+                for name, nodes in res.items():
+                    for n in nodes:
+                        captures_list.append((n, name))
+                captures = captures_list
+            else:
+                captures = res
         for node, _ in captures:
             _process_ast_capture(
                 node,
@@ -94,6 +118,12 @@ def _mine_ast_tests(
             )
         return True
     except Exception as exc:  # pylint: disable=broad-exception-caught
+        # Broad catch: tree-sitter is a C extension that can raise AttributeError,
+        # TypeError, OSError, or other low-level errors across versions/platforms.
+        # MemoryError is re-raised as a critical non-recoverable error.
+        # KeyboardInterrupt/SystemExit are not subclasses of Exception and propagate normally.
+        if isinstance(exc, MemoryError):
+            raise
         warn_once("test_query_fail", f"AST test query failed on {file_path}: {exc}")
         return False
 
@@ -145,7 +175,7 @@ def _mine_single_file(
         return
 
     lines = file_cache.get_lines(file_path)
-    ext = os.path.splitext(file_path)[1]
+    ext = os.path.splitext(file_path)[1].lower()
 
     ast_success = False
     if AST_ENGINE.is_supported(ext):

@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines
 """Module lsp_client provides a minimal Language Server Protocol (LSP) client.
 
 It handles starting language server subprocesses, querying them for references,
@@ -6,11 +7,13 @@ and managing event loop threads for async communication.
 
 import atexit
 import asyncio
+import concurrent.futures
 import inspect
 import math
 import os
 import re
 import sys
+import time
 import urllib.parse
 from collections.abc import Mapping
 from pathlib import Path
@@ -23,16 +26,25 @@ from pygls.lsp.client import LanguageClient
 from .cache import get_global_cache
 from .config import DEFAULT_LSP_INIT_TIMEOUT, DEFAULT_LSP_QUERY_TIMEOUT
 from .languages import get_language_profile
+from .lsp_ast_utils import find_lsp_func_start_character_ast
 from .sys_utils import warn_once
 
 USE_LSP = True
 LSP_INSTANCES = {}
+LSP_FAILURES = {}
+LSP_MAX_START_RETRIES = 3
+LSP_RETRY_COOLDOWN = 60.0
+_LSP_LOCK = threading.Lock()
+_INIT_LOCKS = {}
 _LSP_PROGRESS_BAR_WIDTH = 24
+_find_lsp_func_start_character_ast = find_lsp_func_start_character_ast
 
 
 def _is_timeout_error(exc):
     """Return whether an exception represents an asyncio/future timeout."""
-    return isinstance(exc, TimeoutError)
+    return isinstance(
+        exc, (TimeoutError, asyncio.TimeoutError, concurrent.futures.TimeoutError)
+    )
 
 
 def _validate_lsp_timeout(value, default, config_key, cli_option):
@@ -362,6 +374,7 @@ class MinimalLSPClient:
         self.client = None
         self.progress = LSPProgressReporter(cmd[0])
         self.loop = get_lsp_loop()
+        self._lock = threading.RLock()
 
     def start(self) -> bool:
         """Start the language server subprocess and perform initialize handshake.
@@ -370,99 +383,139 @@ class MinimalLSPClient:
             bool: True if initialized successfully, False otherwise.
         """
         process_start_failed = False
-
-        async def _async_start():
-            nonlocal process_start_failed
-            self.client = LanguageClient(name="SmartDiffContextBuilder-LSP", version="1.0")
-            _register_notebook_filter_compatibility(self.client)
-            _register_lsp_progress_handlers(self.client, self.progress)
-            # pygls owns stdin/stdout/stderr for its JSON-RPC transport and
-            # captures stderr in a pipe. Supplying stderr here is not needed to
-            # keep the console clean and breaks pygls 2.x by passing the keyword
-            # twice to asyncio.create_subprocess_exec.
-            start_task = asyncio.create_task(
-                self.client.start_io(self.cmd[0], *self.cmd[1:])
-            )
-            try:
-                await asyncio.sleep(0.1)
-                if start_task.done():
-                    # start_io completing is healthy: it means pygls spawned the
-                    # process and installed background transport tasks. It does
-                    # not mean the language-server process itself has exited.
-                    try:
-                        start_task.result()
-                    except BaseException:
-                        process_start_failed = True
-                        raise
-
-                # Process state is independent of start_io task completion. A
-                # compatible client may keep start_io pending briefly while its
-                # subprocess has already crashed, so check the process on every
-                # startup pass instead of waiting for the task to finish.
-                server = _get_lsp_process(self.client)
-                returncode = getattr(server, "returncode", None)
-                if isinstance(returncode, int):
-                    # asyncio subprocess return codes are integers. Checking
-                    # the process directly avoids waiting for initialize_async
-                    # to time out against a transport that is already dead.
-                    process_start_failed = True
-                    raise RuntimeError(
-                        f"LSP process exited during startup with code {returncode}"
-                    )
-
-                params = types.InitializeParams(
-                    process_id=os.getpid(),
-                    root_uri=Path(".").absolute().as_uri(),
-                    capabilities=types.ClientCapabilities(
-                        window=types.WindowClientCapabilities(
-                            work_done_progress=True
-                        )
-                    ),
-                )
-                await asyncio.wait_for(
-                    self.client.initialize_async(params),
-                    timeout=self.init_timeout,
-                )
-                self.client.initialized(types.InitializedParams())
+        with self._lock:
+            if self.client and getattr(self.client, "stopped", False) is not True:
                 return True
-            except BaseException:
-                start_task.cancel()
+
+            client = LanguageClient(name="SmartDiffContextBuilder-LSP", version="1.0")
+            self.client = client
+            _register_notebook_filter_compatibility(client)
+            _register_lsp_progress_handlers(client, self.progress)
+
+            async def _async_start():
+                nonlocal process_start_failed
+                # pygls owns stdin/stdout/stderr for its JSON-RPC transport and
+                # captures stderr in a pipe. Supplying stderr here is not needed
+                # to keep the console clean and breaks pygls 2.x by passing the
+                # keyword twice to asyncio.create_subprocess_exec.
+                start_task = asyncio.create_task(client.start_io(self.cmd[0], *self.cmd[1:]))
                 try:
-                    await start_task
-                except Exception:  # pylint: disable=broad-exception-caught
+                    await asyncio.sleep(0.1)
+                    if start_task.done():
+                        # start_io completing is healthy: it means pygls spawned
+                        # the process and installed background transport tasks.
+                        # It does not mean the language-server process itself has
+                        # exited.
+                        try:
+                            start_task.result()
+                        except BaseException:
+                            process_start_failed = True
+                            raise
+
+                    # Process state is independent of start_io task completion. A
+                    # compatible client may keep start_io pending briefly while
+                    # its subprocess has already crashed, so check the process on
+                    # every startup pass instead of waiting for initialize_async
+                    # to time out against a transport that is already dead.
+                    server = _get_lsp_process(client)
+                    returncode = getattr(server, "returncode", None)
+                    if isinstance(returncode, int):
+                        # asyncio subprocess return codes are integers. Checking
+                        # the process directly avoids waiting for initialize_async
+                        # to time out against a transport that is already dead.
+                        process_start_failed = True
+                        raise RuntimeError(
+                            f"LSP process exited during startup with code {returncode}"
+                        )
+
+                    params = types.InitializeParams(
+                        process_id=os.getpid(),
+                        root_uri=Path(".").absolute().as_uri(),
+                        capabilities=types.ClientCapabilities(
+                            window=types.WindowClientCapabilities(
+                                work_done_progress=True
+                            )
+                        ),
+                    )
+                    await asyncio.wait_for(
+                        client.initialize_async(params),
+                        timeout=self.init_timeout,
+                    )
+                    client.initialized(types.InitializedParams())
+                    return True
+                except BaseException:
+                    start_task.cancel()
+                    try:
+                        await start_task
+                    except Exception:  # pylint: disable=broad-exception-caught
+                        pass
+                    except asyncio.CancelledError:
+                        pass
+                    raise
+
+            try:
+                fut = asyncio.run_coroutine_threadsafe(_async_start(), self.loop)
+                return fut.result(timeout=self.init_timeout + 1.0)
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                if "fut" in locals():
+                    fut.cancel()
+                is_timeout = _is_timeout_error(e)
+                if is_timeout:
+                    warn_once(
+                        "lsp_init_timeout",
+                        f"LSP {self.cmd[0]} initialization timed out after "
+                        f"{self.init_timeout} seconds. You can increase this limit "
+                        "using --lsp-init-timeout or by setting 'lsp_init_timeout' "
+                        "in your config file.",
+                    )
+                else:
+                    warn_once(
+                        "lsp_fail",
+                        f"Failed to start LSP {self.cmd[0]} "
+                        f"({type(e).__name__}): {e}",
+                    )
+                if process_start_failed:
+                    # No transport exists yet, so LSP shutdown notifications would
+                    # only produce secondary "no available transport" errors.
+                    self.client = None
+                else:
+                    self.cleanup(force_kill=is_timeout)
+                return False
+
+    def _run_query(self, query_factory, timeout, timeout_message, failure_message):
+        """Submit one LSP request against the active client and wait for its result."""
+        try:
+            with self._lock:
+                client = self.client
+                if not client or getattr(client, "stopped", False):
+                    return []
+                coro = query_factory(client)
+                fut = asyncio.run_coroutine_threadsafe(coro, self.loop)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            if "coro" in locals() and inspect.iscoroutine(coro):
+                try:
+                    coro.close()
+                except RuntimeError:
                     pass
-                except asyncio.CancelledError:
-                    pass
-                raise
+            warn_once(
+                "lsp_query_fail",
+                f"{failure_message} ({type(e).__name__}): {e}",
+            )
+            return []
 
         try:
-            fut = asyncio.run_coroutine_threadsafe(_async_start(), self.loop)
-            return fut.result(timeout=self.init_timeout + 1.0)
+            return fut.result(timeout=timeout)
         except Exception as e:  # pylint: disable=broad-exception-caught
-            if "fut" in locals():
-                fut.cancel()
-            is_timeout = _is_timeout_error(e)
-            if is_timeout:
-                warn_once(
-                    "lsp_init_timeout",
-                    f"LSP {self.cmd[0]} initialization timed out after "
-                    f"{self.init_timeout} seconds. You can increase this limit "
-                    "using --lsp-init-timeout or by setting 'lsp_init_timeout' "
-                    "in your config file.",
-                )
+            fut.cancel()
+            if _is_timeout_error(e):
+                warn_once("lsp_timeout", timeout_message)
+                self.cleanup(force_kill=True)
             else:
                 warn_once(
-                    "lsp_fail",
-                    f"Failed to start LSP {self.cmd[0]} "
-                    f"({type(e).__name__}): {e}",
+                    "lsp_query_fail",
+                    f"{failure_message} ({type(e).__name__}): {e}",
                 )
-            if process_start_failed:
-                # No transport exists yet, so LSP shutdown notifications would
-                # only produce secondary "no available transport" errors.
-                self.client = None
-            else:
-                self.cleanup(force_kill=is_timeout)
-            return False
+            return []
 
     def get_references(self, file_path, line_num, char_num, timeout) -> list:
         """Query references for a symbol at a specific file, line, and column position.
@@ -482,10 +535,7 @@ class MinimalLSPClient:
             "lsp_timeout",
             "--lsp-timeout",
         )
-        if not self.client or getattr(self.client, "stopped", False):
-            return []
-
-        async def _async_get_refs():
+        async def _async_get_refs(client):
             params = types.ReferenceParams(
                 context=types.ReferenceContext(include_declaration=False),
                 text_document=types.TextDocumentIdentifier(
@@ -493,7 +543,7 @@ class MinimalLSPClient:
                 ),
                 position=types.Position(line=line_num - 1, character=char_num),
             )
-            refs = await self.client.text_document_references_async(params)
+            refs = await client.text_document_references_async(params)
             if not refs:
                 return []
 
@@ -570,61 +620,134 @@ class MinimalLSPClient:
                     serialized.append(res)
             return serialized
 
-        try:
-            fut = asyncio.run_coroutine_threadsafe(_async_get_refs(), self.loop)
-            return fut.result(timeout=timeout)
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            if "fut" in locals():
-                fut.cancel()
-            if _is_timeout_error(e):
-                warn_once(
-                    "lsp_timeout",
-                    f"LSP query timed out after {timeout} seconds. You can "
-                    "increase this limit using --lsp-timeout or by setting "
-                    "'lsp_timeout' in your config file.",
-                )
+        timeout_message = (
+            f"LSP query timed out after {timeout} seconds. You can "
+            "increase this limit using --lsp-timeout or by setting "
+            "'lsp_timeout' in your config file."
+        )
+        return self._run_query(
+            _async_get_refs,
+            timeout,
+            timeout_message,
+            "LSP query failed",
+        )
+
+    def get_definition(self, file_path, line_num, char_num, timeout) -> list:
+        """Query definition for a symbol at a specific file, line, and column position.
+
+        Args:
+            file_path (str): Path to file.
+            line_num (int): 1-based line index.
+            char_num (int): Column offset index.
+            timeout (float): Query timeout.
+
+        Returns:
+            list: List of definition locations.
+        """
+        timeout = _validate_lsp_timeout(
+            timeout,
+            DEFAULT_LSP_QUERY_TIMEOUT,
+            "lsp_timeout",
+            "--lsp-timeout",
+        )
+        async def _async_get_def(client):
+            params = types.DefinitionParams(
+                text_document=types.TextDocumentIdentifier(
+                    uri=Path(file_path).absolute().as_uri()
+                ),
+                position=types.Position(line=line_num - 1, character=char_num),
+            )
+            if hasattr(client, "text_document_definition_async"):
+                res = await client.text_document_definition_async(params)
             else:
-                warn_once(
-                    "lsp_query_fail",
-                    f"LSP query failed ({type(e).__name__}): {e}",
+                res = await client.lsp.send_request_async(  # pylint: disable=no-member
+                    "textDocument/definition", params
                 )
-            return []
+            return _serialize_locations(res)
+
+        return self._run_query(
+            _async_get_def,
+            timeout,
+            f"LSP query timed out after {timeout} seconds.",
+            "LSP definition query failed",
+        )
+
+    def get_type_definition(self, file_path, line_num, char_num, timeout) -> list:
+        """Query type definition for a symbol at a specific file, line, and column position.
+
+        Args:
+            file_path (str): Path to file.
+            line_num (int): 1-based line index.
+            char_num (int): Column offset index.
+            timeout (float): Query timeout.
+
+        Returns:
+            list: List of type definition locations.
+        """
+        timeout = _validate_lsp_timeout(
+            timeout,
+            DEFAULT_LSP_QUERY_TIMEOUT,
+            "lsp_timeout",
+            "--lsp-timeout",
+        )
+        async def _async_get_type_def(client):
+            params = types.TypeDefinitionParams(
+                text_document=types.TextDocumentIdentifier(
+                    uri=Path(file_path).absolute().as_uri()
+                ),
+                position=types.Position(line=line_num - 1, character=char_num),
+            )
+            if hasattr(client, "text_document_type_definition_async"):
+                res = await client.text_document_type_definition_async(params)
+            else:
+                res = await client.lsp.send_request_async(  # pylint: disable=no-member
+                    "textDocument/typeDefinition", params
+                )
+            return _serialize_locations(res)
+
+        return self._run_query(
+            _async_get_type_def,
+            timeout,
+            f"LSP query timed out after {timeout} seconds.",
+            "LSP type definition query failed",
+        )
 
     def cleanup(self, force_kill=False):
         """Shutdown the language client and terminate the server subprocess."""
-        client = self.client
-        if not client:
-            return
-        self.client = None
+        with self._lock:
+            client = self.client
+            if not client:
+                return
+            self.client = None
 
-        if force_kill:
-            _kill_lsp_process(client)
-            for method in ["shutdown_async", "shutdown", "exit"]:
-                if hasattr(client, method):
-                    try:
-                        setattr(client, method, lambda *args, **kwargs: None)
-                    except AttributeError:
-                        pass
+            if force_kill:
+                _kill_lsp_process(client)
+                for method in ["shutdown_async", "shutdown", "exit"]:
+                    if hasattr(client, method):
+                        try:
+                            setattr(client, method, lambda *args, **kwargs: None)
+                        except AttributeError:
+                            pass
 
-        async def _async_cleanup():
-            is_stopped = getattr(client, "stopped", False)
-            if not is_stopped:
-                if hasattr(client, "shutdown_async"):
-                    await _async_clean_method(client, "shutdown_async")
-                elif hasattr(client, "shutdown"):
-                    await _async_clean_method(client, "shutdown")
-                await _async_clean_method(client, "exit", use_wait_for=False)
-                await _async_clean_method(client, "stop")
+            async def _async_cleanup():
+                is_stopped = getattr(client, "stopped", False)
+                if not is_stopped:
+                    if hasattr(client, "shutdown_async"):
+                        await _async_clean_method(client, "shutdown_async")
+                    elif hasattr(client, "shutdown"):
+                        await _async_clean_method(client, "shutdown")
+                    await _async_clean_method(client, "exit", use_wait_for=False)
+                    await _async_clean_method(client, "stop")
 
-            _kill_lsp_process(client)
+                _kill_lsp_process(client)
 
-        try:
-            fut = asyncio.run_coroutine_threadsafe(_async_cleanup(), self.loop)
-            fut.result(timeout=2.0)
-        except Exception:  # pylint: disable=broad-exception-caught
-            if "fut" in locals():
-                fut.cancel()
-            _kill_lsp_process(client)
+            try:
+                fut = asyncio.run_coroutine_threadsafe(_async_cleanup(), self.loop)
+                fut.result(timeout=2.0)
+            except Exception:  # pylint: disable=broad-exception-caught
+                if "fut" in locals():
+                    fut.cancel()
+                _kill_lsp_process(client)
 
 
 async def _async_clean_method(client, method_name, use_wait_for=True):
@@ -644,13 +767,16 @@ async def _async_clean_method(client, method_name, use_wait_for=True):
 
 def cleanup_zombie_lsps():
     """Shut down all language server instances and terminate background threads."""
-    for client in LSP_INSTANCES.values():
-        if client:
-            try:
-                client.cleanup()
-            except Exception:  # pylint: disable=broad-exception-caught
-                pass
-    LSP_INSTANCES.clear()
+    with _LSP_LOCK:
+        for client in LSP_INSTANCES.values():
+            if client:
+                try:
+                    client.cleanup()
+                except Exception:  # pylint: disable=broad-exception-caught
+                    pass
+        LSP_INSTANCES.clear()
+        LSP_FAILURES.clear()
+        _INIT_LOCKS.clear()
 
     with _LOOP_LOCK:
         thread = globals().get("_LOOP_THREAD")
@@ -661,71 +787,6 @@ def cleanup_zombie_lsps():
 
 
 atexit.register(cleanup_zombie_lsps)
-
-
-def _find_lsp_func_start_character_ast(
-    lines, line_num, func_name, ext, file_path, file_cache, decorator_lookahead
-):
-    """Attempt to locate function identifier starting character index using AST parsing."""
-    # pylint: disable=import-outside-toplevel
-    from .ast_engine import AST_ENGINE, HAS_TREESITTER
-
-    if not (HAS_TREESITTER and AST_ENGINE.is_supported(ext)):
-        return -1, line_num
-
-    try:
-        source_bytes = file_cache.get_bytes(file_path)
-        tree = AST_ENGINE.parsers[ext].parse(source_bytes)
-        q_str = None
-        if ext in (".cpp", ".cc", ".cxx", ".hpp", ".hxx", ".h", ".c"):
-            q_str = """
-            (function_declarator
-              declarator: [
-                (identifier) @func_name
-                (field_identifier) @func_name
-                (destructor_name) @func_name
-                (qualified_identifier
-                  name: [
-                    (identifier) @func_name
-                    (field_identifier) @func_name
-                    (destructor_name) @func_name
-                  ]
-                )
-              ]
-            )
-            """
-        elif ext == ".rs":
-            q_str = """
-            (function_item
-              name: (identifier) @func_name
-            )
-            (function_signature_item
-              name: (identifier) @func_name
-            )
-            """
-        if not q_str:
-            return -1, line_num
-
-        query = AST_ENGINE.languages[ext].query(q_str)
-        captures = query.captures(tree.root_node)
-        for capture_node, _ in captures:
-            node_text = source_bytes[
-                capture_node.start_byte:capture_node.end_byte
-            ].decode("utf-8", errors="ignore")
-            if node_text != func_name:
-                continue
-            node_row = capture_node.start_point[0]
-            if node_row < (line_num - 1) or node_row >= (line_num - 1 + decorator_lookahead):
-                continue
-            line_str = lines[node_row]
-            prefix_bytes = line_str.encode("utf-8")[:capture_node.start_point[1]]
-            prefix_str = prefix_bytes.decode("utf-8", errors="ignore")
-            char_idx = len(prefix_str.encode("utf-16-le")) // 2
-            actual_line = node_row + 1
-            return char_idx, actual_line
-    except Exception:  # pylint: disable=broad-exception-caught
-        pass
-    return -1, line_num
 
 
 def _find_lsp_func_start_character_regex(
@@ -762,7 +823,7 @@ def _find_lsp_func_start_character(
 
     # Try AST-based matching for C++ and Rust if tree-sitter is available and supported
     if ext and file_path and file_cache:
-        char_idx, actual_line = _find_lsp_func_start_character_ast(
+        char_idx, actual_line = find_lsp_func_start_character_ast(
             lines, line_num, func_name, ext, file_path, file_cache, decorator_lookahead
         )
         if char_idx != -1:
@@ -814,15 +875,65 @@ def _get_lsp_instance_key(command):
     return project_root, tuple(command)
 
 
+def _is_lsp_client_alive(client):
+    """Return whether a cached MinimalLSPClient still has a running inner client."""
+    if client is None:
+        return False
+    inner_client = getattr(client, "client", None)
+    return bool(inner_client) and getattr(inner_client, "stopped", False) is not True
+
+
 def _get_or_create_lsp_client(
     command, init_timeout=DEFAULT_LSP_INIT_TIMEOUT
 ):
     """Retrieve or start a client shared by identical server invocations."""
     instance_key = _get_lsp_instance_key(command)
-    if instance_key not in LSP_INSTANCES:
-        client = MinimalLSPClient(command, init_timeout=init_timeout)
-        LSP_INSTANCES[instance_key] = client if client.start() else None
-    return LSP_INSTANCES.get(instance_key)
+    with _LSP_LOCK:
+        key_lock = _INIT_LOCKS.get(instance_key)
+        if key_lock is None:
+            key_lock = threading.Lock()
+            _INIT_LOCKS[instance_key] = key_lock
+
+    with key_lock:
+        with _LSP_LOCK:
+            failure_record = LSP_FAILURES.get(instance_key)
+            if failure_record:
+                attempts = failure_record.get("attempts", 0)
+                last_attempt = failure_record.get("last_attempt_time", 0.0)
+                if attempts >= LSP_MAX_START_RETRIES:
+                    return None
+                if time.time() - last_attempt < LSP_RETRY_COOLDOWN:
+                    return None
+
+        with _LSP_LOCK:
+            cached_client = LSP_INSTANCES.get(instance_key)
+
+        if not _is_lsp_client_alive(cached_client):
+            if cached_client is not None:
+                try:
+                    cached_client.cleanup(force_kill=True)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    pass
+            client = MinimalLSPClient(command, init_timeout=init_timeout)
+            started = client.start()
+            with _LSP_LOCK:
+                if started:
+                    LSP_INSTANCES[instance_key] = client
+                    LSP_FAILURES.pop(instance_key, None)
+                else:
+                    now = time.time()
+                    failure_record = LSP_FAILURES.get(instance_key)
+                    if failure_record:
+                        failure_record["attempts"] += 1
+                        failure_record["last_attempt_time"] = now
+                    else:
+                        LSP_FAILURES[instance_key] = {
+                            "attempts": 1,
+                            "last_attempt_time": now,
+                        }
+                    LSP_INSTANCES[instance_key] = None
+        with _LSP_LOCK:
+            return LSP_INSTANCES.get(instance_key)
 
 
 def _count_parts(p):
@@ -928,8 +1039,8 @@ def get_lsp_references(
         file_cache = get_global_cache()
 
     ext = os.path.splitext(file_path)[1].lower()
-    profile = get_language_profile(ext)
-    if not profile.lsp_command:
+    profile = get_language_profile(file_path)
+    if not profile or not profile.lsp_command:
         return None
     command = list(profile.lsp_command)
 
@@ -997,3 +1108,153 @@ def get_lsp_references(
         }]
 
     return callers
+
+
+def _serialize_locations(res):
+    """Serialize LSP locations (Location, Location[], LocationLink[]) to dict list."""
+    if not res:
+        return []
+
+    if not isinstance(res, (list, tuple)):
+        res = [res]
+
+    serialized = []
+    for item in res:
+        if isinstance(item, dict):
+            serialized.append(item)
+            continue
+
+        uri = getattr(item, "uri", None)
+        rng_obj = getattr(item, "range", None)
+        if uri and rng_obj:
+            start_pos = getattr(rng_obj, "start", None)
+            end_pos = getattr(rng_obj, "end", None)
+            if start_pos and end_pos:
+                start_line = getattr(start_pos, "line", None)
+                start_char = getattr(start_pos, "character", None)
+                end_line = getattr(end_pos, "line", None)
+                end_char = getattr(end_pos, "character", None)
+                if (
+                    start_line is not None
+                    and start_char is not None
+                    and end_line is not None
+                    and end_char is not None
+                ):
+                    serialized.append({
+                        "uri": uri,
+                        "range": {
+                            "start": {
+                                "line": start_line,
+                                "character": start_char,
+                            },
+                            "end": {"line": end_line, "character": end_char},
+                        },
+                    })
+                    continue
+
+        target_uri = (
+            getattr(item, "target_uri", None)
+            or getattr(item, "targetUri", None)
+        )
+        target_range = (
+            getattr(item, "target_range", None)
+            or getattr(item, "targetRange", None)
+        )
+        target_selection_range = (
+            getattr(item, "target_selection_range", None)
+            or getattr(item, "targetSelectionRange", None)
+        )
+        if target_uri:
+            res_dict = {"targetUri": target_uri}
+            rng = target_selection_range or target_range
+            if rng:
+                start_pos = getattr(rng, "start", None)
+                end_pos = getattr(rng, "end", None)
+                if start_pos and end_pos:
+                    start_line = getattr(start_pos, "line", None)
+                    start_char = getattr(start_pos, "character", None)
+                    end_line = getattr(end_pos, "line", None)
+                    end_char = getattr(end_pos, "character", None)
+                    if (
+                        start_line is not None
+                        and start_char is not None
+                        and end_line is not None
+                        and end_char is not None
+                    ):
+                        res_dict["targetSelectionRange"] = {
+                            "start": {
+                                "line": start_line,
+                                "character": start_char,
+                            },
+                            "end": {"line": end_line, "character": end_char},
+                        }
+            serialized.append(res_dict)
+    return serialized
+
+
+def get_lsp_definition(
+    file_path,
+    line_num,
+    char_offset,
+    timeout,
+    init_timeout=DEFAULT_LSP_INIT_TIMEOUT,
+):
+    """Find definition of a symbol using the active LSP.
+
+    Args:
+        file_path (str): File path to query.
+        line_num (int): 1-based line index.
+        char_offset (int): 0-based column offset on that line.
+        timeout (float): Query timeout.
+        init_timeout (float): Language-server initialize timeout.
+
+    Returns:
+        list: List of definition locations, serialized to dictionaries.
+    """
+    if not USE_LSP or line_num <= 0 or char_offset < 0:
+        return []
+
+    profile = get_language_profile(file_path)
+    if not profile or not profile.lsp_command:
+        return []
+    command = list(profile.lsp_command)
+
+    client = _get_or_create_lsp_client(command, init_timeout=init_timeout)
+    if not client:
+        return []
+
+    return client.get_definition(file_path, line_num, char_offset, timeout=timeout)
+
+
+def get_lsp_type_definition(
+    file_path,
+    line_num,
+    char_offset,
+    timeout,
+    init_timeout=DEFAULT_LSP_INIT_TIMEOUT,
+):
+    """Find type definition of a symbol using the active LSP.
+
+    Args:
+        file_path (str): File path to query.
+        line_num (int): 1-based line index.
+        char_offset (int): 0-based column offset on that line.
+        timeout (float): Query timeout.
+        init_timeout (float): Language-server initialize timeout.
+
+    Returns:
+        list: List of type definition locations, serialized to dictionaries.
+    """
+    if not USE_LSP or line_num <= 0 or char_offset < 0:
+        return []
+
+    profile = get_language_profile(file_path)
+    if not profile or not profile.lsp_command:
+        return []
+    command = list(profile.lsp_command)
+
+    client = _get_or_create_lsp_client(command, init_timeout=init_timeout)
+    if not client:
+        return []
+
+    return client.get_type_definition(file_path, line_num, char_offset, timeout=timeout)

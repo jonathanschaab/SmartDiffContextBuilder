@@ -35,6 +35,7 @@ class VolumeManager:
         self.local_callers = []
         self.ffi_linkages = []
         self.local_callees = []
+        self.data_states = []
 
     def set_raw_diff(self, diff_text):
         """Set the raw diff text to include in the payload.
@@ -43,6 +44,22 @@ class VolumeManager:
             diff_text (str): Git diff output.
         """
         self.raw_diff_text = diff_text
+
+    def add_data_state(self, file_path, line_num, code):
+        """Add a resolved data flow/variable definition to the context.
+
+        Args:
+            file_path (str): Path to the source file.
+            line_num (int): Line number of definition.
+            code (str): Code content of definition.
+        """
+        # De-duplicate to avoid adding the same definition multiple times
+        if not any(d["path"] == file_path and d["line"] == line_num for d in self.data_states):
+            self.data_states.append({
+                "path": file_path,
+                "line": line_num,
+                "code": code
+            })
 
     def add_modified_object(self, file_path, func_name, source_block):
         """Add a modified function/block to the payload core logic list.
@@ -96,6 +113,7 @@ class VolumeManager:
         data = {
             "raw_diff": self.raw_diff_text,
             "modified_core_logic": self.modified_objects,
+            "data_and_state_context": self.data_states,
             "downstream_called_functions": self.local_callees,
             "validating_unit_tests": self.unit_tests,
             "upstream_dependent_callers": self.local_callers,
@@ -155,7 +173,7 @@ class VolumeManager:
 
         # Level 1: Core Logic
         def format_object(obj):
-            lang = LANG_MAP.get(os.path.splitext(obj["file"])[1], "text")
+            lang = LANG_MAP.get(os.path.splitext(obj["file"])[1].lower(), "text")
             return (
                 f"### `{obj['file']}` -> `{obj['function_name']}()`\n"
                 f"```{lang}\n{obj['source_block']}\n```\n"
@@ -163,22 +181,29 @@ class VolumeManager:
 
         try_append("## 2. Modified Core Logic\n", self.modified_objects, format_object)
 
+        # Level 1.25: Data & State Context
+        def format_data_state(d):
+            lang = LANG_MAP.get(os.path.splitext(d["path"])[1].lower(), "text")
+            return f"### `{d['path']}` (Line {d['line']})\n```{lang}\n{d['code']}\n```\n"
+
+        try_append("## 3. Data & State Context\n", self.data_states, format_data_state)
+
         # Level 1.5: Downstream Callees
         def format_callee(c):
-            lang = LANG_MAP.get(os.path.splitext(c["file"])[1], "text")
+            lang = LANG_MAP.get(os.path.splitext(c["file"])[1].lower(), "text")
             return (
                 f"### `{c['file']}` -> `{c['function_name']}()` "
                 f"(Distance {c['distance']})\n```{lang}\n{c['code']}\n```\n"
             )
 
-        try_append("## 3. Downstream Called Functions\n", self.local_callees, format_callee)
+        try_append("## 4. Downstream Called Functions\n", self.local_callees, format_callee)
 
         # Level 2: Unit Tests
         def format_test(t):
-            lang = LANG_MAP.get(os.path.splitext(t["file"])[1], "text")
+            lang = LANG_MAP.get(os.path.splitext(t["file"])[1].lower(), "text")
             return f"### `{t['file']}` (Line {t['line']})\n```{lang}\n{t['code']}\n```\n"
 
-        try_append("## 4. Validating Unit Tests\n", self.unit_tests, format_test)
+        try_append("## 5. Validating Unit Tests\n", self.unit_tests, format_test)
 
         def format_dependency(dependency):
             return (
@@ -190,12 +215,12 @@ class VolumeManager:
 
         # Levels 3 and 4 share the same dependency record shape.
         try_append(
-            "## 5. Upstream Dependent Callers\n",
+            "## 6. Upstream Dependent Callers\n",
             self.local_callers,
             format_dependency,
         )
         try_append(
-            "## 6. Cross-Language FFI Linkages\n",
+            "## 7. Cross-Language FFI Linkages\n",
             self.ffi_linkages,
             format_dependency,
         )
@@ -219,6 +244,7 @@ class VolumeManager:
         self.local_callers.sort(key=lambda x: x.get("distance", 0))
         self.local_callees.sort(key=lambda x: x.get("distance", 0))
         self.ffi_linkages.sort(key=lambda x: x.get("distance", 0))
+        self.data_states.sort(key=lambda x: (x["path"], x["line"]))
 
         if self.fmt == "json":
             payload, ext = self._flush_json_payload()

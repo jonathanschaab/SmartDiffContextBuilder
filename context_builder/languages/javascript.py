@@ -11,6 +11,27 @@ class JavaScriptProfile(LanguageProfile):
     name = "javascript"
     extensions = frozenset({".js", ".jsx", ".mjs", ".cjs"})
     multiline_string_delimiters = ("`",)
+    keywords = frozenset({
+        'break', 'case', 'catch', 'class', 'const', 'continue', 'debugger',
+        'default', 'delete', 'do', 'else', 'export', 'extends', 'finally',
+        'for', 'function', 'if', 'import', 'in', 'instanceof', 'new', 'return',
+        'super', 'switch', 'this', 'throw', 'try', 'typeof', 'var', 'void',
+        'while', 'with', 'yield', 'let', 'static', 'enum', 'await', 'implements',
+        'package', 'protected', 'interface', 'private', 'public',
+        'type', 'namespace', 'declare', 'module', 'keyof', 'readonly', 'as',
+        'any', 'number', 'string', 'boolean', 'symbol', 'unknown', 'never'
+    })
+    flow_keywords = frozenset({
+        'return', 'if', 'else', 'for', 'while', 'do', 'switch', 'case',
+        'break', 'continue', 'throw', 'try', 'catch', 'finally', 'yield',
+        'await', 'delete', 'typeof', 'instanceof', 'void', 'in', 'default',
+        'debugger', 'import', 'export',
+    })
+    declaration_query = (
+        "[(lexical_declaration) @decl "
+        "(variable_declaration) @decl "
+        "(assignment_expression) @assign]"
+    )
 
     def _get_boundaries(self, func_name):
         """Return the JS/TS specific regex boundary patterns (lead_b, trail_b) for func_name."""

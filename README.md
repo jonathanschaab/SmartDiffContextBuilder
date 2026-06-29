@@ -123,6 +123,7 @@ python smart_diff_context_builder.py --config .smdc_config.json
 |---|---|---|---|
 | `--caller-depth` | int | `1` | BFS depth for upstream caller tracing |
 | `--callee-depth` | int | `1` | BFS depth for downstream callee tracing |
+| `--data-depth` | int | `1` | BFS depth for data flow tracing |
 | `--max-interface-depth` | int | `15` | Maximum interface/inheritance depth |
 
 ### Language Server (LSP)
@@ -144,6 +145,7 @@ or CI output. Servers that do not publish progress continue without an indicator
 |---|---|---|---|
 | `--ripgrep-timeout` | float | `10.0` | ripgrep subprocess timeout in seconds (supports fractional values) |
 | `--max-cache-size-mb` | float | `200.0` | In-memory file cache limit in MB |
+| `--data-flow-batch-size` | int | `32` | Max worker thread count for concurrent data flow resolution |
 
 ### Commit Range
 

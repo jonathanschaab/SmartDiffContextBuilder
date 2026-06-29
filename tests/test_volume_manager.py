@@ -136,3 +136,54 @@ class TestVolumeManager(unittest.TestCase):
         self.assertEqual(len(data["modified_core_logic"]), 1)
         self.assertEqual(data["modified_core_logic"][0]["file"], "file.py")
         self.assertEqual(data["downstream_called_functions"][0]["function_name"], "helper")
+
+    def test_volume_manager_data_states_formatting(self):
+        self.addCleanup(
+            lambda: os.path.exists("test_payload_md_final.md")
+            and os.remove("test_payload_md_final.md")
+        )
+        self.addCleanup(
+            lambda: os.path.exists("test_payload_json_final.json")
+            and os.remove("test_payload_json_final.json")
+        )
+
+        # 1. Test Markdown Formatting
+        vm_md = VolumeManager(
+            fmt="md", max_lines=100, max_mb=1.0, base_name="test_payload_md"
+        )
+        vm_md.add_data_state("data_file.py", 42, "x = 42")
+        vm_md.add_data_state("data_file.py", 42, "x = 42") # test deduplication
+        vm_md.add_data_state("another_file.cpp", 10, "int y = 10;")
+
+        # Test sorting order: another_file.cpp should be before data_file.py
+        vm_md.flush_all_volumes()
+
+        with open("test_payload_md_final.md", "r", encoding="utf-8") as f:
+            content = f.read()
+
+        self.assertIn("## 3. Data & State Context", content)
+        self.assertIn("### `another_file.cpp` (Line 10)", content)
+        self.assertIn("```cpp\nint y = 10;", content)
+        self.assertIn("### `data_file.py` (Line 42)", content)
+        self.assertIn("```python\nx = 42", content)
+
+        # Verify another_file.cpp appears before data_file.py
+        idx1 = content.find("another_file.cpp")
+        idx2 = content.find("data_file.py")
+        self.assertTrue(idx1 < idx2)
+
+        # 2. Test JSON Formatting
+        vm_json = VolumeManager(
+            fmt="json", max_lines=100, max_mb=1.0, base_name="test_payload_json"
+        )
+        vm_json.add_data_state("data_file.py", 42, "x = 42")
+        vm_json.flush_all_volumes()
+
+        with open("test_payload_json_final.json", "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        self.assertIn("data_and_state_context", data)
+        self.assertEqual(len(data["data_and_state_context"]), 1)
+        self.assertEqual(data["data_and_state_context"][0]["path"], "data_file.py")
+        self.assertEqual(data["data_and_state_context"][0]["line"], 42)
+        self.assertEqual(data["data_and_state_context"][0]["code"], "x = 42")

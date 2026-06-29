@@ -10,12 +10,14 @@ heuristics.
 import os
 import re
 import subprocess
+import threading
 
 
 _WINDOWS_DRIVE_PATTERN = re.compile(r"^[A-Za-z]:")
 _WINDOWS_UNC_PATTERN = re.compile(r"^(?:\\\\|//)[^/\\]+[/\\][^/\\]+")
 _PATH_CASE_RULE_CACHE = {}
 _ROOT_CASE_CACHE = {}
+_PATH_CACHE_LOCK = threading.RLock()
 
 
 def _get_config_value(key, default=None):
@@ -115,18 +117,20 @@ def normalize_case_rule_path(value):
 
 def _get_compiled_path_case_rule(pattern_text):
     """Compile and cache a regex used for path case overrides."""
-    cached = _PATH_CASE_RULE_CACHE.get(pattern_text)
-    if cached is not None:
-        return cached
+    with _PATH_CACHE_LOCK:
+        cached = _PATH_CASE_RULE_CACHE.get(pattern_text)
+        if cached is not None:
+            return cached
     compiled = re.compile(pattern_text)
-    _PATH_CASE_RULE_CACHE[pattern_text] = compiled
-    return compiled
+    with _PATH_CACHE_LOCK:
+        return _PATH_CASE_RULE_CACHE.setdefault(pattern_text, compiled)
 
 
 def clear_path_case_caches():
     """Clear cached path case policy state after config changes in tests/CLI."""
-    _PATH_CASE_RULE_CACHE.clear()
-    _ROOT_CASE_CACHE.clear()
+    with _PATH_CACHE_LOCK:
+        _PATH_CASE_RULE_CACHE.clear()
+        _ROOT_CASE_CACHE.clear()
 
 
 def _iter_case_override_candidates(path_value, root_path=None):
@@ -218,17 +222,20 @@ def detect_root_case_sensitivity(root_path):
     normalized_root = normalize_case_rule_path(root_path)
     if not normalized_root:
         return True
-    if normalized_root in _ROOT_CASE_CACHE:
-        return _ROOT_CASE_CACHE[normalized_root]
+    with _PATH_CACHE_LOCK:
+        if normalized_root in _ROOT_CASE_CACHE:
+            return _ROOT_CASE_CACHE[normalized_root]
 
     override = get_path_case_override(root_path, root_path=root_path)
     if override is not None:
-        _ROOT_CASE_CACHE[normalized_root] = override
+        with _PATH_CACHE_LOCK:
+            _ROOT_CASE_CACHE[normalized_root] = override
         return override
 
     git_hint = _get_git_ignorecase(root_path)
     if git_hint is not None:
-        _ROOT_CASE_CACHE[normalized_root] = git_hint
+        with _PATH_CACHE_LOCK:
+            _ROOT_CASE_CACHE[normalized_root] = git_hint
         return git_hint
 
     if is_windows_style_path(root_path):
@@ -237,7 +244,8 @@ def detect_root_case_sensitivity(root_path):
         result = True
     else:
         result = True
-    _ROOT_CASE_CACHE[normalized_root] = result
+    with _PATH_CACHE_LOCK:
+        _ROOT_CASE_CACHE[normalized_root] = result
     return result
 
 

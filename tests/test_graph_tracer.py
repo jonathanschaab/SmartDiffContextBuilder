@@ -1,10 +1,11 @@
 # pylint: disable=missing-class-docstring,missing-function-docstring
 # pylint: disable=attribute-defined-outside-init,unused-argument,consider-using-with
-# pylint: disable=import-outside-toplevel,protected-access,too-few-public-methods
+# pylint: disable=import-outside-toplevel,protected-access,too-few-public-methods,too-many-public-methods
 
 """Unit tests for CallGraphTracer."""
 
 import unittest
+import concurrent.futures
 from unittest.mock import MagicMock, patch, ANY
 from collections import deque
 from types import SimpleNamespace
@@ -500,12 +501,11 @@ class TestCallGraphTracer(unittest.TestCase):
         )
         callers = {"macro.cpp": [{"line": 4, "code": "existing"}]}
 
-        tracer._merge_macro_and_build_linkages(
-            "source.cpp", "target", ".cpp", callers
-        )
+        tracer._merge_macro_and_build_linkages("source.cpp", "target", callers)
 
         self.assertEqual([item["line"] for item in callers["macro.cpp"]], [4, 8])
         self.assertEqual(callers["build.cpp"], [build_match])
+        mock_profile.assert_called_once_with("source.cpp")
 
     @patch("context_builder.graph_tracer.trace_ffi_callers")
     @patch("context_builder.graph_tracer.is_in_repo")
@@ -609,3 +609,192 @@ class TestCallGraphTracer(unittest.TestCase):
         tracer.trace_callees(queue, set())
 
         self.assertEqual(queue, deque())
+
+    @patch("context_builder.graph_tracer.extract_identifiers_with_positions")
+    @patch("context_builder.graph_tracer.resolve_variable_definition")
+    @patch("os.path.exists", return_value=True)
+    def test_trace_data_flow_basic(self, mock_exists, mock_resolve, mock_extract):
+        from unittest.mock import call
+
+        # Setup mock returns
+        mock_extract.side_effect = [
+            [("var_a", 10, 5)],  # Initial diff file identifiers
+            [("var_b", 20, 8)],  # Definition file identifiers (child)
+        ]
+
+        mock_resolve.side_effect = [
+            {"definitions": [{"path": "file_b.py", "line": 20, "code": "var_b = 2"}]},
+            {"definitions": [{"path": "file_c.py", "line": 30, "code": "var_c = 3"}]},
+        ]
+
+        vm = MagicMock()
+        vm.data_states = []
+
+        args = SimpleNamespace(data_depth=2, lsp_timeout=5.0)
+        tracer = CallGraphTracer(MagicMock(), [], set(), {}, vm, args)
+
+        diff_files_lines = {"file_a.py": [10]}
+        tracer.trace_data_flow(diff_files_lines)
+
+        vm.add_data_state.assert_has_calls([
+            call("file_b.py", 20, "var_b = 2"),
+            call("file_c.py", 30, "var_c = 3")
+        ])
+
+    @patch("context_builder.graph_tracer.extract_identifiers_with_positions")
+    def test_trace_data_flow_batches_same_depth_identifiers(self, mock_extract):
+        mock_extract.return_value = [
+            ("var_a", 10, 5),
+            ("var_b", 11, 6),
+        ]
+
+        vm = MagicMock()
+        args = SimpleNamespace(
+            data_depth=1,
+            lsp_timeout=5.0,
+            data_flow_batch_size=2,
+        )
+        tracer = CallGraphTracer(MagicMock(), [], set(), {}, vm, args)
+        seen_batches = []
+
+        def resolve_batch(batch, _timeout):
+            seen_batches.append(list(batch))
+            return [
+                (
+                    batch[0],
+                    {"definitions": [{"path": "file_a.py", "line": 20, "code": "a = 1"}]},
+                    None,
+                ),
+                (
+                    batch[1],
+                    {"definitions": [{"path": "file_b.py", "line": 30, "code": "b = 2"}]},
+                    None,
+                ),
+            ]
+
+        with patch.object(tracer, "_resolve_data_flow_batch", side_effect=resolve_batch):
+            tracer.trace_data_flow({"file.py": [10, 11]})
+
+        self.assertEqual(len(seen_batches), 1)
+        self.assertEqual(len(seen_batches[0]), 2)
+        self.assertEqual(vm.add_data_state.call_count, 2)
+
+    def test_next_data_flow_batch_groups_without_depth_filter(self):
+        queue = deque([
+            ("file.py", "a", 1, 1, 0),
+            ("file.py", "b", 2, 1, 0),
+            ("file.py", "c", 3, 1, 1),
+        ])
+
+        batch = CallGraphTracer._next_data_flow_batch(queue, batch_size=4)
+
+        self.assertEqual([item[1] for item in batch], ["a", "b"])
+        self.assertEqual([item[1] for item in queue], ["c"])
+
+    def test_data_flow_executor_is_reused_for_same_worker_count(self):
+        tracer = CallGraphTracer(MagicMock(), [], set(), {}, MagicMock(), None)
+        try:
+            executor = tracer._get_data_flow_executor()
+            same_executor = tracer._get_data_flow_executor()
+
+            self.assertIs(same_executor, executor)
+        finally:
+            tracer.close()
+
+    def test_data_flow_executor_created_only_once(self):
+        """Executor is always reused; a second call must return the same instance."""
+        tracer = CallGraphTracer(MagicMock(), [], set(), {}, MagicMock(), None)
+        try:
+            executor = tracer._get_data_flow_executor()
+            same_executor = tracer._get_data_flow_executor()
+
+            self.assertIs(same_executor, executor)
+        finally:
+            tracer.close()
+
+    def test_data_flow_executor_creation_holds_owner_lock(self):
+        tracer = CallGraphTracer(MagicMock(), [], set(), {}, MagicMock(), None)
+        observed_lock_states = []
+        real_executor = concurrent.futures.ThreadPoolExecutor
+
+        def tracked_executor(*args, **kwargs):
+            observed_lock_states.append(tracer._executor_lock._is_owned())
+            return real_executor(*args, **kwargs)
+
+        try:
+            with patch(
+                "context_builder.graph_tracer.concurrent.futures.ThreadPoolExecutor",
+                side_effect=tracked_executor,
+            ):
+                tracer._get_data_flow_executor()
+        finally:
+            tracer.close()
+
+        self.assertEqual(observed_lock_states, [True])
+
+    @patch("context_builder.graph_tracer.extract_identifiers_with_positions")
+    @patch("context_builder.graph_tracer.resolve_variable_definition")
+    @patch("os.path.exists", return_value=True)
+    def test_trace_data_flow_zero_depth(self, mock_exists, mock_resolve, mock_extract):
+        vm = MagicMock()
+        args = SimpleNamespace(data_depth=0)
+        tracer = CallGraphTracer(MagicMock(), [], set(), {}, vm, args)
+
+        diff_files_lines = {"file_a.py": [10]}
+        tracer.trace_data_flow(diff_files_lines)
+
+        mock_extract.assert_not_called()
+        mock_resolve.assert_not_called()
+
+    @patch("context_builder.graph_tracer.extract_identifiers_with_positions")
+    @patch("context_builder.graph_tracer.resolve_variable_definition")
+    def test_trace_data_flow_exception_handling(self, mock_resolve, mock_extract):
+        mock_extract.return_value = [("var_a", 10, 5), ("var_b", 12, 5)]
+
+        # First call raises an exception, second call succeeds
+        mock_resolve.side_effect = [
+            Exception("Simulated LSP crash"),
+            {"definitions": [{"path": "file_b.py", "line": 20, "code": "var_b = 2"}]}
+        ]
+
+        vm = MagicMock()
+        vm.data_states = []
+
+        args = SimpleNamespace(data_depth=1, lsp_timeout=5.0)
+        tracer = CallGraphTracer(MagicMock(), [], set(), {}, vm, args)
+
+        diff_files_lines = {"file_a.py": [10]}
+        tracer.trace_data_flow(diff_files_lines)
+
+        # var_b should still be resolved and added
+        vm.add_data_state.assert_called_once_with("file_b.py", 20, "var_b = 2")
+
+    @patch("context_builder.graph_tracer.extract_identifiers_with_positions")
+    def test_enqueue_identifiers_normalizes_to_abspath(self, mock_extract):
+        import os
+        mock_extract.return_value = [("var_x", 5, 2)]
+
+        vm = MagicMock()
+        tracer = CallGraphTracer(MagicMock(), [], set(), {}, vm, None)
+
+        queue = deque()
+        processed_vars = set()
+
+        # Enqueue using a relative path
+        tracer._enqueue_identifiers("relative_dir/file.py", [5], queue, processed_vars, 1)
+
+        self.assertEqual(len(queue), 1)
+        enqueued_path, var_name, line_num, char_offset, depth = queue[0]
+
+        # Verify it became absolute path
+        self.assertTrue(os.path.isabs(enqueued_path))
+        self.assertEqual(var_name, "var_x")
+        self.assertEqual(line_num, 5)
+        self.assertEqual(char_offset, 2)
+        self.assertEqual(depth, 1)
+
+        # Check processed_vars set has absolute path as well
+        self.assertEqual(len(processed_vars), 1)
+        key = list(processed_vars)[0]
+        self.assertTrue(os.path.isabs(key[0]))
+        self.assertEqual(key[1], "var_x")

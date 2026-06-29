@@ -221,12 +221,11 @@ def _process_single_diff_line(
 
 
 def _process_diff_files(
-    diff_files, start_ref, end_ref, file_cache, coverage_data,
+    diff_files_lines, file_cache, coverage_data,
     processed_spans, vm, queue, callee_queue, all_repo_files
 ):
-    """Process modified files from git diff and initialize tracking queues."""
-    for file_path in diff_files:
-        line_numbers = _extract_line_numbers_from_diff(file_path, start_ref, end_ref)
+    """Process modified files and initialize queues using pre-extracted diff lines."""
+    for file_path, line_numbers in diff_files_lines.items():
         if not line_numbers or not os.path.exists(file_path):
             continue
 
@@ -348,8 +347,14 @@ def run_scan(args, start_ref=None, end_ref=None, output_dir=".", repo_root=None)
     queue = deque()
     callee_queue = deque()
 
+    diff_files_lines = {}
+    for file_path in diff_files:
+        line_numbers = _extract_line_numbers_from_diff(file_path, start_ref, end_ref)
+        if line_numbers and os.path.exists(file_path):
+            diff_files_lines[file_path] = line_numbers
+
     _process_diff_files(
-        diff_files, start_ref, end_ref, file_cache, coverage_data,
+        diff_files_lines, file_cache, coverage_data,
         processed_spans, vm, queue, callee_queue, all_repo_files
     )
 
@@ -362,8 +367,12 @@ def run_scan(args, start_ref=None, end_ref=None, output_dir=".", repo_root=None)
         args=args,
     )
 
-    tracer.trace_callers(queue, processed_spans)
-    tracer.trace_callees(callee_queue, processed_spans)
+    try:
+        tracer.trace_data_flow(diff_files_lines)
+        tracer.trace_callers(queue, processed_spans)
+        tracer.trace_callees(callee_queue, processed_spans)
+    finally:
+        tracer.close()
 
     vm.flush_all_volumes()
     cleanup_zombie_lsps()
@@ -463,6 +472,7 @@ def _merge_cli_mappings(args, active_overrides):
         "base_name": "base_name",
         "max_cache_size_mb": "max_cache_size_mb",
         "max_interface_depth": "max_interface_depth",
+        "fallback_strip_lookahead": "fallback_strip_lookahead",
         "disable_pruning": "disable_pruning",
         "lsp_init_timeout": "lsp_init_timeout",
         "lsp_timeout": "lsp_timeout",
@@ -475,6 +485,8 @@ def _merge_cli_mappings(args, active_overrides):
         "skip_macro_expansion": "skip_macro_expansion",
         "caller_depth": "caller_depth",
         "callee_depth": "callee_depth",
+        "data_depth": "data_depth",
+        "data_flow_batch_size": "data_flow_batch_size",
         "commit_range": "commit_range",
         "func_decl_pattern": "func_decl_pattern",
         "def_pattern_template": "def_pattern_template",
@@ -828,7 +840,7 @@ def _run_commit_range_worktree(args, commit_range):
         _cleanup_temp_worktree(temp_worktree_dir, original_cwd)
 
 
-def main():
+def main():  # pylint: disable=too-many-statements
     """Main entry point for CLI invocation of SmartDiffContextBuilder."""
     parser = argparse.ArgumentParser(
         description="Compile context-aware git diff tokens optimized for LLMs."
@@ -840,6 +852,7 @@ def main():
     parser.add_argument("--max-cache-size-mb", type=float, default=None)
 
     parser.add_argument("--max-interface-depth", type=int, default=None)
+    parser.add_argument("--fallback-strip-lookahead", type=int, default=None)
     parser.add_argument("--disable-pruning", action="store_true", default=None)
     parser.add_argument("--lsp-init-timeout", type=float, default=None)
     parser.add_argument("--lsp-timeout", type=float, default=None)
@@ -853,6 +866,8 @@ def main():
     parser.add_argument("--skip-macro-expansion", action="store_true", default=None)
     parser.add_argument("--caller-depth", type=int, default=None)
     parser.add_argument("--callee-depth", type=int, default=None)
+    parser.add_argument("--data-depth", type=int, default=None)
+    parser.add_argument("--data-flow-batch-size", type=int, default=None)
     parser.add_argument(
         "--commit-range",
         type=str,
