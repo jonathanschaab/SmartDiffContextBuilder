@@ -48,7 +48,6 @@ class CallGraphTracer:
         self.vm = vm
         self.args = args
         self._data_flow_executor = None
-        self._data_flow_executor_workers = None
         self._executor_lock = threading.RLock()
 
     def close(self):
@@ -57,7 +56,6 @@ class CallGraphTracer:
             if self._data_flow_executor is not None:
                 self._data_flow_executor.shutdown(wait=True)
                 self._data_flow_executor = None
-                self._data_flow_executor_workers = None
 
     def _arg_or_default(self, name, default):
         """Return an argument value, treating absent args and values alike."""
@@ -299,12 +297,11 @@ class CallGraphTracer:
         except Exception as exc:  # pylint: disable=broad-exception-caught
             return item, None, exc
 
-    def _resolve_data_flow_batch(self, batch, lsp_timeout, batch_size):
+    def _resolve_data_flow_batch(self, batch, lsp_timeout):
         """Resolve a bounded batch of data-flow identifiers concurrently."""
         if len(batch) == 1:
             return [self._resolve_data_flow_item(batch[0], lsp_timeout)]
-        max_workers = min(batch_size, len(batch))
-        executor = self._get_data_flow_executor(max_workers)
+        executor = self._get_data_flow_executor()
         return list(
             executor.map(
                 lambda item: self._resolve_data_flow_item(item, lsp_timeout),
@@ -312,20 +309,16 @@ class CallGraphTracer:
             )
         )
 
-    def _get_data_flow_executor(self, max_workers):
+    def _get_data_flow_executor(self):
         """Lazily create or reuse a persistent data-flow executor."""
         with self._executor_lock:
-            if (
-                self._data_flow_executor is not None
-                and self._data_flow_executor_workers >= max_workers
-            ):
-                return self._data_flow_executor
-            if self._data_flow_executor is not None:
-                self._data_flow_executor.shutdown(wait=True)
-            self._data_flow_executor = concurrent.futures.ThreadPoolExecutor(
-                max_workers=max_workers
-            )
-            self._data_flow_executor_workers = max_workers
+            if self._data_flow_executor is None:
+                batch_size = self._positive_int_arg_or_default(
+                    "data_flow_batch_size", DEFAULT_DATA_FLOW_BATCH_SIZE
+                )
+                self._data_flow_executor = concurrent.futures.ThreadPoolExecutor(
+                    max_workers=batch_size
+                )
             return self._data_flow_executor
 
     def _process_data_flow_result(
@@ -404,7 +397,7 @@ class CallGraphTracer:
             batch = self._next_data_flow_batch(queue, batch_size)
             if not batch:
                 continue
-            results = self._resolve_data_flow_batch(batch, lsp_timeout, batch_size)
+            results = self._resolve_data_flow_batch(batch, lsp_timeout)
             for item, res, exc in results:
                 self._process_data_flow_result(
                     item, res, exc, processed_defs, processed_vars, queue, data_depth

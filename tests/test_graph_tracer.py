@@ -657,7 +657,7 @@ class TestCallGraphTracer(unittest.TestCase):
         tracer = CallGraphTracer(MagicMock(), [], set(), {}, vm, args)
         seen_batches = []
 
-        def resolve_batch(batch, _timeout, _batch_size):
+        def resolve_batch(batch, _timeout):
             seen_batches.append(list(batch))
             return [
                 (
@@ -694,21 +694,21 @@ class TestCallGraphTracer(unittest.TestCase):
     def test_data_flow_executor_is_reused_for_same_worker_count(self):
         tracer = CallGraphTracer(MagicMock(), [], set(), {}, MagicMock(), None)
         try:
-            executor = tracer._get_data_flow_executor(2)
-            same_executor = tracer._get_data_flow_executor(2)
+            executor = tracer._get_data_flow_executor()
+            same_executor = tracer._get_data_flow_executor()
 
             self.assertIs(same_executor, executor)
         finally:
             tracer.close()
 
-    def test_data_flow_executor_reused_when_worker_count_shrinks(self):
+    def test_data_flow_executor_created_only_once(self):
+        """Executor is always reused; a second call must return the same instance."""
         tracer = CallGraphTracer(MagicMock(), [], set(), {}, MagicMock(), None)
         try:
-            executor = tracer._get_data_flow_executor(4)
-            same_executor = tracer._get_data_flow_executor(2)
+            executor = tracer._get_data_flow_executor()
+            same_executor = tracer._get_data_flow_executor()
 
             self.assertIs(same_executor, executor)
-            self.assertEqual(tracer._data_flow_executor_workers, 4)
         finally:
             tracer.close()
 
@@ -726,7 +726,7 @@ class TestCallGraphTracer(unittest.TestCase):
                 "context_builder.graph_tracer.concurrent.futures.ThreadPoolExecutor",
                 side_effect=tracked_executor,
             ):
-                tracer._get_data_flow_executor(2)
+                tracer._get_data_flow_executor()
         finally:
             tracer.close()
 
