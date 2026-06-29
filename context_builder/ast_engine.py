@@ -843,13 +843,19 @@ def extract_callees_ast(file_path, start_line, end_line, ext, file_cache):  # py
     stack = list(reversed(tree.root_node.children))
     while stack:
         curr = stack.pop()
-        if curr.start_point[0] == start_line:
-            func_node = curr
-            break
+        curr_start = None
+        curr_end = None
         try:
-            should_traverse = curr.start_point[0] <= start_line <= curr.end_point[0]
+            curr_start = curr.start_point[0]
+            curr_end = curr.end_point[0]
+            should_traverse = curr_start <= start_line <= curr_end
         except (TypeError, IndexError, AttributeError):
             should_traverse = True
+
+        if curr_start == start_line:
+            func_node = curr
+            break
+
         if should_traverse:
             for child in reversed(curr.children):
                 stack.append(child)

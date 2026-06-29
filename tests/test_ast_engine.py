@@ -698,6 +698,46 @@ class TestAstEngine(unittest.TestCase):
         self.assertIn("Node object lacks '.text' attribute", str(ctx.exception))
 
     @patch("context_builder.ast_engine.AST_ENGINE")
+    def test_extract_callees_node_malformed_start_point(self, mock_ast_engine):
+        mock_parser = MagicMock()
+        mock_tree = MagicMock()
+        mock_node = MagicMock()
+
+        # Make start_point throw AttributeError / TypeError
+        del mock_node.start_point
+        del mock_node.end_point
+
+        mock_tree.root_node.children = [mock_node]
+        mock_parser.parse.return_value = mock_tree
+        mock_ast_engine.parsers = {".py": mock_parser}
+        mock_ast_engine.is_supported.return_value = True
+
+        mock_lang = MagicMock()
+        mock_query = MagicMock()
+
+        # Create a separate node for the query capture that has valid start_point but no text attribute
+        mock_capture_node = MagicMock()
+        mock_capture_node.start_point = (2, 0)
+        del mock_capture_node.text
+
+        # Ensure it returns captured node so it reaches the text check
+        mock_query.captures.return_value = [(mock_capture_node, "id")]
+        mock_ast_engine.languages = {".py": mock_lang}
+        mock_ast_engine.get_query.return_value = mock_query
+
+        from context_builder.ast_engine import extract_callees_ast
+
+        mock_cache = MagicMock()
+        mock_cache.get_bytes.return_value = b"def foo():\n    bar()\n"
+
+        # It should not fail during traversal due to missing start_point,
+        # but should still raise AttributeError for .text later.
+        with self.assertRaises(AttributeError) as ctx:
+            extract_callees_ast("dummy.py", 1, 3, ".py", mock_cache)
+
+        self.assertIn("Node object lacks '.text' attribute", str(ctx.exception))
+
+    @patch("context_builder.ast_engine.AST_ENGINE")
     def test_split_massive_block_ast_multiline_signature(self, mock_ast_engine):
         source = (
             "@decorator\n"
