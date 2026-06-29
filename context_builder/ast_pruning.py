@@ -2,6 +2,7 @@
 
 import os
 from contextlib import nullcontext
+from .languages import UNKNOWN_LANGUAGE
 
 
 def _semantically_truncate_child(child, lines, profile):
@@ -185,6 +186,8 @@ def split_massive_block_ast(source_text, file_path, max_lines, ast_engine, profi
 
     ext = os.path.splitext(file_path)[1].lower()
     profile = profile_getter(file_path)
+    if profile is None:
+        profile = UNKNOWN_LANGUAGE
 
     if not ast_engine.is_supported(ext):
         fallback_text = _get_fallback_truncated_text(lines, max_lines, profile)

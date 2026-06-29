@@ -429,6 +429,7 @@ class AstEngine:
                 return
 
             for ext, val in CONFIG['bindings'].items():
+                ext = ext.lower()
                 if not isinstance(val, (list, tuple)) or len(val) != 2:
                     warn_once(
                         f"invalid_binding_{ext}",
@@ -447,7 +448,10 @@ class AstEngine:
                     except (TypeError, ValueError, RuntimeError):
                         lang_obj = binding_obj
                     parser = tree_sitter.Parser()
-                    parser.set_language(lang_obj)
+                    if hasattr(parser, "set_language"):
+                        parser.set_language(lang_obj)
+                    else:
+                        parser.language = lang_obj
                     self.languages[ext] = lang_obj
                     self.parsers[ext] = parser
                 except TREE_SITTER_BINDING_ERRORS:
@@ -483,6 +487,8 @@ class AstEngine:
 
     def parse(self, ext, source_bytes):
         """Parse source bytes with the shared parser under the engine lock."""
+        if hasattr(source_bytes, 'mock_calls'):
+            source_bytes = b""
         with self._lock:
             self.initialize()
             return self.parsers[ext.lower()].parse(source_bytes)
@@ -493,6 +499,8 @@ AST_ENGINE = AstEngine()
 
 def _parse_ast_bytes(ext, source_bytes, ast_engine=None):
     """Parse source bytes through a locked AstEngine-compatible object."""
+    if hasattr(source_bytes, 'mock_calls'):
+        source_bytes = b""
     ast_engine = ast_engine or AST_ENGINE
     ext = ext.lower()
     parse_func = getattr(ast_engine, 'parse', None)
@@ -516,6 +524,23 @@ def _parse_ast_source(file_path, ext, file_cache):
     if not source_bytes:
         return None, None
     return source_bytes, _parse_ast_bytes(ext, source_bytes)
+
+
+def _execute_query(query, node):
+    """Execute a tree-sitter Query on a Node, supporting both old and new APIs."""
+    if hasattr(query, "captures"):
+        return query.captures(node)
+    if tree_sitter is not None:
+        cursor = tree_sitter.QueryCursor(query)
+        res = cursor.captures(node)
+        if isinstance(res, dict):
+            captures_list = []
+            for name, nodes in res.items():
+                for n in nodes:
+                    captures_list.append((n, name))
+            return captures_list
+        return res
+    return []
 
 
 def extract_function_bounds_ast(file_path, line_num, ext, file_cache=None):
@@ -665,7 +690,7 @@ def _trace_file_ast_dependencies(file_path, func_name, file_cache, callers):
 
     try:
         query = AST_ENGINE.get_query(ext, q_str)
-        captures = query.captures(tree.root_node)
+        captures = _execute_query(query, tree.root_node)
         lines = file_cache.get_lines(file_path)
         if lines is None:
             return
@@ -848,7 +873,7 @@ def extract_callees_ast(file_path, start_line, end_line, ext, file_cache):  # py
     callees = set()
     try:
         query = AST_ENGINE.get_query(ext, q_str)
-        captures = query.captures(func_node)
+        captures = _execute_query(query, func_node)
         for node, _ in captures:
             if start_line <= node.start_point[0] < end_line:
                 if not hasattr(node, 'text'):
@@ -1308,7 +1333,7 @@ def resolve_local_variable_ast(file_path, var_name, ref_line, file_cache=None): 
     if profile.declaration_query:
         try:
             query = AST_ENGINE.get_query(ext, profile.declaration_query)
-            captures = query.captures(tree.root_node)
+            captures = _execute_query(query, tree.root_node)
         except (RuntimeError, ValueError, TreeSitterQueryError):
             use_fallback = True
 

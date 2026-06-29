@@ -144,19 +144,22 @@ class TestAstEngine(unittest.TestCase):
         self.assertEqual(result[0]["suffix"], " (Truncated)")
         self.assertIn("line1\nline2", result[0]["text"])
 
-    def test_split_massive_block_ast_python_fallback(self):
+    @patch("context_builder.ast_engine.AST_ENGINE.is_supported", return_value=False)
+    def test_split_massive_block_ast_python_fallback(self, _mock_is_supported):
         source = "line1\nline2\nline3\nline4\n"
         result = split_massive_block_ast(source, "file.py", max_lines=2)
         self.assertEqual(result[0]["suffix"], " (Truncated)")
         self.assertIn("# ... [Lines Omitted due to size] ...", result[0]["text"])
 
-    def test_split_massive_block_ast_cpp_fallback(self):
+    @patch("context_builder.ast_engine.AST_ENGINE.is_supported", return_value=False)
+    def test_split_massive_block_ast_cpp_fallback(self, _mock_is_supported):
         source = "line1\nline2\nline3\nline4\n"
         result = split_massive_block_ast(source, "file.cpp", max_lines=2)
         self.assertEqual(result[0]["suffix"], " (Truncated)")
         self.assertIn("/* ... [Lines Omitted due to size] ... */", result[0]["text"])
 
-    def test_split_massive_block_ast_java_fallback(self):
+    @patch("context_builder.ast_engine.AST_ENGINE.is_supported", return_value=False)
+    def test_split_massive_block_ast_java_fallback(self, _mock_is_supported):
         source = "line1\nline2\nline3\nline4\n"
         result = split_massive_block_ast(source, "file.java", max_lines=2)
         self.assertEqual(result[0]["suffix"], " (Truncated)")
@@ -768,6 +771,49 @@ class TestAstEngine(unittest.TestCase):
             AST_ENGINE.get_query(".py", None)
         with self.assertRaises(ValueError):
             AST_ENGINE.get_query(".py", "")
+
+    def test_ast_engine_mixed_case_bindings(self):
+        from context_builder.ast_engine import AstEngine
+        from context_builder.config import CONFIG
+        import context_builder.ast_engine
+
+        mock_tree_sitter = MagicMock()
+        with patch.dict(CONFIG, {
+            "bindings": {
+                ".JS": ("tests.mock_binding", "mock_func"),
+                ".Cpp": ("tests.mock_binding", "mock_func")
+            }
+        }), patch("importlib.import_module") as mock_import, \
+           patch.object(context_builder.ast_engine, "tree_sitter", mock_tree_sitter):
+            # Setup mock module and binding
+            mock_mod = MagicMock()
+            mock_binding = MagicMock()
+            mock_mod.mock_func = mock_binding
+            mock_import.return_value = mock_mod
+
+            engine = AstEngine()
+            # It should not fail during initialize and should populate lowercased keys in parsers and languages
+            engine.initialize()
+
+            self.assertIn(".js", engine.parsers)
+            self.assertIn(".cpp", engine.parsers)
+            self.assertIn(".js", engine.languages)
+            self.assertIn(".cpp", engine.languages)
+
+    def test_split_massive_block_ast_handles_none_profile(self):
+        from context_builder.ast_pruning import split_massive_block_ast as _split_massive_block_ast
+
+        source = "def foo():\n    pass\n"
+        # Using an unsupported extension or mock engine so it falls back to plain truncation
+        mock_ast_engine = MagicMock()
+        mock_ast_engine.is_supported.return_value = False
+
+        # pass profile_getter returning None
+        res = _split_massive_block_ast(
+            source, "dummy.xyz", 1, mock_ast_engine, lambda p: None
+        )
+        self.assertEqual(len(res), 1)
+        self.assertIn("def foo()", res[0]["text"])
 
     @patch("context_builder.ast_engine.AST_ENGINE")
     def test_split_massive_block_ast_multiline_signature(self, mock_ast_engine):
@@ -3193,7 +3239,8 @@ class TestAstEngine(unittest.TestCase):
         self.assertEqual(find_class_definition("file.go", "User", GO, cache), ("file.go", 2))
         self.assertEqual(find_class_definition("file.go", "Reader", GO, cache), ("file.go", 5))
 
-    def test_resolve_variable_definition_regex_fallback_new_line_brace(self):
+    @patch("context_builder.ast_engine.AST_ENGINE.is_supported", return_value=False)
+    def test_resolve_variable_definition_regex_fallback_new_line_brace(self, _mock_is_supported):
         from context_builder.ast_engine import resolve_variable_definition
 
         cache = MagicMock()

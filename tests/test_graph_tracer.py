@@ -701,6 +701,17 @@ class TestCallGraphTracer(unittest.TestCase):
         finally:
             tracer.close()
 
+    def test_data_flow_executor_reused_when_worker_count_shrinks(self):
+        tracer = CallGraphTracer(MagicMock(), [], set(), {}, MagicMock(), None)
+        try:
+            executor = tracer._get_data_flow_executor(4)
+            same_executor = tracer._get_data_flow_executor(2)
+
+            self.assertIs(same_executor, executor)
+            self.assertEqual(tracer._data_flow_executor_workers, 4)
+        finally:
+            tracer.close()
+
     def test_data_flow_executor_creation_holds_owner_lock(self):
         tracer = CallGraphTracer(MagicMock(), [], set(), {}, MagicMock(), None)
         observed_lock_states = []

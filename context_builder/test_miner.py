@@ -91,7 +91,19 @@ def _mine_ast_tests(
     try:
         tree = _parse_ast_bytes(ext, source_bytes, AST_ENGINE)
         query = AST_ENGINE.get_query(ext, test_query)
-        captures = query.captures(tree.root_node)
+        if hasattr(query, "captures"):
+            captures = query.captures(tree.root_node)
+        else:
+            cursor = tree_sitter.QueryCursor(query)
+            res = cursor.captures(tree.root_node)
+            if isinstance(res, dict):
+                captures_list = []
+                for name, nodes in res.items():
+                    for n in nodes:
+                        captures_list.append((n, name))
+                captures = captures_list
+            else:
+                captures = res
         for node, _ in captures:
             _process_ast_capture(
                 node,

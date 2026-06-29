@@ -493,6 +493,7 @@ class TestPreprocessor(unittest.TestCase):
         self.assertEqual(result["my_header.h"][0]["code"], "// [Macro Expansion Link] #define MY_MACRO 10")
 
         # Test case-insensitivity of macro expansion
+        _preprocessor_mod.clear_preprocessed_cache()
         header_path_upper = "MY_HEADER.H"
         with open(header_path_upper, "w") as f:
             f.write("#define JOIN(a, b) a ## b\n")

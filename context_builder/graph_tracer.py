@@ -324,7 +324,7 @@ class CallGraphTracer:
         with self._executor_lock:
             if (
                 self._data_flow_executor is not None
-                and self._data_flow_executor_workers == max_workers
+                and self._data_flow_executor_workers >= max_workers
             ):
                 return self._data_flow_executor
             if self._data_flow_executor is not None:
