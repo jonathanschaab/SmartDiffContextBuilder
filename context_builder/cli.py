@@ -367,9 +367,12 @@ def run_scan(args, start_ref=None, end_ref=None, output_dir=".", repo_root=None)
         args=args,
     )
 
-    tracer.trace_data_flow(diff_files_lines)
-    tracer.trace_callers(queue, processed_spans)
-    tracer.trace_callees(callee_queue, processed_spans)
+    try:
+        tracer.trace_data_flow(diff_files_lines)
+        tracer.trace_callers(queue, processed_spans)
+        tracer.trace_callees(callee_queue, processed_spans)
+    finally:
+        tracer.close()
 
     vm.flush_all_volumes()
     cleanup_zombie_lsps()

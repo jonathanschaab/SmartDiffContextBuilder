@@ -59,13 +59,6 @@ class CallGraphTracer:
                 self._data_flow_executor = None
                 self._data_flow_executor_workers = None
 
-    def __del__(self):
-        """Best-effort cleanup for persistent data-flow workers."""
-        try:
-            self.close()
-        except Exception:  # pylint: disable=broad-exception-caught
-            pass
-
     def _arg_or_default(self, name, default):
         """Return an argument value, treating absent args and values alike."""
         # Three-argument getattr already returns its fallback when self.args is

@@ -63,11 +63,15 @@ AST_ENGINE_CACHE_LIMIT = 1024
 AST_ENGINE_CACHE_MAX_BYTES = 16 * 1024 * 1024
 _LRU_TOTAL_BYTES_ATTR = '_total_bytes'
 _LRU_ENTRY_SIZES_ATTR = '_entry_sizes'
-_LRU_LOCK_ATTR = '_owner_lock'
+_LRU_LOCK_ATTR = '_lock'
 
 
 class LRUCache(OrderedDict):
-    """Subclass of OrderedDict that supports arbitrary attributes."""
+    """Subclass of OrderedDict that supports arbitrary attributes and a dedicated lock."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._lock = threading.Lock()
 
 
 def _estimate_cache_entry_size(value, seen=None):
@@ -136,8 +140,6 @@ def _get_lru_cache(owner, attr_name):
                 cache = LRUCache(cache)
             else:
                 cache = LRUCache()
-        if owner_lock is not None:
-            setattr(cache, _LRU_LOCK_ATTR, owner_lock)
         setattr(owner, attr_name, cache)
         _ensure_lru_size_tracking(cache)
         return cache

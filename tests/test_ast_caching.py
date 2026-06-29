@@ -63,7 +63,7 @@ class TestAstCaching(unittest.TestCase):
         self.assertEqual(getattr(cache, "_entry_sizes")["new"], 18)
         self.assertEqual(getattr(cache, "_total_bytes"), original_total + 18)
 
-    def test_file_cache_helpers_estimate_size_uses_owner_lock(self):
+    def test_file_cache_helpers_estimate_size_uses_dedicated_lock(self):
         from context_builder.ast_engine import _estimate_lru_cache_size, _get_lru_cache
 
         class CountingRLock:
@@ -79,9 +79,10 @@ class TestAstCaching(unittest.TestCase):
 
         owner = SimpleNamespace(_lock=CountingRLock(), custom_cache={"key": "value"})
         cache = _get_lru_cache(owner, "custom_cache")
+        cache._lock = CountingRLock()
 
         self.assertGreater(_estimate_lru_cache_size(cache), 0)
-        self.assertGreaterEqual(getattr(owner, "_lock").enter_count, 2)
+        self.assertEqual(cache._lock.enter_count, 1)
 
     def test_file_cache_helpers_upgrade_plain_dict_to_ordered_dict(self):
         from context_builder.ast_engine import _get_lru_cache, LRUCache
@@ -96,7 +97,7 @@ class TestAstCaching(unittest.TestCase):
         setattr(cache, "custom_attr", 42)
         self.assertEqual(getattr(cache, "custom_attr"), 42)
 
-    def test_file_cache_helpers_use_owner_lock_when_available(self):
+    def test_file_cache_helpers_use_dedicated_lock(self):
         from context_builder.ast_engine import _get_lru_cache, _lru_get, _lru_set
 
         class CountingRLock:
@@ -112,13 +113,14 @@ class TestAstCaching(unittest.TestCase):
 
         owner = SimpleNamespace(_lock=CountingRLock(), custom_cache={})
         cache = _get_lru_cache(owner, "custom_cache")
+        cache._lock = CountingRLock()
 
         _lru_set(cache, "key", "value")
         value, found = _lru_get(cache, "key")
 
         self.assertTrue(found)
         self.assertEqual(value, "value")
-        self.assertGreaterEqual(getattr(owner, "_lock").enter_count, 3)
+        self.assertEqual(cache._lock.enter_count, 2)
 
     def test_strip_comments_only_ignores_empty_line_comment_marker(self):
         from context_builder.ast_engine import _strip_comments_only
