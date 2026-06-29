@@ -291,18 +291,6 @@ def _align_stripped_to_original_lines(lines, stripped):
     return stripped_lines
 
 
-def _estimate_aligned_lines_size(aligned_lines):
-    """Estimate memory used by an aligned stripped-lines cache entry."""
-    try:
-        if sys.implementation.name != "cpython":
-            return sum(len(line) for line in aligned_lines)
-        return sys.getsizeof(aligned_lines) + sum(
-            sys.getsizeof(line) for line in aligned_lines
-        )
-    except Exception:  # pylint: disable=broad-exception-caught
-        return sum(len(line) for line in aligned_lines)
-
-
 def _get_cached_aligned_stripped_lines(file_cache, file_path, profile):
     """Return aligned stripped lines cached on LRUFileCache entries when possible."""
     get_aligned = getattr(file_cache, "get_aligned_stripped_lines", None)
