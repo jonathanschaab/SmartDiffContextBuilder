@@ -84,13 +84,17 @@ class TestAstCaching(unittest.TestCase):
         self.assertGreaterEqual(getattr(owner, "_lock").enter_count, 2)
 
     def test_file_cache_helpers_upgrade_plain_dict_to_ordered_dict(self):
-        from context_builder.ast_engine import _get_lru_cache
+        from context_builder.ast_engine import _get_lru_cache, LRUCache
 
         owner = SimpleNamespace(custom_cache={"item": "value"})
         cache = _get_lru_cache(owner, "custom_cache")
 
-        self.assertIsInstance(cache, OrderedDict)
+        self.assertIsInstance(cache, LRUCache)
         self.assertIs(owner.custom_cache, cache)
+
+        # Verify custom attributes can be set on it
+        setattr(cache, "custom_attr", 42)
+        self.assertEqual(getattr(cache, "custom_attr"), 42)
 
     def test_file_cache_helpers_use_owner_lock_when_available(self):
         from context_builder.ast_engine import _get_lru_cache, _lru_get, _lru_set

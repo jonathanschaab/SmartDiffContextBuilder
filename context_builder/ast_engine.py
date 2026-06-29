@@ -66,6 +66,10 @@ _LRU_ENTRY_SIZES_ATTR = '_entry_sizes'
 _LRU_LOCK_ATTR = '_owner_lock'
 
 
+class LRUCache(OrderedDict):
+    """Subclass of OrderedDict that supports arbitrary attributes."""
+
+
 def _estimate_cache_entry_size(value, seen=None):
     """Estimate cache value memory usage for bounded eviction decisions."""
     if seen is None:
@@ -123,14 +127,15 @@ def _lru_pop_oldest(cache):
 
 
 def _get_lru_cache(owner, attr_name):
-    """Return an OrderedDict cache attribute, upgrading plain dicts in place."""
+    """Return an LRUCache attribute, upgrading plain dicts in place."""
     owner_lock = getattr(owner, '_lock', None)
     with owner_lock if owner_lock is not None else nullcontext():
         cache = getattr(owner, attr_name, None)
-        if not isinstance(cache, dict):
-            cache = OrderedDict()
-        elif not isinstance(cache, OrderedDict):
-            cache = OrderedDict(cache)
+        if not isinstance(cache, LRUCache):
+            if isinstance(cache, dict):
+                cache = LRUCache(cache)
+            else:
+                cache = LRUCache()
         if owner_lock is not None:
             setattr(cache, _LRU_LOCK_ATTR, owner_lock)
         setattr(owner, attr_name, cache)
