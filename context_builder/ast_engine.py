@@ -303,52 +303,27 @@ def _estimate_aligned_lines_size(aligned_lines):
         return sum(len(line) for line in aligned_lines)
 
 
-def _get_cached_aligned_stripped_lines(file_cache, file_path, profile):  # pylint: disable=too-many-return-statements
+def _get_cached_aligned_stripped_lines(file_cache, file_path, profile):
     """Return aligned stripped lines cached on LRUFileCache entries when possible."""
     get_aligned = getattr(file_cache, "get_aligned_stripped_lines", None)
     if callable(get_aligned):
         return get_aligned(file_path, profile, _align_stripped_to_original_lines)
 
-    cache = getattr(file_cache, 'cache', None)
-    load_func = getattr(file_cache, '_load', None)
-    if not isinstance(cache, dict) or not callable(load_func):
-        return None
-
-    abs_path = os.path.abspath(file_path)
-    lock = getattr(file_cache, '_lock', None)
-    with lock if lock is not None else nullcontext():
-        entry = load_func(abs_path)
-        if "aligned_stripped_lines" in entry:
-            return entry["aligned_stripped_lines"]
-        lines = entry.get("lines")
-        if not isinstance(lines, (list, tuple)):
-            return []
-        content = entry.get("content", "".join(lines))
-        strip_block_comments = getattr(profile, "strip_block_comments", None)
-        if not callable(strip_block_comments):
-            return None
+    # Fallback when the cache doesn't implement get_aligned_stripped_lines:
+    # Simply calculate on-the-fly without fragile mutation of cache internals.
+    lines = file_cache.get_lines(file_path) if hasattr(file_cache, "get_lines") else None
+    if not lines:
+        return []
     stripped = (
-        file_cache.get_stripped_content(abs_path, profile)
+        file_cache.get_stripped_content(file_path, profile)
         if hasattr(file_cache, "get_stripped_content")
-        else strip_block_comments(content)
+        else getattr(profile, "strip_block_comments")(
+            file_cache.get_content(file_path)
+            if hasattr(file_cache, "get_content")
+            else "".join(lines)
+        )
     )
-    aligned_lines = _align_stripped_to_original_lines(lines, stripped)
-    added_bytes = _estimate_aligned_lines_size(aligned_lines)
-
-    with lock if lock is not None else nullcontext():
-        entry = load_func(abs_path)
-        if "aligned_stripped_lines" in entry:
-            return entry["aligned_stripped_lines"]
-        entry["aligned_stripped_lines"] = aligned_lines
-        entry["size_bytes"] = entry.get("size_bytes", 0) + added_bytes
-        if (
-            abs_path in cache
-            and hasattr(file_cache, "current_size_bytes")
-            and hasattr(file_cache, "evict_to_limit")
-        ):
-            file_cache.current_size_bytes += added_bytes
-            file_cache.evict_to_limit()
-        return aligned_lines
+    return _align_stripped_to_original_lines(lines, stripped)
 
 
 def _line_alignment_score(original_text, stripped_text):
