@@ -198,6 +198,7 @@ def reset_config():
         'caller_depth': 1,
         'callee_depth': 1,
         'data_depth': 1,
+        'data_flow_batch_size': 32,
         'commit_range': None,
         'build_directories': [
             "build", "out", "target", "cmake-build-debug", "cmake-build-release"
@@ -254,8 +255,8 @@ def generate_commented_config(active_options):
             'ripgrep_timeout', 'git_timeout', 'git_probe_timeout',
             'no_language_server', 'compare',
             'skip_ffi', 'skip_macro_expansion', 'path_case_rules',
-            'caller_depth', 'callee_depth', 'data_depth', 'commit_range', 'build_directories',
-            'ignored_directories'
+            'caller_depth', 'callee_depth', 'data_depth', 'data_flow_batch_size',
+            'commit_range', 'build_directories', 'ignored_directories'
         ],
         "Language Definitions": [
             'lang_map', 'bindings', 'dependency_query_strings', 'callee_query_strings'

@@ -486,6 +486,7 @@ def _merge_cli_mappings(args, active_overrides):
         "caller_depth": "caller_depth",
         "callee_depth": "callee_depth",
         "data_depth": "data_depth",
+        "data_flow_batch_size": "data_flow_batch_size",
         "commit_range": "commit_range",
         "func_decl_pattern": "func_decl_pattern",
         "def_pattern_template": "def_pattern_template",
@@ -866,6 +867,7 @@ def main():  # pylint: disable=too-many-statements
     parser.add_argument("--caller-depth", type=int, default=None)
     parser.add_argument("--callee-depth", type=int, default=None)
     parser.add_argument("--data-depth", type=int, default=None)
+    parser.add_argument("--data-flow-batch-size", type=int, default=None)
     parser.add_argument(
         "--commit-range",
         type=str,

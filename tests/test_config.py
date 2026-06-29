@@ -91,6 +91,7 @@ class TestConfig(unittest.TestCase):
         self.assertIn('// "caller_depth": 1', config_str)
         self.assertIn('// "callee_depth": 1', config_str)
         self.assertIn('// "data_depth": 1', config_str)
+        self.assertIn('// "data_flow_batch_size": 32', config_str)
 
     def test_config_dict_proxy(self):
         from context_builder.config import ConfigDictProxy

@@ -1436,11 +1436,13 @@ class TestCLI(unittest.TestCase):
         mock_args = CliNamespace()
         mock_args.max_lines = 3300
         mock_args.lang_map = '{".overridden": "overridden_lang"}'
+        mock_args.data_flow_batch_size = 16
         mock_parse_args.return_value = mock_args
 
         main()
 
         self.assertEqual(CONFIG["max_lines"], 3300)
+        self.assertEqual(CONFIG["data_flow_batch_size"], 16)
         self.assertEqual(CONFIG["lang_map"][".overridden"], "overridden_lang")
         # Default keys should remain intact since dictionary merges are used
         self.assertEqual(CONFIG["lang_map"][".py"], "python")
@@ -1448,6 +1450,7 @@ class TestCLI(unittest.TestCase):
         passed_args = mock_run_scan.call_args[0][0]
         self.assertEqual(passed_args.max_lines, 3300)
         self.assertEqual(passed_args.lang_map[".overridden"], "overridden_lang")
+        self.assertEqual(passed_args.data_flow_batch_size, 16)
         reset_config()
 
     @patch("context_builder.cli.argparse.ArgumentParser.parse_args")
