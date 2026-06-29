@@ -669,6 +669,8 @@ def _query_and_record_callers(query, tree, source_bytes, func_name, file_path, l
                 continue
 
             line_idx = capture_node.start_point[0]
+            if line_idx < 0 or line_idx >= len(lines):
+                continue
             if file_path not in callers:
                 callers[file_path] = []
             if not any(c['line'] == line_idx + 1 for c in callers[file_path]):
