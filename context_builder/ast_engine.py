@@ -395,7 +395,7 @@ class AstEngine:
         """Initialize parser, language, and missing binding trackers."""
         self.parsers = {}
         self.languages = {}
-        self.queries = OrderedDict()
+        self.queries = LRUCache()
         self.missing_bindings = {}
         self._initialized = False
         self._lock = threading.RLock()
@@ -407,7 +407,7 @@ class AstEngine:
                 return
             self.parsers.clear()
             self.languages.clear()
-            self.queries = OrderedDict()
+            self.queries = LRUCache()
             self.missing_bindings.clear()
 
             if not HAS_TREESITTER:

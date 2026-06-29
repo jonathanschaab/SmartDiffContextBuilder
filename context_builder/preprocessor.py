@@ -180,7 +180,8 @@ def _map_expanded_line_to_source(expanded_lines, idx, callers, file_cache):
 
 def _process_single_macro_file(file_path, func_pattern, callers, file_cache):
     """Process a single file for macro expansion mapping."""
-    if not get_language_profile(file_path).supports_macro_expansion:
+    profile = get_language_profile(file_path)
+    if profile is None or not profile.supports_macro_expansion:
         return
 
     # Pass 1: Expand
@@ -210,10 +211,14 @@ def trace_macro_expansion(func_name, repo_files, file_cache=None):
         file_cache = get_global_cache()
     callers = {}
     print(f" [Pre-Expansion] Searching expanded ASTs for {func_name}...")
+    def _supports_macro(fp):
+        prof = get_language_profile(fp)
+        return prof is not None and prof.supports_macro_expansion
+
     macro_files = [
         file_path
         for file_path in repo_files
-        if get_language_profile(file_path).supports_macro_expansion
+        if _supports_macro(file_path)
     ]
     fast_files = ripgrep_filter(
         repo_files, func_name,
@@ -241,7 +246,7 @@ def trace_macro_expansion(func_name, repo_files, file_cache=None):
     scan_files = [
         file_path
         for file_path in fast_files
-        if get_language_profile(file_path).supports_macro_expansion
+        if _supports_macro(file_path)
     ]
     scan_files.extend(
         file_path for file_path in macro_files if file_path not in fast_file_set
