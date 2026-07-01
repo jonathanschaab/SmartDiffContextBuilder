@@ -1637,7 +1637,7 @@ def _is_assignment_definition(cleaned_line, standalone_var, flow_kws):
     )
 
 
-def _is_c_style_header_definition(statement, param_match, cleaned_line, flow_kws):  # pylint: disable=too-many-return-statements
+def _is_c_style_header_definition(statement, param_match, has_semicolon, flow_kws):  # pylint: disable=too-many-return-statements
     """Verify if a statement before parentheses is a valid C-style function/constructor header."""
     header_prefix = statement[:param_match.start()].strip()
     if not header_prefix or header_prefix in flow_kws:
@@ -1653,12 +1653,7 @@ def _is_c_style_header_definition(statement, param_match, cleaned_line, flow_kws
             return True
         return False
 
-    idx = cleaned_line.find(statement)
-    if idx != -1:
-        after_stmt = cleaned_line[idx + len(statement):].strip()
-        if not after_stmt.startswith(';'):
-            return True
-    return False
+    return not has_semicolon
 
 
 def is_line_definition_of_var(cleaned_line, var_name, profile):  # pylint: disable=too-many-return-statements
@@ -1668,7 +1663,7 @@ def is_line_definition_of_var(cleaned_line, var_name, profile):  # pylint: disab
     flow_kws = getattr(profile, 'flow_keywords', frozenset())
 
     statements = _split_top_level_semicolon_statements(cleaned_line)
-    for statement in statements:
+    for i, statement in enumerate(statements):
         if not re.search(standalone_var, statement):
             continue
 
@@ -1700,7 +1695,9 @@ def is_line_definition_of_var(cleaned_line, var_name, profile):  # pylint: disab
             param_match = re.search(r'\(([^)]*)\)', statement)
             if param_match and re.search(standalone_var, param_match.group(1)):
                 if not profile.uses_c_style_definitions or \
-                   _is_c_style_header_definition(statement, param_match, cleaned_line, flow_kws):
+                   _is_c_style_header_definition(
+                       statement, param_match, i < len(statements) - 1, flow_kws
+                   ):
                     return True
 
     return False

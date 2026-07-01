@@ -2484,6 +2484,10 @@ class TestAstEngine(unittest.TestCase):
         self.assertFalse(is_line_definition_of_var("MyClass(int ptr);", "ptr", C_FAMILY))
         self.assertFalse(is_line_definition_of_var("std::sort(x * ptr);", "ptr", C_FAMILY))
 
+        # Multiple statements on the same line (should evaluate correctly using has_semicolon)
+        self.assertFalse(is_line_definition_of_var("MyClass(ptr);MyClass(ptr);", "ptr", C_FAMILY))
+        self.assertTrue(is_line_definition_of_var("MyClass(ptr);MyClass(ptr)", "ptr", C_FAMILY))
+
         # Declarations with qualifiers (should evaluate to True)
         self.assertTrue(is_line_definition_of_var("static const int *ptr;", "ptr", C_FAMILY))
         self.assertTrue(is_line_definition_of_var("volatile mutable MyClass &ref;", "ref", C_FAMILY))
