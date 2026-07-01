@@ -2471,6 +2471,23 @@ class TestAstEngine(unittest.TestCase):
         # But should be False for variables only on the RHS
         self.assertFalse(is_line_definition_of_var("MyClass *ptr = x * y;", "y", C_FAMILY))
 
+        # Expressions inside return/function calls (should evaluate to False)
+        self.assertFalse(is_line_definition_of_var("return x * ptr;", "ptr", C_FAMILY))
+        self.assertFalse(is_line_definition_of_var("foo(x * ptr);", "ptr", C_FAMILY))
+        self.assertFalse(is_line_definition_of_var("return x & ref;", "ref", C_FAMILY))
+        self.assertFalse(is_line_definition_of_var("foo(x & ref);", "ref", C_FAMILY))
+
+        # Constructors and function headers vs prototypes (should distinguish)
+        self.assertTrue(is_line_definition_of_var("void my_function(int ptr)", "ptr", C_FAMILY))
+        self.assertTrue(is_line_definition_of_var("MyClass::MyClass(int ptr)", "ptr", C_FAMILY))
+        self.assertTrue(is_line_definition_of_var("MyClass(int ptr) {", "ptr", C_FAMILY))
+        self.assertFalse(is_line_definition_of_var("MyClass(int ptr);", "ptr", C_FAMILY))
+        self.assertFalse(is_line_definition_of_var("std::sort(x * ptr);", "ptr", C_FAMILY))
+
+        # Declarations with qualifiers (should evaluate to True)
+        self.assertTrue(is_line_definition_of_var("static const int *ptr;", "ptr", C_FAMILY))
+        self.assertTrue(is_line_definition_of_var("volatile mutable MyClass &ref;", "ref", C_FAMILY))
+
     @patch("context_builder.ast_engine.AST_ENGINE")
     def test_extract_identifiers_ast(self, mock_engine):
         from context_builder.ast_engine import extract_identifiers_ast

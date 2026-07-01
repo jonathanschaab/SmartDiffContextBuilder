@@ -1637,7 +1637,31 @@ def _is_assignment_definition(cleaned_line, standalone_var, flow_kws):
     )
 
 
-def is_line_definition_of_var(cleaned_line, var_name, profile):
+def _is_c_style_header_definition(statement, param_match, cleaned_line, flow_kws):  # pylint: disable=too-many-return-statements
+    """Verify if a statement before parentheses is a valid C-style function/constructor header."""
+    header_prefix = statement[:param_match.start()].strip()
+    if not header_prefix or header_prefix in flow_kws:
+        return False
+
+    if ' ' in header_prefix or '\t' in header_prefix:
+        return True
+    if header_prefix.startswith('~'):
+        return True
+    if '::' in header_prefix:
+        parts = header_prefix.split('::')
+        if len(parts) >= 2 and parts[-2].strip() == parts[-1].strip().lstrip('~'):
+            return True
+        return False
+
+    idx = cleaned_line.find(statement)
+    if idx != -1:
+        after_stmt = cleaned_line[idx + len(statement):].strip()
+        if not after_stmt.startswith(';'):
+            return True
+    return False
+
+
+def is_line_definition_of_var(cleaned_line, var_name, profile):  # pylint: disable=too-many-return-statements
     """Check if a cleaned line defines var_name using simple regex heuristics."""
     escaped_var = re.escape(var_name)
     standalone_var = r'(?<!\.)(?<!->)(?<!::)\b' + escaped_var + r'\b'
@@ -1661,7 +1685,8 @@ def is_line_definition_of_var(cleaned_line, var_name, profile):
 
         # Type-based declarations (C/C++/Java/Go/Rust)
         type_decl_match = re.search(
-            r'\b([A-Za-z_][A-Za-z0-9_<>:,*&]*)\s+(?:[*&]+\s*)?' + standalone_var,
+            r'^\s*(?:(?:const|static|extern|volatile|mutable|thread_local|constexpr)\s+)*'
+            r'([A-Za-z_][A-Za-z0-9_<>:,*&]*)\s+(?:[*&]+\s*)?' + standalone_var,
             statement,
         )
         if type_decl_match and type_decl_match.group(1) not in flow_kws:
@@ -1673,9 +1698,9 @@ def is_line_definition_of_var(cleaned_line, var_name, profile):
             or profile.uses_c_style_definitions
         ):
             param_match = re.search(r'\(([^)]*)\)', statement)
-            if param_match:
-                params = param_match.group(1)
-                if re.search(standalone_var, params):
+            if param_match and re.search(standalone_var, param_match.group(1)):
+                if not profile.uses_c_style_definitions or \
+                   _is_c_style_header_definition(statement, param_match, cleaned_line, flow_kws):
                     return True
 
     return False
@@ -1740,7 +1765,8 @@ def get_class_members(file_path, class_name, profile, file_cache):  # pylint: di
                 )
             else:
                 decl_match = re.search(
-                    r'\b[A-Za-z_][A-Za-z0-9_<>:,*&]*\s+(?:[*&]+\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*;',
+                    r'^\s*(?:(?:const|static|extern|volatile|mutable|thread_local|constexpr)\s+)*'
+                    r'[A-Za-z_][A-Za-z0-9_<>:,*&]*\s+(?:[*&]+\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*;',
                     cleaned,
                 )
             if decl_match:
