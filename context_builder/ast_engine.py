@@ -1664,7 +1664,7 @@ def is_line_definition_of_var(cleaned_line, var_name, profile):
     # keyword set also includes primitive type names ('int', 'char', etc.)
     # that are perfectly valid as type declaration prefixes.
     type_decl_match = re.search(
-        r'\b([A-Za-z_][A-Za-z0-9_<>:,*&]*)\s+' + standalone_var,
+        r'\b([A-Za-z_][A-Za-z0-9_<>:,*&]*)\s+(?:[*&]+\s*)?' + standalone_var,
         cleaned_line,
     )
     if type_decl_match and type_decl_match.group(1) not in flow_kws:
@@ -1743,7 +1743,7 @@ def get_class_members(file_path, class_name, profile, file_cache):  # pylint: di
                 )
             else:
                 decl_match = re.search(
-                    r'\b[A-Za-z_][A-Za-z0-9_<>:,*&]*\s+([A-Za-z_][A-Za-z0-9_]*)\s*;',
+                    r'\b[A-Za-z_][A-Za-z0-9_<>:,*&]*\s+(?:[*&]+\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*;',
                     cleaned,
                 )
             if decl_match:

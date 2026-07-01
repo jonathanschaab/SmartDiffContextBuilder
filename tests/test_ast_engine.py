@@ -2441,6 +2441,26 @@ class TestAstEngine(unittest.TestCase):
         self.assertFalse(is_line_definition_of_var("let a = b + c;", "b", JAVASCRIPT))
         self.assertFalse(is_line_definition_of_var("let a = b + c;", "c", JAVASCRIPT))
 
+    def test_is_line_definition_of_var_c_family_pointer_reference_spacing(self):
+        from context_builder.ast_engine import is_line_definition_of_var
+        from context_builder.languages.c_family import C_FAMILY
+
+        # Pointer attached to type
+        self.assertTrue(is_line_definition_of_var("MyClass* ptr;", "ptr", C_FAMILY))
+        # Pointer attached to variable
+        self.assertTrue(is_line_definition_of_var("MyClass *ptr;", "ptr", C_FAMILY))
+        # Pointer spaced
+        self.assertTrue(is_line_definition_of_var("MyClass * ptr;", "ptr", C_FAMILY))
+        # Reference attached to type
+        self.assertTrue(is_line_definition_of_var("MyClass& ref;", "ref", C_FAMILY))
+        # Reference attached to variable
+        self.assertTrue(is_line_definition_of_var("MyClass &ref;", "ref", C_FAMILY))
+        # Reference spaced
+        self.assertTrue(is_line_definition_of_var("MyClass & ref;", "ref", C_FAMILY))
+        # Multiple levels of indirection
+        self.assertTrue(is_line_definition_of_var("MyClass ** ptr;", "ptr", C_FAMILY))
+        self.assertTrue(is_line_definition_of_var("MyClass &* ptr;", "ptr", C_FAMILY))
+
     @patch("context_builder.ast_engine.AST_ENGINE")
     def test_extract_identifiers_ast(self, mock_engine):
         from context_builder.ast_engine import extract_identifiers_ast
@@ -3211,6 +3231,37 @@ class TestAstEngine(unittest.TestCase):
         self.assertIn(("realMember", 3), res)
         self.assertNotIn(("myMethod", 2), res)
         self.assertNotIn(("x", 2), res)
+
+    def test_get_class_members_c_family_pointer_reference_spacing(self):
+        from context_builder.ast_engine import get_class_members
+        from context_builder.languages.c_family import C_FAMILY
+
+        cache = MagicMock()
+        lines = [
+            "class TargetClass {",
+            "    MyClass* member1;",
+            "    MyClass *member2;",
+            "    MyClass * member3;",
+            "    MyClass& member4;",
+            "    MyClass &member5;",
+            "    MyClass & member6;",
+            "    MyClass ** member7;",
+            "};"
+        ]
+        cache.get_lines.return_value = lines
+        cache.get_stripped_lines.return_value = lines
+
+        res = get_class_members("file.cpp", "TargetClass", C_FAMILY, cache)
+        expected = [
+            ("member1", 2),
+            ("member2", 3),
+            ("member3", 4),
+            ("member4", 5),
+            ("member5", 6),
+            ("member6", 7),
+            ("member7", 8),
+        ]
+        self.assertEqual(res, expected)
 
     def test_get_class_members_ignores_python_self_comparisons(self):
         from context_builder.ast_engine import get_class_members
