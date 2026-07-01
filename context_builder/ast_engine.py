@@ -1652,8 +1652,13 @@ def _is_c_style_header_definition(statement, param_match, has_semicolon, flow_kw
         return True
     if '::' in header_prefix:
         parts = header_prefix.split('::')
-        if len(parts) >= 2 and parts[-2].strip() == parts[-1].strip().lstrip('~'):
-            return True
+        if len(parts) >= 2:
+            class_name = parts[-2].strip()
+            func_name = parts[-1].strip().lstrip('~')
+            class_name = re.sub(r'<[^>]*>', '', class_name)
+            func_name = re.sub(r'<[^>]*>', '', func_name)
+            if class_name == func_name:
+                return True
         return False
 
     return True
@@ -1696,7 +1701,8 @@ def is_line_definition_of_var(cleaned_line, var_name, profile):  # pylint: disab
         # Type-based declarations (C/C++/Java/Go/Rust)
         type_decl_match = re.search(
             r'^\s*(?:(?:const|static|extern|volatile|mutable|thread_local|constexpr)\s+)*'
-            r'([A-Za-z_][A-Za-z0-9_<>:,*&]*)\s+(?:[*&]+\s*)?' + standalone_var,
+            r'([A-Za-z_][A-Za-z0-9_<>:,*&]*)\s+(?:[*&]+\s*)?'
+            r'(?:(?:const|volatile)\s+)*' + standalone_var,
             statement,
         )
         if type_decl_match and type_decl_match.group(1) not in flow_kws:
@@ -1778,7 +1784,8 @@ def get_class_members(file_path, class_name, profile, file_cache):  # pylint: di
             else:
                 decl_match = re.search(
                     r'^\s*(?:(?:const|static|extern|volatile|mutable|thread_local|constexpr)\s+)*'
-                    r'[A-Za-z_][A-Za-z0-9_<>:,*&]*\s+(?:[*&]+\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*;',
+                    r'[A-Za-z_][A-Za-z0-9_<>:,*&]*\s+(?:[*&]+\s*)?'
+                    r'(?:(?:const|volatile)\s+)*([A-Za-z_][A-Za-z0-9_]*)\s*;',
                     cleaned,
                 )
             if decl_match:
