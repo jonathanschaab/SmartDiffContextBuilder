@@ -2491,8 +2491,8 @@ class TestAstEngine(unittest.TestCase):
         self.assertTrue(is_line_definition_of_var("while (int x = foo())", "x", C_FAMILY))
 
         # Multiple statements on the same line (should evaluate correctly using has_semicolon)
-        self.assertFalse(is_line_definition_of_var("MyClass(ptr);MyClass(ptr);", "ptr", C_FAMILY))
-        self.assertTrue(is_line_definition_of_var("MyClass(ptr);MyClass(ptr)", "ptr", C_FAMILY))
+        self.assertFalse(is_line_definition_of_var("MyClass(int ptr);MyClass(int ptr);", "ptr", C_FAMILY))
+        self.assertTrue(is_line_definition_of_var("MyClass(int ptr);MyClass(int ptr)", "ptr", C_FAMILY))
 
         # Declarations with qualifiers (should evaluate to True)
         self.assertTrue(is_line_definition_of_var("static const int *ptr;", "ptr", C_FAMILY))
@@ -2509,6 +2509,16 @@ class TestAstEngine(unittest.TestCase):
         self.assertTrue(is_line_definition_of_var("unsigned int x;", "x", C_FAMILY))
         self.assertTrue(is_line_definition_of_var("long long y;", "y", C_FAMILY))
         self.assertTrue(is_line_definition_of_var("const unsigned long long * const ptr;", "ptr", C_FAMILY))
+
+        # Attached pointer/reference spacing tests (no spaces after type)
+        self.assertTrue(is_line_definition_of_var("MyClass*ptr;", "ptr", C_FAMILY))
+        self.assertTrue(is_line_definition_of_var("MyClass&ref;", "ref", C_FAMILY))
+
+        # Function calls in flow statements vs valid definitions
+        self.assertFalse(is_line_definition_of_var("if (foo(ptr))", "ptr", C_FAMILY))
+        self.assertFalse(is_line_definition_of_var("while (foo(ptr))", "ptr", C_FAMILY))
+        self.assertTrue(is_line_definition_of_var("void my_function(MyClass* ptr)", "ptr", C_FAMILY))
+        self.assertTrue(is_line_definition_of_var("void my_function(MyClass& ptr)", "ptr", C_FAMILY))
 
     @patch("context_builder.ast_engine.AST_ENGINE")
     def test_extract_identifiers_ast(self, mock_engine):
@@ -3299,6 +3309,8 @@ class TestAstEngine(unittest.TestCase):
             "    MyClass & volatile member9;",
             "    unsigned int member10;",
             "    long long member11;",
+            "    MyClass*member12;",
+            "    MyClass&member13;",
             "};"
         ]
         cache.get_lines.return_value = lines
@@ -3317,6 +3329,8 @@ class TestAstEngine(unittest.TestCase):
             ("member9", 10),
             ("member10", 11),
             ("member11", 12),
+            ("member12", 13),
+            ("member13", 14),
         ]
         self.assertEqual(res, expected)
 
