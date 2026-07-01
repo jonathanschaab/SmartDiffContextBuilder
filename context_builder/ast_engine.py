@@ -1637,49 +1637,130 @@ def _is_assignment_definition(cleaned_line, standalone_var, flow_kws):
     )
 
 
-def is_line_definition_of_var(cleaned_line, var_name, profile):
+def _strip_template_args(name):
+    """Recursively strip nested template arguments from a class or function name."""
+    while True:
+        new_name, count = re.subn(r'<[^<>]*>', '', name)
+        if count == 0:
+            break
+        name = new_name
+    return name
+
+
+def _is_c_style_param_definition(params_str, standalone_var, flow_kws):
+    """Verify if a C-style parameter list contains a valid typed declaration of standalone_var."""
+    params = params_str.split(',')
+    for param in params:
+        if not re.search(standalone_var, param):
+            continue
+        param_decl = re.search(
+            r'(?:(?:const|static|volatile|mutable)\s+)*(?:[A-Za-z_][A-Za-z0-9_<>:,*&]*\s+)*'
+            r'[A-Za-z_][A-Za-z0-9_<>:,*&]*(?:\s*[*&]+|\s+)'
+            r'(?:\s*(?:[*&]+|const|volatile))*\s*'
+            + standalone_var,
+            param,
+        )
+        if param_decl:
+            param_text = param_decl.group(0).strip()
+            first_word = re.split(r'[^A-Za-z0-9_]', param_text)[0]
+            if first_word not in flow_kws:
+                return True
+    return False
+
+
+def _is_c_style_header_definition(statement, param_match, has_semicolon, flow_kws):  # pylint: disable=too-many-return-statements
+    """Verify if a statement before parentheses is a valid C-style function/constructor header."""
+    if has_semicolon:
+        return False
+
+    header_prefix = statement[:param_match.start()].strip()
+    if not header_prefix or header_prefix in flow_kws:
+        return False
+
+    if ' ' in header_prefix or '\t' in header_prefix:
+        return True
+    if header_prefix.startswith('~'):
+        return True
+    if '::' in header_prefix:
+        parts = header_prefix.rsplit('::', 1)
+        if len(parts) >= 2:
+            class_part = parts[0].strip()
+            func_name = parts[1].strip().lstrip('~')
+            class_part_stripped = _strip_template_args(class_part)
+            class_name = class_part_stripped.split('::')[-1].strip()
+            func_name = _strip_template_args(func_name)
+            if class_name == func_name:
+                return True
+        return False
+
+    return True
+
+
+def is_line_definition_of_var(cleaned_line, var_name, profile):  # pylint: disable=too-many-return-statements,too-many-branches
     """Check if a cleaned line defines var_name using simple regex heuristics."""
     escaped_var = re.escape(var_name)
     standalone_var = r'(?<!\.)(?<!->)(?<!::)\b' + escaped_var + r'\b'
     flow_kws = getattr(profile, 'flow_keywords', frozenset())
 
-    # 1. Assignment
-    if _is_assignment_definition(cleaned_line, standalone_var, flow_kws):
-        return True
+    statements = _split_top_level_semicolon_statements(cleaned_line)
+    for i, statement in enumerate(statements):
+        if not re.search(standalone_var, statement):
+            continue
 
-    for statement in _split_top_level_semicolon_statements(cleaned_line)[1:]:
-        if _is_assignment_definition(statement, standalone_var, flow_kws):
+        # Check if the statement is a flow control block (e.g. for, if, while) that might
+        # contain variable declarations inside its parenthesized initialization list.
+        flow_match = re.match(r'^\s*(?:for|if|while)\s*\(', statement)
+        if flow_match:
+            param_match = re.search(r'\(([^)]*)\)', statement)
+            if param_match and re.search(standalone_var, param_match.group(1)):
+                sub_statements = _split_top_level_semicolon_statements(param_match.group(1))
+                for sub_stmt in sub_statements:
+                    if is_line_definition_of_var(sub_stmt, var_name, profile):
+                        return True
+            continue
+
+        # If the statement has an assignment operator, it is only a definition
+        # if the variable is on the LHS.
+        if ASSIGNMENT_OPERATOR_RE.search(statement):
+            if _is_assignment_definition(statement, standalone_var, flow_kws):
+                return True
+            continue
+
+        # Explicit keywords (e.g. let, const, var, mut)
+        if re.search(r'\b(?:let|const|var|mut)\b[^;=]*?' + standalone_var, statement):
             return True
 
-    # 2. Explicit keywords
-    if re.search(r'\b(?:let|const|var|mut)\b[^;=]*?' + standalone_var, cleaned_line):
-        return True
-
-    # 3. Type-based declarations (C/C++/Java/Go/Rust)
-    # Match a leading type name followed by the variable name, but reject
-    # flow-control/statement keywords (e.g. 'return', 'if', 'for') that
-    # cannot be type names and would otherwise cause false positives such as
-    # treating `return x;` as a definition.
-    # We use profile.flow_keywords (not profile.keywords) because the full
-    # keyword set also includes primitive type names ('int', 'char', etc.)
-    # that are perfectly valid as type declaration prefixes.
-    type_decl_match = re.search(
-        r'\b([A-Za-z_][A-Za-z0-9_<>:,*&]*)\s+' + standalone_var,
-        cleaned_line,
-    )
-    if type_decl_match and type_decl_match.group(1) not in flow_kws:
-        return True
-
-    # 4. Parameters in function headers
-    if (
-        re.search(r'\b(?:def|fn|function|sub|func)\s+[A-Za-z0-9_]+', cleaned_line)
-        or profile.uses_c_style_definitions
-    ):
-        param_match = re.search(r'\(([^)]*)\)', cleaned_line)
-        if param_match:
-            params = param_match.group(1)
-            if re.search(standalone_var, params):
+        # Type-based declarations (C/C++/Java/Go/Rust)
+        type_decl_match = re.search(
+            r'^\s*(?:(?:const|static|extern|volatile|mutable|thread_local|constexpr)\s+)*'
+            r'((?:[A-Za-z_][A-Za-z0-9_<>:,*&]*\s+)*[A-Za-z_][A-Za-z0-9_<>:,*&]*)'
+            r'(?:\s*(?:[*&]+\s*)(?:(?:const|volatile)\s+)*|'
+            r'\s+(?:[*&]+\s*)?(?:(?:const|volatile)\s+)*)'
+            + standalone_var,
+            statement,
+        )
+        if type_decl_match:
+            first_word = re.split(r'[^A-Za-z0-9_]', type_decl_match.group(1))[0]
+            if first_word not in flow_kws:
                 return True
+
+        # Parameters in function headers
+        if (
+            re.search(r'\b(?:def|fn|function|sub|func)\s+[A-Za-z0-9_]+', statement)
+            or profile.uses_c_style_definitions
+        ):
+            param_match = re.search(r'\(([^)]*)\)', statement)
+            if param_match and re.search(standalone_var, param_match.group(1)):
+                is_def = (
+                    not profile.uses_c_style_definitions or
+                    _is_c_style_param_definition(param_match.group(1), standalone_var, flow_kws)
+                )
+                if is_def:
+                    if not profile.uses_c_style_definitions or \
+                       _is_c_style_header_definition(
+                           statement, param_match, i < len(statements) - 1, flow_kws
+                       ):
+                        return True
 
     return False
 
@@ -1743,7 +1824,10 @@ def get_class_members(file_path, class_name, profile, file_cache):  # pylint: di
                 )
             else:
                 decl_match = re.search(
-                    r'\b[A-Za-z_][A-Za-z0-9_<>:,*&]*\s+([A-Za-z_][A-Za-z0-9_]*)\s*;',
+                    r'^\s*(?:(?:const|static|extern|volatile|mutable|thread_local|constexpr)\s+)*'
+                    r'(?:[A-Za-z_][A-Za-z0-9_<>:,*&]*\s+)*[A-Za-z_][A-Za-z0-9_<>:,*&]*'
+                    r'(?:\s*(?:[*&]+\s*)|\s+)'
+                    r'(?:(?:const|volatile)\s+)*([A-Za-z_][A-Za-z0-9_]*)\s*;',
                     cleaned,
                 )
             if decl_match:

@@ -2441,6 +2441,85 @@ class TestAstEngine(unittest.TestCase):
         self.assertFalse(is_line_definition_of_var("let a = b + c;", "b", JAVASCRIPT))
         self.assertFalse(is_line_definition_of_var("let a = b + c;", "c", JAVASCRIPT))
 
+    def test_is_line_definition_of_var_c_family_pointer_reference_spacing(self):
+        from context_builder.ast_engine import is_line_definition_of_var
+        from context_builder.languages.c_family import C_FAMILY
+
+        # Pointer attached to type
+        self.assertTrue(is_line_definition_of_var("MyClass* ptr;", "ptr", C_FAMILY))
+        # Pointer attached to variable
+        self.assertTrue(is_line_definition_of_var("MyClass *ptr;", "ptr", C_FAMILY))
+        # Pointer spaced
+        self.assertTrue(is_line_definition_of_var("MyClass * ptr;", "ptr", C_FAMILY))
+        # Reference attached to type
+        self.assertTrue(is_line_definition_of_var("MyClass& ref;", "ref", C_FAMILY))
+        # Reference attached to variable
+        self.assertTrue(is_line_definition_of_var("MyClass &ref;", "ref", C_FAMILY))
+        # Reference spaced
+        self.assertTrue(is_line_definition_of_var("MyClass & ref;", "ref", C_FAMILY))
+        # Multiple levels of indirection
+        self.assertTrue(is_line_definition_of_var("MyClass ** ptr;", "ptr", C_FAMILY))
+        self.assertTrue(is_line_definition_of_var("MyClass &* ptr;", "ptr", C_FAMILY))
+
+        # RHS regression tests (should evaluate to False)
+        self.assertFalse(is_line_definition_of_var("result = x * ptr;", "ptr", C_FAMILY))
+        self.assertFalse(is_line_definition_of_var("result = x & ref;", "ref", C_FAMILY))
+        self.assertFalse(is_line_definition_of_var("result = x * ptr + y;", "ptr", C_FAMILY))
+
+        # Valid assignment definition on LHS (should evaluate to True)
+        self.assertTrue(is_line_definition_of_var("MyClass *ptr = x * y;", "ptr", C_FAMILY))
+        # But should be False for variables only on the RHS
+        self.assertFalse(is_line_definition_of_var("MyClass *ptr = x * y;", "y", C_FAMILY))
+
+        # Expressions inside return/function calls (should evaluate to False)
+        self.assertFalse(is_line_definition_of_var("return x * ptr;", "ptr", C_FAMILY))
+        self.assertFalse(is_line_definition_of_var("foo(x * ptr);", "ptr", C_FAMILY))
+        self.assertFalse(is_line_definition_of_var("return x & ref;", "ref", C_FAMILY))
+        self.assertFalse(is_line_definition_of_var("foo(x & ref);", "ref", C_FAMILY))
+
+        # Constructors and function headers vs prototypes (should distinguish)
+        self.assertTrue(is_line_definition_of_var("void my_function(int ptr)", "ptr", C_FAMILY))
+        self.assertFalse(is_line_definition_of_var("void my_function(int ptr);", "ptr", C_FAMILY))
+        self.assertTrue(is_line_definition_of_var("MyClass::MyClass(int ptr)", "ptr", C_FAMILY))
+        self.assertTrue(is_line_definition_of_var("MyClass(int ptr) {", "ptr", C_FAMILY))
+        self.assertFalse(is_line_definition_of_var("MyClass(int ptr);", "ptr", C_FAMILY))
+        self.assertFalse(is_line_definition_of_var("std::sort(x * ptr);", "ptr", C_FAMILY))
+
+        # Flow statements initialization list checks
+        self.assertTrue(is_line_definition_of_var("for (int x = 0; x < 10; x++)", "x", C_FAMILY))
+        self.assertTrue(is_line_definition_of_var("if (int x = foo())", "x", C_FAMILY))
+        self.assertTrue(is_line_definition_of_var("while (int x = foo())", "x", C_FAMILY))
+
+        # Multiple statements on the same line (should evaluate correctly using has_semicolon)
+        self.assertFalse(is_line_definition_of_var("MyClass(int ptr);MyClass(int ptr);", "ptr", C_FAMILY))
+        self.assertTrue(is_line_definition_of_var("MyClass(int ptr);MyClass(int ptr)", "ptr", C_FAMILY))
+
+        # Declarations with qualifiers (should evaluate to True)
+        self.assertTrue(is_line_definition_of_var("static const int *ptr;", "ptr", C_FAMILY))
+        self.assertTrue(is_line_definition_of_var("volatile mutable MyClass &ref;", "ref", C_FAMILY))
+        self.assertTrue(is_line_definition_of_var("MyClass * const ptr;", "ptr", C_FAMILY))
+        self.assertTrue(is_line_definition_of_var("MyClass & volatile ref;", "ref", C_FAMILY))
+
+        # Out-of-line template constructor declarations
+        self.assertTrue(is_line_definition_of_var("MyClass<T>::MyClass(int ptr)", "ptr", C_FAMILY))
+        self.assertTrue(is_line_definition_of_var("MyClass<int>::MyClass(int ptr)", "ptr", C_FAMILY))
+        self.assertTrue(is_line_definition_of_var("MyClass<std::vector<int>>::MyClass(int ptr)", "ptr", C_FAMILY))
+
+        # Multi-word type declarations
+        self.assertTrue(is_line_definition_of_var("unsigned int x;", "x", C_FAMILY))
+        self.assertTrue(is_line_definition_of_var("long long y;", "y", C_FAMILY))
+        self.assertTrue(is_line_definition_of_var("const unsigned long long * const ptr;", "ptr", C_FAMILY))
+
+        # Attached pointer/reference spacing tests (no spaces after type)
+        self.assertTrue(is_line_definition_of_var("MyClass*ptr;", "ptr", C_FAMILY))
+        self.assertTrue(is_line_definition_of_var("MyClass&ref;", "ref", C_FAMILY))
+
+        # Function calls in flow statements vs valid definitions
+        self.assertFalse(is_line_definition_of_var("if (foo(ptr))", "ptr", C_FAMILY))
+        self.assertFalse(is_line_definition_of_var("while (foo(ptr))", "ptr", C_FAMILY))
+        self.assertTrue(is_line_definition_of_var("void my_function(MyClass* ptr)", "ptr", C_FAMILY))
+        self.assertTrue(is_line_definition_of_var("void my_function(MyClass& ptr)", "ptr", C_FAMILY))
+
     @patch("context_builder.ast_engine.AST_ENGINE")
     def test_extract_identifiers_ast(self, mock_engine):
         from context_builder.ast_engine import extract_identifiers_ast
@@ -3211,6 +3290,49 @@ class TestAstEngine(unittest.TestCase):
         self.assertIn(("realMember", 3), res)
         self.assertNotIn(("myMethod", 2), res)
         self.assertNotIn(("x", 2), res)
+
+    def test_get_class_members_c_family_pointer_reference_spacing(self):
+        from context_builder.ast_engine import get_class_members
+        from context_builder.languages.c_family import C_FAMILY
+
+        cache = MagicMock()
+        lines = [
+            "class TargetClass {",
+            "    MyClass* member1;",
+            "    MyClass *member2;",
+            "    MyClass * member3;",
+            "    MyClass& member4;",
+            "    MyClass &member5;",
+            "    MyClass & member6;",
+            "    MyClass ** member7;",
+            "    MyClass * const member8;",
+            "    MyClass & volatile member9;",
+            "    unsigned int member10;",
+            "    long long member11;",
+            "    MyClass*member12;",
+            "    MyClass&member13;",
+            "};"
+        ]
+        cache.get_lines.return_value = lines
+        cache.get_stripped_lines.return_value = lines
+
+        res = get_class_members("file.cpp", "TargetClass", C_FAMILY, cache)
+        expected = [
+            ("member1", 2),
+            ("member2", 3),
+            ("member3", 4),
+            ("member4", 5),
+            ("member5", 6),
+            ("member6", 7),
+            ("member7", 8),
+            ("member8", 9),
+            ("member9", 10),
+            ("member10", 11),
+            ("member11", 12),
+            ("member12", 13),
+            ("member13", 14),
+        ]
+        self.assertEqual(res, expected)
 
     def test_get_class_members_ignores_python_self_comparisons(self):
         from context_builder.ast_engine import get_class_members
