@@ -2420,6 +2420,27 @@ class TestAstEngine(unittest.TestCase):
         self.assertTrue(is_line_definition_of_var("if (ready); x = 1;", "x", C_FAMILY))
         self.assertTrue(is_line_definition_of_var("while (ready); x += 1;", "x", C_FAMILY))
 
+    def test_is_line_definition_of_var_js_ts_destructuring(self):
+        from context_builder.ast_engine import is_line_definition_of_var
+        from context_builder.languages.javascript import JAVASCRIPT
+        from context_builder.languages.rust import RUST
+
+        # JS/TS destructuring cases
+        self.assertTrue(is_line_definition_of_var("const { id, status } = payload;", "status", JAVASCRIPT))
+        self.assertTrue(is_line_definition_of_var("const { id, status } = payload;", "id", JAVASCRIPT))
+        self.assertTrue(is_line_definition_of_var("let [x, y] = coords;", "x", JAVASCRIPT))
+        self.assertTrue(is_line_definition_of_var("let [x, y] = coords;", "y", JAVASCRIPT))
+        self.assertTrue(is_line_definition_of_var("const { id: myId, status } = payload;", "myId", JAVASCRIPT))
+
+        # Rust mutable bindings
+        self.assertTrue(is_line_definition_of_var("let mut x = 1;", "x", RUST))
+
+        # RHS references and other non-definitions should NOT match
+        self.assertFalse(is_line_definition_of_var("const myVar = someFunc(x);", "x", JAVASCRIPT))
+        self.assertFalse(is_line_definition_of_var("const x = y;", "y", JAVASCRIPT))
+        self.assertFalse(is_line_definition_of_var("let a = b + c;", "b", JAVASCRIPT))
+        self.assertFalse(is_line_definition_of_var("let a = b + c;", "c", JAVASCRIPT))
+
     @patch("context_builder.ast_engine.AST_ENGINE")
     def test_extract_identifiers_ast(self, mock_engine):
         from context_builder.ast_engine import extract_identifiers_ast

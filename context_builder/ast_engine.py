@@ -1652,7 +1652,7 @@ def is_line_definition_of_var(cleaned_line, var_name, profile):
             return True
 
     # 2. Explicit keywords
-    if re.search(r'\b(?:let|const|var|mut)\s+' + standalone_var, cleaned_line):
+    if re.search(r'\b(?:let|const|var|mut)\b[^;=]*?' + standalone_var, cleaned_line):
         return True
 
     # 3. Type-based declarations (C/C++/Java/Go/Rust)
