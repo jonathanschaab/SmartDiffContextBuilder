@@ -2461,6 +2461,16 @@ class TestAstEngine(unittest.TestCase):
         self.assertTrue(is_line_definition_of_var("MyClass ** ptr;", "ptr", C_FAMILY))
         self.assertTrue(is_line_definition_of_var("MyClass &* ptr;", "ptr", C_FAMILY))
 
+        # RHS regression tests (should evaluate to False)
+        self.assertFalse(is_line_definition_of_var("result = x * ptr;", "ptr", C_FAMILY))
+        self.assertFalse(is_line_definition_of_var("result = x & ref;", "ref", C_FAMILY))
+        self.assertFalse(is_line_definition_of_var("result = x * ptr + y;", "ptr", C_FAMILY))
+
+        # Valid assignment definition on LHS (should evaluate to True)
+        self.assertTrue(is_line_definition_of_var("MyClass *ptr = x * y;", "ptr", C_FAMILY))
+        # But should be False for variables only on the RHS
+        self.assertFalse(is_line_definition_of_var("MyClass *ptr = x * y;", "y", C_FAMILY))
+
     @patch("context_builder.ast_engine.AST_ENGINE")
     def test_extract_identifiers_ast(self, mock_engine):
         from context_builder.ast_engine import extract_identifiers_ast

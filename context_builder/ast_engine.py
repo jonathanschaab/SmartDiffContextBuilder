@@ -1643,43 +1643,40 @@ def is_line_definition_of_var(cleaned_line, var_name, profile):
     standalone_var = r'(?<!\.)(?<!->)(?<!::)\b' + escaped_var + r'\b'
     flow_kws = getattr(profile, 'flow_keywords', frozenset())
 
-    # 1. Assignment
-    if _is_assignment_definition(cleaned_line, standalone_var, flow_kws):
-        return True
+    statements = _split_top_level_semicolon_statements(cleaned_line)
+    for statement in statements:
+        if not re.search(standalone_var, statement):
+            continue
 
-    for statement in _split_top_level_semicolon_statements(cleaned_line)[1:]:
-        if _is_assignment_definition(statement, standalone_var, flow_kws):
+        # If the statement has an assignment operator, it is only a definition
+        # if the variable is on the LHS.
+        if ASSIGNMENT_OPERATOR_RE.search(statement):
+            if _is_assignment_definition(statement, standalone_var, flow_kws):
+                return True
+            continue
+
+        # Explicit keywords (e.g. let, const, var, mut)
+        if re.search(r'\b(?:let|const|var|mut)\b[^;=]*?' + standalone_var, statement):
             return True
 
-    # 2. Explicit keywords
-    if re.search(r'\b(?:let|const|var|mut)\b[^;=]*?' + standalone_var, cleaned_line):
-        return True
+        # Type-based declarations (C/C++/Java/Go/Rust)
+        type_decl_match = re.search(
+            r'\b([A-Za-z_][A-Za-z0-9_<>:,*&]*)\s+(?:[*&]+\s*)?' + standalone_var,
+            statement,
+        )
+        if type_decl_match and type_decl_match.group(1) not in flow_kws:
+            return True
 
-    # 3. Type-based declarations (C/C++/Java/Go/Rust)
-    # Match a leading type name followed by the variable name, but reject
-    # flow-control/statement keywords (e.g. 'return', 'if', 'for') that
-    # cannot be type names and would otherwise cause false positives such as
-    # treating `return x;` as a definition.
-    # We use profile.flow_keywords (not profile.keywords) because the full
-    # keyword set also includes primitive type names ('int', 'char', etc.)
-    # that are perfectly valid as type declaration prefixes.
-    type_decl_match = re.search(
-        r'\b([A-Za-z_][A-Za-z0-9_<>:,*&]*)\s+(?:[*&]+\s*)?' + standalone_var,
-        cleaned_line,
-    )
-    if type_decl_match and type_decl_match.group(1) not in flow_kws:
-        return True
-
-    # 4. Parameters in function headers
-    if (
-        re.search(r'\b(?:def|fn|function|sub|func)\s+[A-Za-z0-9_]+', cleaned_line)
-        or profile.uses_c_style_definitions
-    ):
-        param_match = re.search(r'\(([^)]*)\)', cleaned_line)
-        if param_match:
-            params = param_match.group(1)
-            if re.search(standalone_var, params):
-                return True
+        # Parameters in function headers
+        if (
+            re.search(r'\b(?:def|fn|function|sub|func)\s+[A-Za-z0-9_]+', statement)
+            or profile.uses_c_style_definitions
+        ):
+            param_match = re.search(r'\(([^)]*)\)', statement)
+            if param_match:
+                params = param_match.group(1)
+                if re.search(standalone_var, params):
+                    return True
 
     return False
 
