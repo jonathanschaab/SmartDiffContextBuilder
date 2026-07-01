@@ -1639,6 +1639,9 @@ def _is_assignment_definition(cleaned_line, standalone_var, flow_kws):
 
 def _is_c_style_header_definition(statement, param_match, has_semicolon, flow_kws):  # pylint: disable=too-many-return-statements
     """Verify if a statement before parentheses is a valid C-style function/constructor header."""
+    if has_semicolon:
+        return False
+
     header_prefix = statement[:param_match.start()].strip()
     if not header_prefix or header_prefix in flow_kws:
         return False
@@ -1653,10 +1656,10 @@ def _is_c_style_header_definition(statement, param_match, has_semicolon, flow_kw
             return True
         return False
 
-    return not has_semicolon
+    return True
 
 
-def is_line_definition_of_var(cleaned_line, var_name, profile):  # pylint: disable=too-many-return-statements
+def is_line_definition_of_var(cleaned_line, var_name, profile):  # pylint: disable=too-many-return-statements,too-many-branches
     """Check if a cleaned line defines var_name using simple regex heuristics."""
     escaped_var = re.escape(var_name)
     standalone_var = r'(?<!\.)(?<!->)(?<!::)\b' + escaped_var + r'\b'
@@ -1665,6 +1668,18 @@ def is_line_definition_of_var(cleaned_line, var_name, profile):  # pylint: disab
     statements = _split_top_level_semicolon_statements(cleaned_line)
     for i, statement in enumerate(statements):
         if not re.search(standalone_var, statement):
+            continue
+
+        # Check if the statement is a flow control block (e.g. for, if, while) that might
+        # contain variable declarations inside its parenthesized initialization list.
+        flow_match = re.match(r'^\s*(?:for|if|while)\s*\(', statement)
+        if flow_match:
+            param_match = re.search(r'\(([^)]*)\)', statement)
+            if param_match and re.search(standalone_var, param_match.group(1)):
+                sub_statements = _split_top_level_semicolon_statements(param_match.group(1))
+                for sub_stmt in sub_statements:
+                    if is_line_definition_of_var(sub_stmt, var_name, profile):
+                        return True
             continue
 
         # If the statement has an assignment operator, it is only a definition

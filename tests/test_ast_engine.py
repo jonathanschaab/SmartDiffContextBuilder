@@ -2479,10 +2479,16 @@ class TestAstEngine(unittest.TestCase):
 
         # Constructors and function headers vs prototypes (should distinguish)
         self.assertTrue(is_line_definition_of_var("void my_function(int ptr)", "ptr", C_FAMILY))
+        self.assertFalse(is_line_definition_of_var("void my_function(int ptr);", "ptr", C_FAMILY))
         self.assertTrue(is_line_definition_of_var("MyClass::MyClass(int ptr)", "ptr", C_FAMILY))
         self.assertTrue(is_line_definition_of_var("MyClass(int ptr) {", "ptr", C_FAMILY))
         self.assertFalse(is_line_definition_of_var("MyClass(int ptr);", "ptr", C_FAMILY))
         self.assertFalse(is_line_definition_of_var("std::sort(x * ptr);", "ptr", C_FAMILY))
+
+        # Flow statements initialization list checks
+        self.assertTrue(is_line_definition_of_var("for (int x = 0; x < 10; x++)", "x", C_FAMILY))
+        self.assertTrue(is_line_definition_of_var("if (int x = foo())", "x", C_FAMILY))
+        self.assertTrue(is_line_definition_of_var("while (int x = foo())", "x", C_FAMILY))
 
         # Multiple statements on the same line (should evaluate correctly using has_semicolon)
         self.assertFalse(is_line_definition_of_var("MyClass(ptr);MyClass(ptr);", "ptr", C_FAMILY))
