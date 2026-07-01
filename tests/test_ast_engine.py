@@ -2503,6 +2503,12 @@ class TestAstEngine(unittest.TestCase):
         # Out-of-line template constructor declarations
         self.assertTrue(is_line_definition_of_var("MyClass<T>::MyClass(int ptr)", "ptr", C_FAMILY))
         self.assertTrue(is_line_definition_of_var("MyClass<int>::MyClass(int ptr)", "ptr", C_FAMILY))
+        self.assertTrue(is_line_definition_of_var("MyClass<std::vector<int>>::MyClass(int ptr)", "ptr", C_FAMILY))
+
+        # Multi-word type declarations
+        self.assertTrue(is_line_definition_of_var("unsigned int x;", "x", C_FAMILY))
+        self.assertTrue(is_line_definition_of_var("long long y;", "y", C_FAMILY))
+        self.assertTrue(is_line_definition_of_var("const unsigned long long * const ptr;", "ptr", C_FAMILY))
 
     @patch("context_builder.ast_engine.AST_ENGINE")
     def test_extract_identifiers_ast(self, mock_engine):
@@ -3291,6 +3297,8 @@ class TestAstEngine(unittest.TestCase):
             "    MyClass ** member7;",
             "    MyClass * const member8;",
             "    MyClass & volatile member9;",
+            "    unsigned int member10;",
+            "    long long member11;",
             "};"
         ]
         cache.get_lines.return_value = lines
@@ -3307,6 +3315,8 @@ class TestAstEngine(unittest.TestCase):
             ("member7", 8),
             ("member8", 9),
             ("member9", 10),
+            ("member10", 11),
+            ("member11", 12),
         ]
         self.assertEqual(res, expected)
 

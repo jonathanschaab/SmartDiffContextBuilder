@@ -1637,6 +1637,16 @@ def _is_assignment_definition(cleaned_line, standalone_var, flow_kws):
     )
 
 
+def _strip_template_args(name):
+    """Recursively strip nested template arguments from a class or function name."""
+    while True:
+        new_name, count = re.subn(r'<[^<>]*>', '', name)
+        if count == 0:
+            break
+        name = new_name
+    return name
+
+
 def _is_c_style_header_definition(statement, param_match, has_semicolon, flow_kws):  # pylint: disable=too-many-return-statements
     """Verify if a statement before parentheses is a valid C-style function/constructor header."""
     if has_semicolon:
@@ -1651,12 +1661,13 @@ def _is_c_style_header_definition(statement, param_match, has_semicolon, flow_kw
     if header_prefix.startswith('~'):
         return True
     if '::' in header_prefix:
-        parts = header_prefix.split('::')
+        parts = header_prefix.rsplit('::', 1)
         if len(parts) >= 2:
-            class_name = parts[-2].strip()
-            func_name = parts[-1].strip().lstrip('~')
-            class_name = re.sub(r'<[^>]*>', '', class_name)
-            func_name = re.sub(r'<[^>]*>', '', func_name)
+            class_part = parts[0].strip()
+            func_name = parts[1].strip().lstrip('~')
+            class_part_stripped = _strip_template_args(class_part)
+            class_name = class_part_stripped.split('::')[-1].strip()
+            func_name = _strip_template_args(func_name)
             if class_name == func_name:
                 return True
         return False
@@ -1701,12 +1712,14 @@ def is_line_definition_of_var(cleaned_line, var_name, profile):  # pylint: disab
         # Type-based declarations (C/C++/Java/Go/Rust)
         type_decl_match = re.search(
             r'^\s*(?:(?:const|static|extern|volatile|mutable|thread_local|constexpr)\s+)*'
-            r'([A-Za-z_][A-Za-z0-9_<>:,*&]*)\s+(?:[*&]+\s*)?'
-            r'(?:(?:const|volatile)\s+)*' + standalone_var,
+            r'((?:[A-Za-z_][A-Za-z0-9_<>:,*&]*\s+)*[A-Za-z_][A-Za-z0-9_<>:,*&]*)\s+'
+            r'(?:[*&]+\s*)?(?:(?:const|volatile)\s+)*' + standalone_var,
             statement,
         )
-        if type_decl_match and type_decl_match.group(1) not in flow_kws:
-            return True
+        if type_decl_match:
+            first_word = re.split(r'[^A-Za-z0-9_]', type_decl_match.group(1))[0]
+            if first_word not in flow_kws:
+                return True
 
         # Parameters in function headers
         if (
@@ -1784,8 +1797,8 @@ def get_class_members(file_path, class_name, profile, file_cache):  # pylint: di
             else:
                 decl_match = re.search(
                     r'^\s*(?:(?:const|static|extern|volatile|mutable|thread_local|constexpr)\s+)*'
-                    r'[A-Za-z_][A-Za-z0-9_<>:,*&]*\s+(?:[*&]+\s*)?'
-                    r'(?:(?:const|volatile)\s+)*([A-Za-z_][A-Za-z0-9_]*)\s*;',
+                    r'(?:[A-Za-z_][A-Za-z0-9_<>:,*&]*\s+)*[A-Za-z_][A-Za-z0-9_<>:,*&]*\s+'
+                    r'(?:[*&]+\s*)?(?:(?:const|volatile)\s+)*([A-Za-z_][A-Za-z0-9_]*)\s*;',
                     cleaned,
                 )
             if decl_match:
